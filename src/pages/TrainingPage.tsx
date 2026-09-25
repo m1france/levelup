@@ -8,11 +8,13 @@ import { ItemIcon } from '../components/ItemIcon';
 import { ExercisePlayer, LivePitch, Presenter, SceneThumb } from '../components/Pitch';
 import { Empty, Menu, Seg, Sheet, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
+import { useLive } from '../lib/live';
+import { equal, merge3 } from '../lib/merge';
 import { formatDate, useApp } from '../lib/store';
 import type { Block, Exercise, ItemKind, Training, TrainingPayload } from '../lib/types';
 import { COLORS, ITEM_LABELS, equipmentOf, pluralize } from '../pitch/geometry';
 import { ExerciseSheet } from './ExerciseEditor';
-import { ExerciseCard, createExercise, useExerciseSearch } from './Library';
+import { ExerciseCard, createExercise, exercisesUrl, useExerciseSearch, useExercisesLive, type ExerciseScope } from './Library';
 import { BLOCK_LABELS, blockMinutes, totalMinutes } from './Trainings';
 
 export const BLOCK_ICONS: Record<Block['kind'], React.ReactNode> = {
@@ -52,6 +54,12 @@ export function TrainingPage() {
   const { id } = useParams();
   const { isStaff, can } = useApp();
   const q = useAsync(() => api.get<TrainingPayload>(`/trainings/${id}`), [id]);
+  const planner = isStaff && can('trainings.manage');
+  // Lecture seule : la séance et ses exercices se mettent à jour quand un éducateur les modifie.
+  useLive((m) => {
+    if (planner) return;
+    if ((m.t === 'training' && m.id === id) || (m.t === 'exercise' && q.data?.exercises[m.id])) q.reload();
+  });
   if (q.loading && !q.data) return <Spinner fill />;
   if (q.error || !q.data)
     return (
@@ -59,7 +67,7 @@ export function TrainingPage() {
         <Empty title="Séance introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/">Retour à l’accueil</Link>} />
       </div>
     );
-  return isStaff && can('trainings.manage') ? <Planner key={q.data.training.id} data={q.data} /> : <TrainingView data={q.data} />;
+  return planner ? <Planner key={q.data.training.id} data={q.data} /> : <TrainingView data={q.data} />;
 }
 
 /* ================================================================== lecture (parents, dirigeants) */
@@ -171,6 +179,10 @@ function Planner({ data }: { data: TrainingPayload }) {
   const [creating, setCreating] = useState(false);
   const tRef = useRef(t);
   const timer = useRef<number | undefined>(undefined);
+  /** Dernière version lue sur le serveur : base de fusion avec les modifications des autres éducateurs. */
+  const serverBase = useRef(data.training);
+  const exercisesRef = useRef(exercises);
+  exercisesRef.current = exercises;
 
   const save = useCallback(async () => {
     window.clearTimeout(timer.current);
@@ -197,6 +209,31 @@ function Planner({ data }: { data: TrainingPayload }) {
   };
   useEffect(() => () => void (timer.current && api.put(`/trainings/${tRef.current.id}`, tRef.current)), []);
 
+  /* Un autre éducateur modifie la séance ou l'un de ses exercices : on intègre sans perdre nos changements. */
+  useLive((m) => {
+    if (m.t === 'training' && m.id === tRef.current.id) {
+      if (m.deleted) {
+        window.clearTimeout(timer.current);
+        timer.current = undefined;
+        toast(`${m.by ?? 'Un éducateur'} a supprimé cette séance`, true);
+        nav('/', { replace: true });
+        return;
+      }
+      void api.get<TrainingPayload>(`/trainings/${tRef.current.id}`).then((p) => {
+        const local = tRef.current;
+        const merged = merge3(serverBase.current, local, p.training, 'remote');
+        serverBase.current = p.training;
+        setExercises((e) => ({ ...e, ...p.exercises }));
+        if (equal(merged, local)) return;
+        tRef.current = merged;
+        setT(merged);
+        if (!equal(merged, p.training) && !timer.current) timer.current = window.setTimeout(save, 600);
+      }, () => undefined);
+    } else if (m.t === 'exercise' && !m.deleted && exercisesRef.current[m.id]) {
+      void api.get<Exercise>(`/exercises/${m.id}`).then((ex) => setExercises((e) => ({ ...e, [ex.id]: ex })), () => undefined);
+    }
+  });
+
   const updateBlock = (id: string, fn: (b: Block) => void) => update((d) => fn(d.blocks.find((b) => b.id === id)!));
 
   /** Rattache un exercice à un emplacement (bloc, atelier) ou l'ajoute à la fin de la séance. */
@@ -221,7 +258,7 @@ function Planner({ data }: { data: TrainingPayload }) {
     if (creating) return;
     setCreating(true);
     try {
-      const ex = await createExercise();
+      const ex = await createExercise(tRef.current.teamId);
       attach(ex, slot);
       await save();
       nav(`/exercices/${ex.id}`);
@@ -414,6 +451,7 @@ function Planner({ data }: { data: TrainingPayload }) {
 
       {picker && (
         <ExercisePicker
+          teamId={t.teamId}
           onPick={(ex) => {
             attach(ex, picker);
             setPicker(null);
@@ -608,18 +646,23 @@ function RotationGroup({
   );
 }
 
-export function ExercisePicker({ onPick, onClose }: { onPick: (ex: Exercise) => void; onClose: () => void }) {
-  const [scope, setScope] = useState<'mine' | 'club'>('mine');
+export function ExercisePicker({ teamId, onPick, onClose }: { teamId: string; onPick: (ex: Exercise) => void; onClose: () => void }) {
+  const [scope, setScope] = useState<ExerciseScope>('team');
   const { can } = useApp();
   const nav = useNavigate();
-  const q = useAsync(() => api.get<Exercise[]>(`/exercises?scope=${scope}`), [scope]);
+  const q = useAsync(() => api.get<Exercise[]>(exercisesUrl(scope, teamId)), [scope, teamId]);
+  useExercisesLive(q.reload);
   const { filtered, controls } = useExerciseSearch(q.data);
   return (
     <Sheet title="Choisir un exercice" onClose={onClose} wide>
       <div className="row between wrap" style={{ marginBottom: 12 }}>
-        <Seg value={scope} onChange={setScope} options={[{ value: 'mine', label: 'Mes exercices' }, { value: 'club', label: 'Club' }]} />
+        <Seg
+          value={scope}
+          onChange={setScope}
+          options={[{ value: 'team', label: 'Équipe' }, { value: 'mine', label: 'Personnels' }, { value: 'club', label: 'Club' }]}
+        />
         {can('exercises.create') && (
-          <button className="btn sm" onClick={async () => nav(`/exercices/${(await createExercise()).id}`)}>
+          <button className="btn sm" onClick={async () => nav(`/exercices/${(await createExercise(teamId)).id}`)}>
             <Plus /> Créer un exercice
           </button>
         )}
@@ -634,7 +677,7 @@ export function ExercisePicker({ onPick, onClose }: { onPick: (ex: Exercise) => 
           ))}
         </div>
       ) : (
-        <Empty title="Aucun exercice" text={scope === 'mine' ? 'Regardez dans la bibliothèque du club.' : undefined} />
+        <Empty title="Aucun exercice" text={scope !== 'club' ? 'Regardez dans la bibliothèque du club.' : undefined} />
       )}
     </Sheet>
   );

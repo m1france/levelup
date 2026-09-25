@@ -80,9 +80,9 @@ function AppRoutes() {
         <Route path="seances/:id" element={<TrainingPage />} />
         <Route path="parametres" element={<Settings />} />
         <Route path="compte" element={<Navigate to="/parametres" replace />} />
+        <Route path="exercices" element={<Library />} />
         {isStaff && (
           <>
-            <Route path="exercices" element={<Library />} />
             <Route path="joueurs" element={<Players />} />
             <Route path="admin" element={<Navigate to="/parametres?tab=membres" replace />} />
           </>
@@ -90,7 +90,7 @@ function AppRoutes() {
         <Route path="joueurs/:id" element={<PlayerPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
-      {isStaff && <Route path="exercices/:id" element={<ExerciseEditor />} />}
+      <Route path="exercices/:id" element={<ExerciseEditor />} />
       {isStaff && <Route path="seances/:id/live" element={<Live />} />}
     </Routes>
   );

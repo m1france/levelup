@@ -7,7 +7,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ItemIcon, type IconKind } from '../components/ItemIcon';
 import { ExercisePlayer, Presenter } from '../components/Pitch';
 import { Empty, Field, Menu, Seg, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
-import { api, uid } from '../lib/api';
+import { CLIENT_ID, api, uid } from '../lib/api';
+import { initials, peerColor, sendLive, useLive, useWatchExercise, type PresenceUser } from '../lib/live';
+import { equal, merge3 } from '../lib/merge';
 import { useApp } from '../lib/store';
 import type { Exercise, ExerciseData, FieldPreset, Item, ItemKind, KitPattern, PathKind } from '../lib/types';
 import { buildTimeline, evaluate, type Positions } from '../pitch/anim';
@@ -24,7 +26,6 @@ import { fitCanvas, usePlayback, useSize } from '../pitch/usePitch';
 
 export function ExerciseEditor() {
   const { id } = useParams();
-  const { me } = useApp();
   const q = useAsync(() => api.get<Exercise>(`/exercises/${id}`), [id]);
   if (q.loading && !q.data) return <Spinner fill />;
   if (q.error || !q.data)
@@ -33,19 +34,60 @@ export function ExerciseEditor() {
         <Empty title="Exercice introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/exercices">Retour à la bibliothèque</Link>} />
       </div>
     );
-  const mine = q.data.ownerId === me.user.id || me.user.role === 'admin';
-  return mine ? <Editor key={q.data.id} initial={q.data} /> : <ExerciseView ex={q.data} onChange={q.setData} />;
+  return q.data.canEdit ? <Editor key={q.data.id} initial={q.data} /> : <ExerciseView ex={q.data} onChange={q.setData} onReload={q.reload} />;
+}
+
+/** Méta-données gérées par le serveur : jamais diffusées ni fusionnées. */
+const META = ['id', 'ownerId', 'ownerName', 'teamId', 'validated', 'updatedAt', 'canEdit'] as const;
+const stripMeta = (ex: Exercise): ExerciseData => {
+  const d = { ...ex } as Partial<Exercise>;
+  for (const k of META) delete d[k];
+  return d as ExerciseData;
+};
+
+/** Pastilles des personnes présentes sur l'exercice. */
+function PresenceBar({ peers }: { peers: PresenceUser[] }) {
+  const byUser = new Map<string, PresenceUser>();
+  for (const p of peers) if (!byUser.has(p.userId) || p.editor) byUser.set(p.userId, p);
+  const list = [...byUser.values()];
+  if (!list.length) return null;
+  return (
+    <div className="presence" aria-label="Personnes présentes">
+      {list.slice(0, 4).map((p) => (
+        <span key={p.userId} className="presence-dot" style={{ background: peerColor(p.userId) }} title={`${p.name} ${p.editor ? 'modifie' : 'regarde'} cet exercice`}>
+          {initials(p.name)}
+        </span>
+      ))}
+      {list.length > 4 && <span className="presence-dot more">+{list.length - 4}</span>}
+    </div>
+  );
 }
 
 /* ================================================================== lecture seule */
 
-function ExerciseView({ ex, onChange }: { ex: Exercise; onChange: (e: Exercise) => void }) {
-  const { can } = useApp();
+function ExerciseView({ ex, onChange, onReload }: { ex: Exercise; onChange: (e: Exercise) => void; onReload: () => void }) {
+  const { can, team, isStaff } = useApp();
   const nav = useNavigate();
   const toast = useToast();
+  const [peers, setPeers] = useState<PresenceUser[]>([]);
+  const exRef = useRef(ex);
+  exRef.current = ex;
+  useWatchExercise(ex.id);
+  // Les modifications des éducateurs apparaissent en direct.
+  useLive((m) => {
+    if (m.t === 'presence' && m.exId === ex.id) setPeers(m.users.filter((u) => u.clientId !== CLIENT_ID));
+    else if (m.t === 'state' && m.exId === ex.id) onChange({ ...exRef.current, ...m.data });
+    else if (m.t === 'exercise' && m.id === ex.id) {
+      if (m.deleted) {
+        toast(`${m.by ?? 'Un éducateur'} a supprimé cet exercice`);
+        nav('/exercices', { replace: true });
+      } else onReload();
+    }
+  });
+  const editors = [...new Set(peers.filter((p) => p.editor).map((p) => p.name))];
   const duplicate = async () => {
-    const copy = await duplicateExercise(ex);
-    toast('Ajouté à vos exercices');
+    const copy = await duplicateExercise(ex, team?.id ?? null);
+    toast(team ? `Ajouté aux exercices ${team.category}` : 'Ajouté à vos exercices');
     nav(`/exercices/${copy.id}`);
   };
   const validate = async (v: boolean) => {
@@ -55,22 +97,28 @@ function ExerciseView({ ex, onChange }: { ex: Exercise; onChange: (e: Exercise) 
   return (
     <div className="page">
       <Link to="/exercices" className="back">
-        <ArrowLeft size={15} /> Bibliothèque
+        <ArrowLeft size={15} /> Exercices
       </Link>
       <div className="page-head">
         <div>
           <h1>{ex.title}</h1>
           <div className="sub">Par {ex.ownerName} · {ex.duration} min · {ex.players} joueurs</div>
+          {editors.length > 0 && (
+            <div className="live-note">
+              <span className="live-dot" /> {editors.join(', ')} {editors.length > 1 ? 'modifient' : 'modifie'} cet exercice en direct
+            </div>
+          )}
         </div>
         <div className="actions">
+          <PresenceBar peers={peers} />
           {can('library.validate') && ex.visibility === 'club' && (
             <button className="btn" onClick={() => validate(!ex.validated)}>
               <BadgeCheck /> {ex.validated ? 'Retirer la validation' : 'Valider'}
             </button>
           )}
-          {can('exercises.create') && (
+          {isStaff && can('exercises.create') && (
             <button className="btn primary" onClick={duplicate}>
-              <Copy /> Dupliquer dans mes exercices
+              <Copy /> {team ? `Dupliquer dans ${team.category}` : 'Dupliquer dans mes exercices'}
             </button>
           )}
         </div>
@@ -155,9 +203,8 @@ function Equipment({ eq }: { ex: ExerciseData; eq: ReturnType<typeof equipmentOf
   );
 }
 
-export async function duplicateExercise(ex: Exercise): Promise<Exercise> {
-  const { id: _id, ownerId: _o, ownerName: _n, validated: _v, updatedAt: _u, ...data } = ex;
-  const copy = { ...structuredClone(data), title: ex.title.endsWith('(copie)') ? ex.title : `${ex.title} (copie)`, visibility: 'private' as const };
+export async function duplicateExercise(ex: Exercise, teamId: string | null): Promise<Exercise> {
+  const copy = { ...structuredClone(stripMeta(ex)), title: ex.title.endsWith('(copie)') ? ex.title : `${ex.title} (copie)`, visibility: 'private' as const, teamId };
   return api.put<Exercise>(`/exercises/${uid()}`, copy);
 }
 
@@ -224,7 +271,7 @@ function Editor({ initial }: { initial: Exercise }) {
   const nav = useNavigate();
   const toast = useToast();
   const confirm = useConfirm();
-  const { can } = useApp();
+  const { can, team, me } = useApp();
 
   const [ex, setEx] = useState<Exercise>(initial);
   const exRef = useRef(ex);
@@ -295,15 +342,21 @@ function Editor({ initial }: { initial: Exercise }) {
   /* ---------------------------------------------------------------- sauvegarde auto */
 
   const lastSaved = useRef(JSON.stringify(initial));
+  /** Dernière version connue du serveur : base de fusion avec un éducateur qui vient d'arriver. */
+  const serverBase = useRef<Exercise>(initial);
+  /** Dernier état reçu d'un autre éducateur : c'est lui qui l'enregistre. */
+  const lastRemote = useRef('');
   const saveTimer = useRef<number | undefined>(undefined);
   const save = useCallback(async () => {
     window.clearTimeout(saveTimer.current);
     saveTimer.current = undefined;
     setSaveState('saving');
     try {
-      const json = JSON.stringify(exRef.current);
-      await api.put(`/exercises/${exRef.current.id}`, exRef.current);
+      const snap = exRef.current;
+      const json = JSON.stringify(snap);
+      await api.put(`/exercises/${snap.id}`, snap);
       lastSaved.current = json;
+      serverBase.current = snap;
       setSaveState(navigator.onLine ? 'saved' : 'offline');
     } catch (e) {
       setSaveState('error');
@@ -312,7 +365,13 @@ function Editor({ initial }: { initial: Exercise }) {
   }, [toast]);
 
   useEffect(() => {
-    if (JSON.stringify(ex) === lastSaved.current) return;
+    const json = JSON.stringify(ex);
+    if (json === lastSaved.current) return;
+    if (json === lastRemote.current) {
+      lastSaved.current = json;
+      serverBase.current = ex;
+      return;
+    }
     setSaveState('saving');
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(save, 700);
@@ -332,6 +391,119 @@ function Editor({ initial }: { initial: Exercise }) {
   const viewRef = useRef<View | null>(null);
   const drags = useRef(new Map<number, Drag>());
   const snapshot = useRef<Exercise | null>(null);
+
+  /* ---------------------------------------------------------------- collaboration en direct */
+
+  useWatchExercise(initial.id);
+  const [peers, setPeers] = useState<PresenceUser[]>([]);
+  const peersRef = useRef<PresenceUser[]>([]);
+  const [cursors, setCursors] = useState<Record<string, { name: string; userId: string; at: [number, number]; frame: number }>>({});
+  /** Dernier état reçu de chaque éducateur : base commune pour la fusion suivante. */
+  const bases = useRef(new Map<string, Exercise>());
+  const lastSent = useRef(JSON.stringify(initial));
+  const sendTimer = useRef<number | undefined>(undefined);
+  const cursorTimer = useRef<number | undefined>(undefined);
+  const pendingCursor = useRef<[number, number] | null>(null);
+
+  const broadcast = useCallback(() => {
+    sendTimer.current = undefined;
+    const cur = exRef.current;
+    lastSent.current = JSON.stringify(cur);
+    sendLive(cur.id, { state: stripMeta(cur) });
+  }, []);
+
+  /** Une modification locale part vers les autres personnes présentes (au plus toutes les 80 ms). */
+  useEffect(() => {
+    if (!peersRef.current.length) return;
+    const json = JSON.stringify(ex);
+    if (json === lastSent.current || json === lastRemote.current) return;
+    sendTimer.current ??= window.setTimeout(broadcast, 80);
+  }, [ex, broadcast]);
+
+  const sendCursor = (at: [number, number] | null) => {
+    if (!peersRef.current.length) return;
+    pendingCursor.current = at;
+    const flush = () => {
+      cursorTimer.current = undefined;
+      sendLive(exRef.current.id, { cursor: pendingCursor.current, frame });
+    };
+    if (at === null) {
+      window.clearTimeout(cursorTimer.current);
+      flush();
+    } else cursorTimer.current ??= window.setTimeout(flush, 60);
+  };
+
+  /** Intègre la version d'un autre éducateur sans perdre ce qu'on est en train de faire. */
+  const integrate = (remote: Exercise, base: Exercise, prefer: 'local' | 'remote') => {
+    const local = exRef.current;
+    const merged = merge3(base, local, remote, prefer);
+    if (equal(merged, local)) return;
+    // L'historique aussi : annuler ne doit pas effacer le travail des autres.
+    const rebase = (e: Exercise) => merge3(local, e, merged, 'remote');
+    past.current = past.current.map(rebase);
+    future.current = future.current.map(rebase);
+    if (snapshot.current) snapshot.current = rebase(snapshot.current);
+    apply(merged, false);
+  };
+
+  useLive((m) => {
+    if (m.t === 'hello') {
+      // (Re)connexion : on rattrape ce qui a pu être enregistré entre-temps.
+      void api.get<Exercise>(`/exercises/${initial.id}`).then((srv) => {
+        integrate(srv, serverBase.current, 'local');
+        serverBase.current = srv;
+      }, () => undefined);
+      return;
+    }
+    if (m.t === 'exercise' && m.id === initial.id && m.deleted) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = undefined;
+      toast(`${m.by ?? 'Un éducateur'} a supprimé cet exercice`, true);
+      nav('/exercices', { replace: true });
+      return;
+    }
+    if (!('exId' in m) || m.exId !== initial.id) return;
+    if (m.t === 'presence') {
+      const others = m.users.filter((u) => u.clientId !== CLIENT_ID);
+      const arrived = others.some((u) => !peersRef.current.some((p) => p.clientId === u.clientId));
+      peersRef.current = others;
+      setPeers(others);
+      setCursors((c) => Object.fromEntries(Object.entries(c).filter(([id]) => others.some((u) => u.clientId === id))));
+      for (const id of bases.current.keys()) if (!others.some((u) => u.clientId === id)) bases.current.delete(id);
+      // Un nouvel arrivant reçoit tout de suite ce qui n'est pas encore enregistré.
+      if (arrived && JSON.stringify(exRef.current) !== lastSaved.current) broadcast();
+    } else if (m.t === 'state') {
+      const remote = { ...exRef.current, ...m.data } as Exercise;
+      for (const k of META) (remote as unknown as Record<string, unknown>)[k] = exRef.current[k];
+      const base = bases.current.get(m.from) ?? serverBase.current;
+      bases.current.set(m.from, remote);
+      lastRemote.current = JSON.stringify(remote);
+      // En cas de conflit sur une même valeur, les deux onglets choisissent le même gagnant.
+      integrate(remote, base, CLIENT_ID < m.from ? 'local' : 'remote');
+    } else if (m.t === 'cursor') {
+      setCursors((c) => {
+        const n = { ...c };
+        if (m.cursor) n[m.from] = { name: m.name, userId: m.userId, at: m.cursor, frame: m.frame };
+        else delete n[m.from];
+        return n;
+      });
+    }
+  });
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(sendTimer.current);
+      window.clearTimeout(cursorTimer.current);
+    },
+    [],
+  );
+
+  /** Position écran d'un point du terrain (curseurs des autres éducateurs). */
+  const toScreen = (p: [number, number]) => {
+    const v = viewRef.current;
+    if (!v) return null;
+    return v.rot ? { x: v.ox + (v.fh - p[1]) * v.s, y: v.oy + p[0] * v.s } : { x: v.ox + p[0] * v.s, y: v.oy + p[1] * v.s };
+  };
 
   const displayPos = useMemo(
     (): Positions => (pb.playing ? evaluate(ex, tl, Math.min(pb.time, tl.total)).pos : tl.rest[frame]),
@@ -460,6 +632,10 @@ function Editor({ initial }: { initial: Exercise }) {
   };
 
   const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
+    if (viewRef.current && e.isPrimary) {
+      const c = toWorldPt(e);
+      sendCursor([round(c[0]), round(c[1])]);
+    }
     const d = drags.current.get(e.pointerId);
     if (!d || !viewRef.current) return;
     const w = toWorldPt(e);
@@ -684,7 +860,7 @@ function Editor({ initial }: { initial: Exercise }) {
 
   const doDuplicate = async () => {
     await save();
-    const copy = await duplicateExercise(exRef.current);
+    const copy = await duplicateExercise(exRef.current, exRef.current.teamId ?? team?.id ?? null);
     nav(`/exercices/${copy.id}`);
     toast('Copie créée');
   };
@@ -870,6 +1046,7 @@ function Editor({ initial }: { initial: Exercise }) {
           onChange={(e) => mutate((d) => void (d.title = e.target.value), false)}
           onBlur={() => bump((n) => n + 1)}
         />
+        <PresenceBar peers={peers} />
         <span className="small muted hide-mobile" style={{ whiteSpace: 'nowrap' }}>
           {saveState === 'saving' ? 'Enregistrement…' : saveState === 'offline' ? 'Hors ligne · en attente' : saveState === 'error' ? 'Erreur' : 'Enregistré'}
         </span>
@@ -907,6 +1084,14 @@ function Editor({ initial }: { initial: Exercise }) {
                 >
                   {ex.validated ? <BadgeCheck /> : <Users />} Partager avec le club
                   {ex.visibility === 'club' && <Check className="menu-check" />}
+                </button>
+              )}
+              {team && ex.teamId !== team.id && (ex.ownerId === me.user.id || me.user.role === 'admin') && (
+                <button
+                  onClick={() => (close(), mutate((d) => void (d.teamId = team.id)), toast(`Partagé avec les éducateurs et joueurs ${team.category}`))}
+                  title="Tous les éducateurs de l’équipe pourront le modifier, et les joueurs le consulter."
+                >
+                  <Users /> Partager avec l’équipe {team.category}
                 </button>
               )}
               <button onClick={() => (close(), void doDuplicate())}>
@@ -952,12 +1137,26 @@ function Editor({ initial }: { initial: Exercise }) {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onPointerLeave={() => sendCursor(null)}
           onDragOver={(e) => e.preventDefault()}
           onDrop={onDrop}
           onContextMenu={(e) => e.preventDefault()}
           style={{ cursor: tool.t === 'select' ? 'default' : 'crosshair' }}
         >
           <canvas ref={canvasRef} />
+          {Object.entries(cursors).map(([cid, c]) => {
+            const p = toScreen(c.at);
+            if (!p) return null;
+            return (
+              <div key={cid} className="peer-cursor" style={{ transform: `translate(${p.x}px, ${p.y}px)`, color: peerColor(c.userId) }}>
+                <MousePointer2 size={18} fill="currentColor" />
+                <span style={{ background: peerColor(c.userId) }}>
+                  {c.name.split(' ')[0]}
+                  {c.frame !== frame ? ` · étape ${c.frame + 1}` : ''}
+                </span>
+              </div>
+            );
+          })}
           {(context || hint) && (
             <div className="stage-float top" onPointerDown={(e) => e.stopPropagation()}>
               {context ?? <span className="small" style={{ padding: '4px 8px', color: 'var(--ink-2)', whiteSpace: 'nowrap' }}>{hint}</span>}

@@ -29,7 +29,8 @@ export default defineConfig({
         runtimeCaching: [
           {
             // Lectures API : réseau d'abord, cache si hors-ligne (séance au bord du terrain).
-            urlPattern: ({ url, request }) => url.pathname.startsWith('/api/') && request.method === 'GET',
+            // Le flux temps réel (/api/live) ne passe jamais par le cache.
+            urlPattern: ({ url, request }) => url.pathname.startsWith('/api/') && url.pathname !== '/api/live' && request.method === 'GET',
             handler: 'NetworkFirst',
             options: { cacheName: 'api', networkTimeoutSeconds: 4, expiration: { maxEntries: 300 } },
           },

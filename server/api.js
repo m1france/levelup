@@ -8,6 +8,7 @@ import {
   childIdsFor, HttpError,
 } from './auth.js';
 import { seedStarterLibrary, seedDemoTeam } from './demo.js';
+import { openStream, clientOf, setWatch, toRoom, toTeam, toTeamAndRoom, refreshTeams } from './live.js';
 
 export const api = Router();
 
@@ -19,6 +20,8 @@ const checkId = (id) => {
   return id;
 };
 const INVITE_DAYS = 30;
+/** Onglet à l'origine de la requête : il ne reçoit pas l'écho de sa propre modification. */
+const origin = (req) => String(req.get('X-Client-Id') || '') || null;
 
 /* ------------------------------------------------------------------ setup & auth */
 
@@ -246,6 +249,7 @@ api.patch('/users/:id', (req, res) => {
       assignLinks(u.id, role, req.body.teamIds ?? cur.teamIds, req.body.playerIds ?? cur.playerIds);
     }
   });
+  refreshTeams([u.id]);
   res.json(userRow(get('SELECT * FROM users WHERE id = ?', u.id)));
 });
 
@@ -310,6 +314,7 @@ api.put('/teams/:id', (req, res) => {
       }
     }
   });
+  refreshTeams();
   res.json(listTeams(req.user).find((t) => t.id === id) ?? null);
 });
 
@@ -443,45 +448,79 @@ api.delete('/notes/:id', (req, res) => {
 
 /* ------------------------------------------------------------------ exercices */
 
-function exerciseOut(row) {
+function exerciseOut(row, user = null) {
   const owner = row.owner_id ? get('SELECT name FROM users WHERE id = ?', row.owner_id) : null;
-  return {
+  const out = {
     ...parse(row),
     ownerId: row.owner_id,
     ownerName: owner?.name ?? 'Club',
+    teamId: row.team_id ?? null,
     visibility: row.visibility,
     validated: !!row.validated,
     updatedAt: row.updated_at,
   };
+  if (user) out.canEdit = exerciseEditable(user, row);
+  return out;
 }
 
+/** Lecture : l'auteur, toute personne de l'équipe (joueurs et parents compris), et les éducateurs pour la bibliothèque du club. */
 function exerciseReadable(user, row) {
   if (user.role === 'admin' || row.owner_id === user.id) return true;
+  if (row.team_id && teamIdsFor(user).includes(row.team_id)) return true;
   return isStaff(user) && row.visibility === 'club';
 }
 
+/** Écriture : l'auteur, l'administrateur, et tous les éducateurs / dirigeants de l'équipe de l'exercice. */
+function exerciseEditable(user, row) {
+  if (user.role === 'admin' || row.owner_id === user.id) return true;
+  return !!row.team_id && isStaff(user) && can(user, 'exercises.create') && teamIdsFor(user).includes(row.team_id);
+}
+
+function exerciseRow(user, id) {
+  const row = get('SELECT * FROM exercises WHERE id = ?', id);
+  if (!row || !exerciseReadable(user, row)) throw new HttpError(404, 'Exercice introuvable');
+  return row;
+}
+
+/** Prévient l'équipe (listes, séances) et la salle de l'exercice (lecteurs). */
+function exerciseChanged(req, row, deleted = false) {
+  const msg = { t: 'exercise', id: row.id, teamId: row.team_id ?? null, deleted, by: req.user.name, updatedAt: deleted ? now() : row.updated_at };
+  toTeamAndRoom(row.team_id, row.id, msg, origin(req));
+}
+
 api.get('/exercises', (req, res) => {
-  if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
-  const rows = req.query.scope === 'club'
-    ? all(`SELECT * FROM exercises WHERE visibility = 'club' ORDER BY validated DESC, updated_at DESC`)
-    : all('SELECT * FROM exercises WHERE owner_id = ? ORDER BY updated_at DESC', req.user.id);
-  res.json(rows.map(exerciseOut));
+  const scope = req.query.scope;
+  let rows;
+  if (scope === 'team') {
+    needTeam(req.user, String(req.query.teamId || ''));
+    rows = all('SELECT * FROM exercises WHERE team_id = ? ORDER BY updated_at DESC', req.query.teamId);
+  } else {
+    if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
+    rows = scope === 'club'
+      ? all(`SELECT * FROM exercises WHERE visibility = 'club' ORDER BY validated DESC, updated_at DESC`)
+      : all('SELECT * FROM exercises WHERE owner_id = ? AND team_id IS NULL ORDER BY updated_at DESC', req.user.id);
+  }
+  res.json(rows.map((r) => exerciseOut(r, req.user)));
 });
 
 api.get('/exercises/:id', (req, res) => {
-  const row = get('SELECT * FROM exercises WHERE id = ?', req.params.id);
-  if (!row || !exerciseReadable(req.user, row)) throw new HttpError(404, 'Exercice introuvable');
-  res.json(exerciseOut(row));
+  res.json(exerciseOut(exerciseRow(req.user, req.params.id), req.user));
 });
 
-const EX_META = ['id', 'ownerId', 'ownerName', 'visibility', 'validated', 'updatedAt'];
+const EX_META = ['id', 'ownerId', 'ownerName', 'teamId', 'visibility', 'validated', 'updatedAt', 'canEdit'];
 
 api.put('/exercises/:id', (req, res) => {
   const id = checkId(req.params.id);
   const existing = get('SELECT * FROM exercises WHERE id = ?', id);
   if (existing) {
-    if (existing.owner_id !== req.user.id && req.user.role !== 'admin') throw new HttpError(403, 'Seul son auteur peut modifier cet exercice');
+    if (!exerciseEditable(req.user, existing)) throw new HttpError(403, 'Seuls les éducateurs de son équipe peuvent modifier cet exercice');
   } else need(req.user, 'exercises.create');
+  // Équipe : fixée à la création, ou déplacée par quelqu'un qui encadre la nouvelle équipe.
+  let teamId = existing?.team_id ?? null;
+  if (req.body.teamId !== undefined && req.body.teamId !== teamId) {
+    if (req.body.teamId) needTeam(req.user, req.body.teamId, { staff: true });
+    teamId = req.body.teamId || null;
+  }
   const visibility = req.body.visibility === 'club' ? 'club' : 'private';
   if (visibility === 'club' && existing?.visibility !== 'club') need(req.user, 'library.share');
   const data = { ...req.body };
@@ -492,11 +531,18 @@ api.put('/exercises/:id', (req, res) => {
   if (existing) {
     // Un exercice modifié doit être revalidé.
     const validated = visibility === 'club' && existing.validated && existing.data === json ? 1 : 0;
-    run('UPDATE exercises SET visibility = ?, validated = ?, data = ?, updated_at = ? WHERE id = ?', visibility, validated, json, now(), id);
+    run('UPDATE exercises SET visibility = ?, validated = ?, data = ?, team_id = ?, updated_at = ? WHERE id = ?', visibility, validated, json, teamId, now(), id);
   } else {
-    run('INSERT INTO exercises VALUES (?, ?, ?, 0, ?, ?, ?)', id, req.user.id, visibility, json, now(), now());
+    run(
+      'INSERT INTO exercises (id, owner_id, visibility, validated, data, created_at, updated_at, team_id) VALUES (?, ?, ?, 0, ?, ?, ?, ?)',
+      id, req.user.id, visibility, json, now(), now(), teamId,
+    );
   }
-  res.json(exerciseOut(get('SELECT * FROM exercises WHERE id = ?', id)));
+  const row = get('SELECT * FROM exercises WHERE id = ?', id);
+  exerciseChanged(req, row);
+  // Changement d'équipe : l'ancienne équipe retire l'exercice de sa liste.
+  if (existing?.team_id && existing.team_id !== teamId) toTeam(existing.team_id, { t: 'exercise', id, teamId: existing.team_id, deleted: true }, origin(req));
+  res.json(exerciseOut(row, req.user));
 });
 
 api.post('/exercises/:id/validate', (req, res) => {
@@ -504,14 +550,55 @@ api.post('/exercises/:id/validate', (req, res) => {
   const row = get('SELECT * FROM exercises WHERE id = ?', req.params.id);
   if (!row || row.visibility !== 'club') throw new HttpError(404, 'Exercice introuvable');
   run('UPDATE exercises SET validated = ? WHERE id = ?', req.body.validated ? 1 : 0, row.id);
-  res.json(exerciseOut(get('SELECT * FROM exercises WHERE id = ?', row.id)));
+  const updated = get('SELECT * FROM exercises WHERE id = ?', row.id);
+  exerciseChanged(req, updated);
+  res.json(exerciseOut(updated, req.user));
 });
 
 api.delete('/exercises/:id', (req, res) => {
   const row = get('SELECT * FROM exercises WHERE id = ?', req.params.id);
   if (!row) return res.json({ ok: true });
-  if (row.owner_id !== req.user.id && req.user.role !== 'admin') throw new HttpError(403, 'Seul son auteur peut supprimer cet exercice');
+  if (!exerciseEditable(req.user, row)) throw new HttpError(403, 'Seuls les éducateurs de son équipe peuvent supprimer cet exercice');
   run('DELETE FROM exercises WHERE id = ?', row.id);
+  exerciseChanged(req, row, true);
+  res.json({ ok: true });
+});
+
+/* ------------------------------------------------------------------ temps réel */
+
+api.get('/live', (req, res) => {
+  openStream(req, res, teamIdsFor(req.user));
+});
+
+/** L'onglet ouvre (ou ferme, exerciseId = null) un exercice : présence et diffusion en direct. */
+api.post('/live/watch', (req, res) => {
+  const c = clientOf(req.user, origin(req));
+  if (!c) throw new HttpError(404, 'Connexion temps réel introuvable');
+  const exId = req.body.exerciseId ? String(req.body.exerciseId) : null;
+  if (!exId) {
+    setWatch(c, null, false);
+    return res.json({ ok: true });
+  }
+  const row = exerciseRow(req.user, exId);
+  setWatch(c, exId, exerciseEditable(req.user, row));
+  res.json({ ok: true });
+});
+
+/** Relais instantané (sans enregistrement) de l'état de l'éditeur et du curseur vers les autres personnes présentes. */
+api.post('/exercises/:id/live', (req, res) => {
+  const c = clientOf(req.user, origin(req));
+  if (!c || c.watch !== req.params.id || !c.editor) throw new HttpError(403, 'Action non autorisée');
+  const msg = { exId: c.watch, from: c.id, userId: req.user.id, name: req.user.name };
+  if (req.body.state && typeof req.body.state === 'object') {
+    const data = { ...req.body.state };
+    for (const k of EX_META) if (k !== 'visibility') delete data[k];
+    toRoom(c.watch, { t: 'state', ...msg, data }, c.id);
+  }
+  if (req.body.cursor !== undefined) {
+    const cur = req.body.cursor;
+    const ok = Array.isArray(cur) && cur.length === 2 && cur.every(Number.isFinite);
+    toRoom(c.watch, { t: 'cursor', ...msg, cursor: ok ? cur : null, frame: Number(req.body.frame) || 0 }, c.id);
+  }
   res.json({ ok: true });
 });
 
@@ -603,6 +690,7 @@ api.put('/trainings/:id', (req, res) => {
   } else {
     run('INSERT INTO trainings VALUES (?, ?, ?, ?, NULL, ?, ?, ?)', id, req.body.teamId, date, published, JSON.stringify(data), now(), now());
   }
+  toTeam(req.body.teamId, { t: 'training', id, teamId: req.body.teamId, by: req.user.name }, origin(req));
   res.json(trainingPayload(get('SELECT * FROM trainings WHERE id = ?', id), { sanitize: false }));
 });
 
@@ -622,6 +710,7 @@ api.delete('/trainings/:id', (req, res) => {
   if (!row) return res.json({ ok: true });
   needTeam(req.user, row.team_id, { staff: true });
   run('DELETE FROM trainings WHERE id = ?', req.params.id);
+  toTeam(row.team_id, { t: 'training', id: req.params.id, teamId: row.team_id, deleted: true }, origin(req));
   res.json({ ok: true });
 });
 

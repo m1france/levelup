@@ -69,7 +69,7 @@ async function raw<T>(method: Method, path: string, body?: unknown): Promise<T> 
     res = await fetch(`/api${path}`, {
       method,
       credentials: 'same-origin',
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: { 'X-Client-Id': CLIENT_ID, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -106,3 +106,6 @@ export function uid(len = 16) {
   const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
   return Array.from(bytes, (b) => abc[b & 63]).join('');
 }
+
+/** Identifiant de cet onglet : le serveur ne lui renvoie pas l'écho de ses propres modifications. */
+export const CLIENT_ID = uid(16);
