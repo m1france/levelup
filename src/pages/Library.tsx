@@ -1,13 +1,13 @@
-import { BadgeCheck, Clock, LayoutGrid, MoreHorizontal, Plus, Search, Upload, Users } from 'lucide-react';
+import { BadgeCheck, Clock, MoreHorizontal, Plus, Search, Upload, Users } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SceneThumb } from '../components/Pitch';
-import { Empty, Menu, Seg, Spinner, useAsync, useToast } from '../components/ui';
+import { Menu, Seg, Spinner, useAsync, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
 import { useLive } from '../lib/live';
 import { useApp } from '../lib/store';
 import type { Exercise } from '../lib/types';
-import { THEMES, emptyExercise } from '../pitch/geometry';
+import { emptyExercise } from '../pitch/geometry';
 
 /** Un nouvel exercice appartient à l'équipe : tous ses éducateurs le modifient, ses joueurs le consultent. */
 export async function createExercise(teamId: string | null): Promise<Exercise> {
@@ -90,31 +90,14 @@ export function ExerciseCard({ ex, onClick, action }: { ex: Exercise; onClick: (
 
 export function useExerciseSearch(list: Exercise[] | null) {
   const [q, setQ] = useState('');
-  const [theme, setTheme] = useState<string | null>(null);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return (list ?? []).filter(
-      (e) =>
-        (!theme || e.themes.includes(theme)) &&
-        (!needle || `${e.title} ${e.objective} ${e.themes.join(' ')}`.toLowerCase().includes(needle)),
-    );
-  }, [list, q, theme]);
+    return (list ?? []).filter((e) => !needle || `${e.title} ${e.objective} ${e.themes.join(' ')}`.toLowerCase().includes(needle));
+  }, [list, q]);
   const controls = (
-    <div className="stack" style={{ gap: 10, marginBottom: 18 }}>
-      <div style={{ position: 'relative' }}>
-        <Search size={17} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ink-3)' }} />
-        <input className="input" style={{ paddingLeft: 38 }} placeholder="Rechercher un exercice…" value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
-      <div className="chips scroll">
-        <button className={`chip${!theme ? ' on' : ''}`} onClick={() => setTheme(null)}>
-          Tous
-        </button>
-        {THEMES.map((t) => (
-          <button key={t} className={`chip${theme === t ? ' on' : ''}`} onClick={() => setTheme(theme === t ? null : t)}>
-            {t}
-          </button>
-        ))}
-      </div>
+    <div style={{ position: 'relative', marginBottom: 18 }}>
+      <Search size={17} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ink-3)' }} />
+      <input className="input" style={{ paddingLeft: 38 }} placeholder="Rechercher un exercice…" value={q} onChange={(e) => setQ(e.target.value)} />
     </div>
   );
   return { filtered, controls };
@@ -220,34 +203,23 @@ export function Library() {
           ))}
         </div>
       ) : (
-        <div className="card">
-          <Empty
-            icon={<LayoutGrid />}
-            title={scope === 'club' ? 'La bibliothèque du club est vide' : 'Aucun exercice pour le moment'}
-            text={
-              !isStaff
-                ? 'Les éducateurs n’ont pas encore ajouté d’exercice à l’équipe.'
-                : scope === 'club'
-                  ? 'Partagez vos exercices avec le club depuis leur fiche.'
-                  : scope === 'team'
-                    ? 'Créez un exercice ou dupliquez-en un depuis la bibliothèque du club : toute l’équipe le verra.'
-                    : 'Les exercices sans équipe apparaissent ici.'
-            }
-            action={
-              isStaff && scope !== 'club' ? (
-                <div className="row" style={{ justifyContent: 'center' }}>
-                  <button className="btn" onClick={() => setParams({ scope: 'club' })}>
-                    Voir la bibliothèque du club
-                  </button>
-                  {canCreate && (
-                    <button className="btn primary" onClick={create}>
-                      <Plus /> Créer
-                    </button>
-                  )}
-                </div>
-              ) : undefined
-            }
-          />
+        <div className="card empty-actions">
+          {!isStaff ? (
+            <span className="muted">Aucun exercice pour le moment</span>
+          ) : scope !== 'club' ? (
+            <button className="btn" onClick={() => setParams({ scope: 'club' })}>
+              Voir la bibliothèque du club
+            </button>
+          ) : (
+            <button className="btn" onClick={() => setParams({})}>
+              {team ? `Voir les exercices ${team.category}` : 'Voir mes exercices'}
+            </button>
+          )}
+          {canCreate && scope !== 'club' && (
+            <button className="btn primary" onClick={create} disabled={creating}>
+              <Plus /> Créer
+            </button>
+          )}
         </div>
       )}
     </div>

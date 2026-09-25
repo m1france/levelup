@@ -33,6 +33,26 @@ export interface Member extends User {
   inviteToken: string | null;
 }
 
+export interface InviteLink {
+  token: string;
+  role: Exclude<Role, 'admin'>;
+  teamId: string | null;
+  createdBy: string | null;
+  uses: number;
+  expiresAt: number;
+}
+
+export interface InviteInfo {
+  kind: 'personal' | 'link';
+  role: Role;
+  name?: string;
+  email?: string;
+  teams: { id: string; category: string; color: string }[];
+  players: { id: string; firstName: string; lastName: string }[];
+  invitedBy: string | null;
+  clubName: string;
+}
+
 export interface Player {
   id: string;
   teamId: string;

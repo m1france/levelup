@@ -122,7 +122,20 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_team ON events(team_id);
 UPDATE teams SET name = category WHERE name != category;
+CREATE TABLE IF NOT EXISTS invite_links (
+  token TEXT PRIMARY KEY,
+  role TEXT NOT NULL,
+  team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  uses INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
 `);
+// Qui a envoyé l'invitation personnelle (ajouté après coup).
+if (!db.prepare('PRAGMA table_info(invites)').all().some((c) => c.name === 'invited_by')) {
+  db.exec('ALTER TABLE invites ADD COLUMN invited_by TEXT REFERENCES users(id) ON DELETE SET NULL');
+}
 
 /* Exercices d'équipe : partagés entre tous les éducateurs de l'équipe, consultables par ses joueurs. */
 if (!db.prepare('PRAGMA table_info(exercises)').all().some((c) => c.name === 'team_id')) {
