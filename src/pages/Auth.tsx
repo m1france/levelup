@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Field, Spinner, useAsync } from '../components/ui';
+import { Avatar, Field, Spinner, useAsync } from '../components/ui';
 import { api } from '../lib/api';
+import { ROLE_LABELS } from '../lib/store';
+import type { InviteInfo } from '../lib/types';
 
 function useSubmit(fn: () => Promise<void>) {
   const [error, setError] = useState<string | null>(null);
@@ -102,8 +104,8 @@ export function Login({ clubName, onDone }: { clubName: string | null; onDone: (
 export function Invite() {
   const { token } = useParams();
   const nav = useNavigate();
-  const info = useAsync(() => api.get<{ name: string; email: string; clubName: string }>(`/invites/${token}`), [token]);
-  const [f, setF] = useState({ name: '', password: '' });
+  const info = useAsync(() => api.get<InviteInfo>(`/invites/${token}`), [token]);
+  const [f, setF] = useState({ name: '', email: '', password: '', playerIds: [] as string[] });
   const { error, busy, submit } = useSubmit(async () => {
     await api.post(`/invites/${token}`, f);
     nav('/', { replace: true });
@@ -120,22 +122,64 @@ export function Invite() {
         </div>
       </div>
     );
+  const inv = info.data;
+  const open = inv.kind === 'link';
+  const togglePlayer = (id: string) =>
+    setF({ ...f, playerIds: f.playerIds.includes(id) ? f.playerIds.filter((x) => x !== id) : [...f.playerIds, id] });
   return (
-    <div className="auth">
+    <div className="auth invite">
+      <aside className="invite-card">
+        {inv.invitedBy && <Avatar name={inv.invitedBy} size="lg" />}
+        <p>
+          <b>{inv.invitedBy ?? inv.clubName}</b> t’a invité à rejoindre l’app en tant que <b>{ROLE_LABELS[inv.role].toLowerCase()}</b>.
+        </p>
+        {inv.teams.length > 0 && (
+          <div className="invite-teams">
+            <span className="muted small">{inv.teams.length > 1 ? 'Équipes' : 'Équipe'}</span>
+            <div className="chips">
+              {inv.teams.map((t) => (
+                <span key={t.id} className="chip on" style={{ background: t.color, borderColor: t.color }}>
+                  {t.category}
+                </span>
+              ))}
+            </div>
+            <span className="muted small">Tu y seras ajouté automatiquement.</span>
+          </div>
+        )}
+      </aside>
       <form className="auth-card" onSubmit={submit}>
         <img className="logo" src="/icon.svg" alt="" />
-        <h1>Rejoindre {info.data.clubName}</h1>
-        <p className="lead">Choisissez un mot de passe pour activer votre compte ({info.data.email}).</p>
+        <h1>Rejoindre {inv.clubName}</h1>
+        <p className="lead">
+          {open ? 'Crée ton compte en quelques secondes.' : `Choisis un mot de passe pour activer ton compte (${inv.email}).`}
+        </p>
         <div className="stack">
-          <Field label="Votre nom">
-            <input className="input" placeholder={info.data.name} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+          <Field label="Ton nom">
+            <input className="input" required={open} autoComplete="name" placeholder={inv.name} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
           </Field>
+          {open && (
+            <Field label="E-mail">
+              <input className="input" type="email" required autoComplete="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+            </Field>
+          )}
+          {open && inv.role === 'parent' && (
+            <Field label="Joueur" hint="toi ou ton enfant">
+              <div className="chips">
+                {inv.players.map((p) => (
+                  <button type="button" key={p.id} className={`chip${f.playerIds.includes(p.id) ? ' on' : ''}`} onClick={() => togglePlayer(p.id)}>
+                    {[p.firstName, p.lastName].filter(Boolean).join(' ')}
+                  </button>
+                ))}
+                {!inv.players.length && <span className="muted small">L’effectif de l’équipe est vide.</span>}
+              </div>
+            </Field>
+          )}
           <Field label="Mot de passe" hint="8 caractères minimum">
             <input className="input" type="password" required minLength={8} autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
           </Field>
           {error && <div className="form-error">{error}</div>}
-          <button className="btn primary lg block" disabled={busy}>
-            Activer mon compte
+          <button className="btn primary lg block" disabled={busy || (open && inv.role === 'parent' && !f.playerIds.length)}>
+            {open ? 'Créer mon compte' : 'Activer mon compte'}
           </button>
         </div>
       </form>

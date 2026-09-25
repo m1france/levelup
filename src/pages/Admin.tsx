@@ -5,7 +5,7 @@ import { Avatar, Empty, Field, Seg, Sheet, Spinner, useAsync, useConfirm, useToa
 import { Account } from './Account';
 import { api, uid } from '../lib/api';
 import { CATEGORIES, ROLE_LABELS, playerName, useApp } from '../lib/store';
-import type { Member, Player, Role, Team } from '../lib/types';
+import type { InviteLink, Member, Player, Role, Team } from '../lib/types';
 
 type Tab = 'profil' | 'membres' | 'equipes' | 'permissions' | 'club';
 
@@ -50,26 +50,32 @@ export function Settings() {
 const inviteUrl = (token: string) => `${location.origin}/invitation/${token}`;
 
 function CopyLink({ token }: { token: string }) {
-  const toast = useToast();
-  const url = inviteUrl(token);
   return (
     <div className="copy-box">
       <Link2 size={15} color="var(--ink-3)" />
-      <code>{url}</code>
-      <button
-        className="btn sm"
-        onClick={async () => {
-          const nav = navigator as Navigator;
-          if (nav.share && /Mobi/.test(navigator.userAgent)) await nav.share({ url, title: 'Invitation Atelier' }).catch(() => {});
-          else {
-            await navigator.clipboard.writeText(url);
-            toast('Lien copié');
-          }
-        }}
-      >
-        <Copy /> Copier
-      </button>
+      <code>{inviteUrl(token)}</code>
+      <CopyButton token={token} />
     </div>
+  );
+}
+
+function CopyButton({ token }: { token: string }) {
+  const toast = useToast();
+  const url = inviteUrl(token);
+  return (
+    <button
+      className="btn sm"
+      onClick={async () => {
+        const nav = navigator as Navigator;
+        if (nav.share && /Mobi/.test(navigator.userAgent)) await nav.share({ url, title: 'Invitation Atelier' }).catch(() => {});
+        else {
+          await navigator.clipboard.writeText(url);
+          toast('Lien copié');
+        }
+      }}
+    >
+      <Copy /> Copier
+    </button>
   );
 }
 
@@ -88,6 +94,7 @@ function Members() {
   const all = useAllPlayers();
   const [edit, setEdit] = useState<Member | 'new' | null>(null);
   const [filter, setFilter] = useState<Role | 'all'>('all');
+  const [linkOpen, setLinkOpen] = useState(false);
   const list = (q.data ?? []).filter((m) => filter === 'all' || m.role === filter);
   const teamName = (id: string) => all.data?.find((x) => x.team.id === id)?.team.category;
   const childName = (id: string) => {
@@ -108,10 +115,16 @@ function Members() {
             </button>
           ))}
         </div>
-        <button className="btn primary" onClick={() => setEdit('new')}>
-          <UserPlus /> Inviter
-        </button>
+        <div className="row">
+          <button className="btn" onClick={() => setLinkOpen(true)}>
+            <Link2 /> Lien d’invitation
+          </button>
+          <button className="btn primary" onClick={() => setEdit('new')}>
+            <UserPlus /> Inviter
+          </button>
+        </div>
       </div>
+      <InviteLinks teams={all.data?.map((x) => x.team) ?? []} open={linkOpen} onOpenChange={setLinkOpen} />
       {q.loading && !q.data ? (
         <Spinner fill />
       ) : (
@@ -137,6 +150,118 @@ function Members() {
         </div>
       )}
       {edit && <MemberForm member={edit === 'new' ? undefined : edit} all={all.data ?? []} onClose={() => setEdit(null)} onSaved={q.reload} />}
+    </>
+  );
+}
+
+const LINK_ROLES = ['coach', 'dirigeant', 'parent'] as const;
+
+/** Liens partageables : rôle et équipe attribués automatiquement à l'inscription. */
+function InviteLinks({ teams, open, onOpenChange }: { teams: Team[]; open: boolean; onOpenChange: (v: boolean) => void }) {
+  const toast = useToast();
+  const q = useAsync(() => api.get<InviteLink[]>('/invite-links'), []);
+  const [f, setF] = useState<{ role: InviteLink['role']; teamId: string | null }>({ role: 'parent', teamId: null });
+  const [created, setCreated] = useState<InviteLink | null>(null);
+  const teamName = (id: string | null) => teams.find((t) => t.id === id)?.category;
+  const close = () => {
+    onOpenChange(false);
+    setCreated(null);
+  };
+  const create = async () => {
+    try {
+      setCreated(await api.post<InviteLink>('/invite-links', f));
+      q.reload();
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+  const links = q.data ?? [];
+
+  return (
+    <>
+      {links.length > 0 && (
+        <div className="card list" style={{ marginBottom: 14 }}>
+          {links.map((l) => (
+            <div key={l.token} className="list-item" style={{ cursor: 'default', flexWrap: 'wrap' }}>
+              <Link2 size={18} color="var(--ink-3)" />
+              <div className="t">
+                <b>
+                  {ROLE_LABELS[l.role]}
+                  {l.teamId && teamName(l.teamId) ? ` · ${teamName(l.teamId)}` : ''}
+                </b>
+                <small>
+                  {l.uses} inscription{l.uses > 1 ? 's' : ''} · expire le {new Date(l.expiresAt).toLocaleDateString('fr-FR')}
+                </small>
+              </div>
+              <CopyButton token={l.token} />
+              <button
+                className="btn ghost icon sm"
+                aria-label="Désactiver le lien"
+                onClick={async () => {
+                  await api.del(`/invite-links/${l.token}`);
+                  q.reload();
+                }}
+              >
+                <Trash2 />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {open && (
+        <Sheet
+          title={created ? 'Lien créé' : 'Lien d’invitation'}
+          onClose={close}
+          footer={
+            created ? (
+              <button className="btn primary" onClick={close}>Terminé</button>
+            ) : (
+              <>
+                <button className="btn ghost" onClick={close}>Annuler</button>
+                <button className="btn primary" disabled={f.role === 'parent' && !f.teamId} onClick={create}>
+                  Créer le lien
+                </button>
+              </>
+            )
+          }
+        >
+          {created ? (
+            <div className="stack">
+              <p>
+                Partagez ce lien (SportEasy, SMS, WhatsApp…). Chaque personne qui s’inscrit devient <b>{ROLE_LABELS[created.role].toLowerCase()}</b>
+                {created.teamId ? <> et rejoint l’équipe <b>{teamName(created.teamId)}</b></> : null}. Valable 30 jours.
+              </p>
+              <CopyLink token={created.token} />
+            </div>
+          ) : (
+            <div className="stack">
+              <Field label="Rôle attribué">
+                <Seg<InviteLink['role']>
+                  value={f.role}
+                  onChange={(role) => setF({ ...f, role })}
+                  options={LINK_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] }))}
+                />
+              </Field>
+              <Field label="Équipe" hint={f.role === 'parent' ? 'obligatoire' : 'facultatif'}>
+                <div className="chips">
+                  {f.role !== 'parent' && (
+                    <button className={`chip${!f.teamId ? ' on' : ''}`} onClick={() => setF({ ...f, teamId: null })}>
+                      Aucune
+                    </button>
+                  )}
+                  {teams.map((t) => (
+                    <button key={t.id} className={`chip${f.teamId === t.id ? ' on' : ''}`} onClick={() => setF({ ...f, teamId: t.id })}>
+                      {t.category}
+                    </button>
+                  ))}
+                  {!teams.length && <span className="muted small">Aucune équipe créée.</span>}
+                </div>
+              </Field>
+              {f.role === 'parent' && <p className="muted small">À l’inscription, la personne choisit son enfant dans l’effectif de l’équipe.</p>}
+            </div>
+          )}
+        </Sheet>
+      )}
     </>
   );
 }

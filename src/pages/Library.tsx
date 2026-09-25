@@ -1,12 +1,12 @@
-import { BadgeCheck, Clock, LayoutGrid, Plus, Search, Users } from 'lucide-react';
+import { BadgeCheck, Clock, Plus, Search, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SceneThumb } from '../components/Pitch';
-import { Empty, Seg, Spinner, useAsync, useToast } from '../components/ui';
+import { Seg, Spinner, useAsync, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
 import { useApp } from '../lib/store';
 import type { Exercise } from '../lib/types';
-import { THEMES, emptyExercise } from '../pitch/geometry';
+import { emptyExercise } from '../pitch/geometry';
 
 export async function createExercise(): Promise<Exercise> {
   return api.put<Exercise>(`/exercises/${uid()}`, { ...emptyExercise(), title: 'Nouvel exercice', visibility: 'private' });
@@ -51,31 +51,14 @@ export function ExerciseCard({ ex, onClick, action }: { ex: Exercise; onClick: (
 
 export function useExerciseSearch(list: Exercise[] | null) {
   const [q, setQ] = useState('');
-  const [theme, setTheme] = useState<string | null>(null);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return (list ?? []).filter(
-      (e) =>
-        (!theme || e.themes.includes(theme)) &&
-        (!needle || `${e.title} ${e.objective} ${e.themes.join(' ')}`.toLowerCase().includes(needle)),
-    );
-  }, [list, q, theme]);
+    return (list ?? []).filter((e) => !needle || `${e.title} ${e.objective} ${e.themes.join(' ')}`.toLowerCase().includes(needle));
+  }, [list, q]);
   const controls = (
-    <div className="stack" style={{ gap: 10, marginBottom: 18 }}>
-      <div style={{ position: 'relative' }}>
-        <Search size={17} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ink-3)' }} />
-        <input className="input" style={{ paddingLeft: 38 }} placeholder="Rechercher un exercice…" value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
-      <div className="chips scroll">
-        <button className={`chip${!theme ? ' on' : ''}`} onClick={() => setTheme(null)}>
-          Tous
-        </button>
-        {THEMES.map((t) => (
-          <button key={t} className={`chip${theme === t ? ' on' : ''}`} onClick={() => setTheme(theme === t ? null : t)}>
-            {t}
-          </button>
-        ))}
-      </div>
+    <div style={{ position: 'relative', marginBottom: 18 }}>
+      <Search size={17} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ink-3)' }} />
+      <input className="input" style={{ paddingLeft: 38 }} placeholder="Rechercher un exercice…" value={q} onChange={(e) => setQ(e.target.value)} />
     </div>
   );
   return { filtered, controls };
@@ -135,30 +118,21 @@ export function Library() {
           ))}
         </div>
       ) : (
-        <div className="card">
-          <Empty
-            icon={<LayoutGrid />}
-            title={scope === 'mine' ? 'Aucun exercice pour le moment' : 'La bibliothèque du club est vide'}
-            text={
-              scope === 'mine'
-                ? 'Créez votre premier exercice ou dupliquez-en un depuis la bibliothèque du club.'
-                : 'Partagez vos exercices avec le club depuis leur fiche.'
-            }
-            action={
-              scope === 'mine' ? (
-                <div className="row" style={{ justifyContent: 'center' }}>
-                  <button className="btn" onClick={() => setParams({ scope: 'club' })}>
-                    Voir la bibliothèque du club
-                  </button>
-                  {can('exercises.create') && (
-                    <button className="btn primary" onClick={create}>
-                      <Plus /> Créer
-                    </button>
-                  )}
-                </div>
-              ) : undefined
-            }
-          />
+        <div className="card empty-actions">
+          {scope === 'mine' ? (
+            <button className="btn" onClick={() => setParams({ scope: 'club' })}>
+              Voir la bibliothèque du club
+            </button>
+          ) : (
+            <button className="btn" onClick={() => setParams({})}>
+              Voir mes exercices
+            </button>
+          )}
+          {can('exercises.create') && (
+            <button className="btn primary" onClick={create} disabled={creating}>
+              <Plus /> Créer
+            </button>
+          )}
         </div>
       )}
     </div>
