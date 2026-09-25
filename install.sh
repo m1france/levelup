@@ -15,8 +15,29 @@ DATA="$HOME_DIR/data"
 step() { printf '\n\033[1;32m==> %s\033[0m\n' "$1"; }
 
 # Un serveur Caddy déjà en place (autres sites) : on s'y greffe au lieu d'installer Nginx.
+# Il peut tourner directement sur la machine, ou dans un conteneur Docker.
 USE_CADDY=0
-if systemctl is-active --quiet caddy 2>/dev/null; then USE_CADDY=1; fi
+CADDY_CT=""
+CADDYFILE=/etc/caddy/Caddyfile
+UPSTREAM="127.0.0.1"
+if command -v docker >/dev/null 2>&1; then
+  CADDY_CT=$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^caddy(:|$)/ {print $1; exit}')
+fi
+if [ -n "$CADDY_CT" ]; then
+  USE_CADDY=1
+  # Fichier Caddyfile vu depuis la machine (monté dans le conteneur).
+  MOUNT=$(docker inspect -f '{{range .Mounts}}{{.Source}}|{{.Destination}}{{"\n"}}{{end}}' "$CADDY_CT" | awk -F'|' '$2=="/etc/caddy/Caddyfile" || $2=="/etc/caddy" {print; exit}')
+  case "$MOUNT" in
+    *"|/etc/caddy/Caddyfile") CADDYFILE="${MOUNT%%|*}" ;;
+    *"|/etc/caddy") CADDYFILE="${MOUNT%%|*}/Caddyfile" ;;
+    *) echo "Impossible de trouver le Caddyfile du conteneur Caddy."; exit 1 ;;
+  esac
+  # Depuis le conteneur, la machine hôte est joignable par la passerelle de son réseau Docker.
+  UPSTREAM=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.Gateway}} {{end}}' "$CADDY_CT" | awk '{print $1}')
+elif systemctl is-active --quiet caddy 2>/dev/null; then
+  USE_CADDY=1
+fi
+caddy_cmd() { if [ -n "$CADDY_CT" ]; then docker exec "$CADDY_CT" caddy "$@"; else caddy "$@"; fi; }
 
 step "Installation des logiciels"
 export DEBIAN_FRONTEND=noninteractive
@@ -76,7 +97,7 @@ getent hosts "www.$DOMAIN" >/dev/null && NAMES="$DOMAIN www.$DOMAIN"
 if [ "$USE_CADDY" = 1 ]; then
   # Nginx ne doit pas disputer les ports 80/443 à Caddy.
   systemctl disable --now nginx >/dev/null 2>&1 || true
-  CADDYFILE=/etc/caddy/Caddyfile
+  echo "Caddy trouvé : $CADDYFILE"
   if grep -q "# atelier:$PORT" "$CADDYFILE" 2>/dev/null; then
     echo "Le site est déjà déclaré dans Caddy."
   elif grep -qE "(^|[[:space:],/])$DOMAIN([[:space:],:{]|$)" "$CADDYFILE" 2>/dev/null; then
@@ -94,14 +115,15 @@ $SITE {
 	request_body {
 		max_size 10MB
 	}
-	reverse_proxy 127.0.0.1:$PORT
+	reverse_proxy $UPSTREAM:$PORT
 }
 SITEBLOCK
-    if caddy validate --config "$CADDYFILE" --adapter caddyfile >/dev/null 2>&1; then
-      systemctl reload caddy
+    if caddy_cmd validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+      caddy_cmd reload --config /etc/caddy/Caddyfile --adapter caddyfile
       echo "Site ajouté à Caddy : le HTTPS s'active tout seul."
     else
-      mv "$CADDYFILE.bak-atelier" "$CADDYFILE"
+      # Réécrit le contenu (sans remplacer le fichier) : le montage Docker reste valide.
+      cat "$CADDYFILE.bak-atelier" > "$CADDYFILE"
       echo "La configuration Caddy était invalide : elle a été remise comme avant."
       exit 1
     fi
