@@ -264,7 +264,7 @@ function Roll({ players, present, setPresent, onNext }: { players: Player[]; pre
           </button>
         ))}
       </div>
-      <button className="btn primary lg block" disabled={!present.size} onClick={onNext}>
+      <button className="btn primary lg full" disabled={!present.size} onClick={onNext}>
         Faire les groupes <ChevronRight />
       </button>
     </div>
@@ -557,7 +557,7 @@ function Run({
         </div>
       ) : (
         ex && (
-          <button className="btn lg block" onClick={() => onShow(ex)}>
+          <button className="btn lg full" onClick={() => onShow(ex)}>
             <Eye /> Montrer l’exercice aux enfants
           </button>
         )

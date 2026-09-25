@@ -139,7 +139,7 @@ function DaySheet({
         ))}
         {!items.length && <p className="muted" style={{ padding: '8px 0' }}>Rien de prévu ce jour-là.</p>}
         {canEdit && (
-          <button className="btn block" onClick={() => setEdit({})}>
+          <button className="btn full" onClick={() => setEdit({})}>
             <Plus /> Ajouter un événement
           </button>
         )}

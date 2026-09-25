@@ -57,7 +57,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
             </span>
           </label>
           {error && <div className="form-error">{error}</div>}
-          <button className="btn primary lg block" disabled={busy}>
+          <button className="btn primary lg full" disabled={busy}>
             {busy ? 'Création…' : 'Créer mon club'}
           </button>
           <p className="muted small" style={{ textAlign: 'center' }}>
@@ -89,7 +89,7 @@ export function Login({ clubName, onDone }: { clubName: string | null; onDone: (
             <input className="input" type="password" required autoComplete="current-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
           </Field>
           {error && <div className="form-error">{error}</div>}
-          <button className="btn primary lg block" disabled={busy}>
+          <button className="btn primary lg full" disabled={busy}>
             {busy ? 'Connexion…' : 'Se connecter'}
           </button>
           <p className="muted small" style={{ textAlign: 'center' }}>
@@ -178,7 +178,7 @@ export function Invite() {
             <input className="input" type="password" required minLength={8} autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
           </Field>
           {error && <div className="form-error">{error}</div>}
-          <button className="btn primary lg block" disabled={busy || (open && inv.role === 'parent' && !f.playerIds.length)}>
+          <button className="btn primary lg full" disabled={busy || (open && inv.role === 'parent' && !f.playerIds.length)}>
             {open ? 'Créer mon compte' : 'Activer mon compte'}
           </button>
         </div>
