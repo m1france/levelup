@@ -72,29 +72,83 @@ api.post('/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-api.get('/invites/:token', (req, res) => {
-  const row = get(
-    `SELECT u.name, u.email FROM invites i JOIN users u ON u.id = i.user_id WHERE i.token = ? AND i.expires_at > ?`,
-    req.params.token, now(),
+const clubName = () => get('SELECT name FROM club WHERE id = 1')?.name;
+const teamInfo = (id) => (id ? get('SELECT id, category, color FROM teams WHERE id = ?', id) ?? null : null);
+const userName = (id) => (id ? get('SELECT name FROM users WHERE id = ?', id)?.name ?? null : null);
+
+/** Invitation personnelle (un membre précis) ou lien partageable (rôle + équipe prédéfinis). */
+function findInvite(token) {
+  const personal = get(
+    `SELECT i.user_id, i.invited_by, u.name, u.email, u.role FROM invites i JOIN users u ON u.id = i.user_id
+     WHERE i.token = ? AND i.expires_at > ?`,
+    token, now(),
   );
-  if (!row) throw new HttpError(404, "Cette invitation n'est plus valide");
-  res.json({ ...row, clubName: get('SELECT name FROM club WHERE id = 1')?.name });
+  if (personal) return { kind: 'personal', ...personal };
+  const link = get('SELECT * FROM invite_links WHERE token = ? AND expires_at > ?', token, now());
+  if (link) return { kind: 'link', ...link };
+  throw new HttpError(404, "Cette invitation n'est plus valide");
+}
+
+api.get('/invites/:token', (req, res) => {
+  const inv = findInvite(req.params.token);
+  if (inv.kind === 'personal') {
+    const teams = inv.role === 'parent'
+      ? all('SELECT DISTINCT t.id, t.category, t.color FROM player_parents pp JOIN players p ON p.id = pp.player_id JOIN teams t ON t.id = p.team_id WHERE pp.user_id = ?', inv.user_id)
+      : all('SELECT t.id, t.category, t.color FROM team_staff s JOIN teams t ON t.id = s.team_id WHERE s.user_id = ?', inv.user_id);
+    return res.json({
+      kind: 'personal', name: inv.name, email: inv.email, role: inv.role, teams,
+      invitedBy: userName(inv.invited_by), clubName: clubName(),
+    });
+  }
+  const team = teamInfo(inv.team_id);
+  // Pour un lien « parent », la personne choisit son enfant dans l'effectif de l'équipe.
+  const players = inv.role === 'parent' && team
+    ? all('SELECT id, data FROM players WHERE team_id = ?', team.id)
+        .map(parse)
+        .map((p) => ({ id: p.id, firstName: p.firstName, lastName: p.lastName ? `${p.lastName[0]}.` : '' }))
+        .sort((a, b) => a.firstName.localeCompare(b.firstName))
+    : [];
+  res.json({
+    kind: 'link', role: inv.role, teams: team ? [team] : [], players,
+    invitedBy: userName(inv.created_by), clubName: clubName(),
+  });
 });
 
 api.post('/invites/:token', (req, res) => {
-  const row = get('SELECT user_id FROM invites WHERE token = ? AND expires_at > ?', req.params.token, now());
-  if (!row) throw new HttpError(404, "Cette invitation n'est plus valide");
+  const inv = findInvite(req.params.token);
   const password = String(req.body.password || '');
   if (password.length < 8) throw new HttpError(400, 'Mot de passe : 8 caractères minimum');
   const name = str(req.body.name, 120);
+  if (inv.kind === 'personal') {
+    tx(() => {
+      run(
+        `UPDATE users SET password_hash = ?, status = 'active', name = COALESCE(NULLIF(?, ''), name) WHERE id = ?`,
+        hashPassword(password), name, inv.user_id,
+      );
+      run('DELETE FROM invites WHERE user_id = ?', inv.user_id);
+    });
+    startSession(res, inv.user_id);
+    return res.json({ ok: true });
+  }
+  const email = str(req.body.email, 200).toLowerCase();
+  if (!name || !email.includes('@')) throw new HttpError(400, 'Nom et e-mail requis');
+  if (get('SELECT id FROM users WHERE email = ?', email)) throw new HttpError(409, 'Cet e-mail est déjà utilisé');
+  let playerIds = [];
+  if (inv.role === 'parent') {
+    const wanted = new Set(Array.isArray(req.body.playerIds) ? req.body.playerIds : []);
+    playerIds = all('SELECT id FROM players WHERE team_id = ?', inv.team_id).map((r) => r.id).filter((id) => wanted.has(id));
+    if (!playerIds.length) throw new HttpError(400, 'Choisissez au moins un joueur');
+  }
+  const id = newId();
   tx(() => {
     run(
-      `UPDATE users SET password_hash = ?, status = 'active', name = COALESCE(NULLIF(?, ''), name) WHERE id = ?`,
-      hashPassword(password), name, row.user_id,
+      `INSERT INTO users (id, email, name, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?)`,
+      id, email, name, hashPassword(password), inv.role, now(),
     );
-    run('DELETE FROM invites WHERE user_id = ?', row.user_id);
+    assignLinks(id, inv.role, inv.team_id ? [inv.team_id] : [], playerIds);
+    run('UPDATE invite_links SET uses = uses + 1 WHERE token = ?', inv.token);
   });
-  startSession(res, row.user_id);
+  startSession(res, id);
   res.json({ ok: true });
 });
 
@@ -203,10 +257,13 @@ function assignLinks(userId, role, teamIds, playerIds) {
   }
 }
 
-function createInvite(userId) {
+function createInvite(userId, invitedBy) {
   const token = newId(24);
   run('DELETE FROM invites WHERE user_id = ?', userId);
-  run('INSERT INTO invites VALUES (?, ?, ?)', token, userId, now() + INVITE_DAYS * 864e5);
+  run(
+    'INSERT INTO invites (token, user_id, expires_at, invited_by) VALUES (?, ?, ?, ?)',
+    token, userId, now() + INVITE_DAYS * 864e5, invitedBy,
+  );
   return token;
 }
 
@@ -222,7 +279,7 @@ api.post('/users', (req, res) => {
   tx(() => {
     run(`INSERT INTO users (id, email, name, role, status, created_at) VALUES (?, ?, ?, ?, 'invited', ?)`, id, email, name, role, now());
     assignLinks(id, role, req.body.teamIds, req.body.playerIds);
-    createInvite(id);
+    createInvite(id, req.user.id);
   });
   res.json(userRow(get('SELECT * FROM users WHERE id = ?', id)));
 });
@@ -253,8 +310,45 @@ api.post('/users/:id/invite', (req, res) => {
   need(req.user, 'members.manage');
   const u = get('SELECT * FROM users WHERE id = ?', req.params.id);
   if (!u || u.status !== 'invited') throw new HttpError(400, 'Ce membre a déjà activé son compte');
-  createInvite(u.id);
+  createInvite(u.id, req.user.id);
   res.json(userRow(u));
+});
+
+/* Liens d'invitation partageables : chaque personne qui s'inscrit reçoit le rôle et l'équipe prévus. */
+
+const linkRow = (l) => ({
+  token: l.token,
+  role: l.role,
+  teamId: l.team_id,
+  createdBy: userName(l.created_by),
+  uses: l.uses,
+  expiresAt: l.expires_at,
+});
+
+api.get('/invite-links', (req, res) => {
+  need(req.user, 'members.manage');
+  res.json(all('SELECT * FROM invite_links WHERE expires_at > ? ORDER BY created_at DESC', now()).map(linkRow));
+});
+
+api.post('/invite-links', (req, res) => {
+  need(req.user, 'members.manage');
+  const role = req.body.role;
+  if (!ROLES.includes(role) || role === 'admin') throw new HttpError(400, 'Rôle invalide');
+  const teamId = req.body.teamId || null;
+  if (teamId && !get('SELECT id FROM teams WHERE id = ?', teamId)) throw new HttpError(400, 'Équipe introuvable');
+  if (role === 'parent' && !teamId) throw new HttpError(400, 'Choisissez l’équipe des joueurs');
+  const token = newId(24);
+  run(
+    'INSERT INTO invite_links (token, role, team_id, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
+    token, role, teamId, req.user.id, now(), now() + INVITE_DAYS * 864e5,
+  );
+  res.json(linkRow(get('SELECT * FROM invite_links WHERE token = ?', token)));
+});
+
+api.delete('/invite-links/:token', (req, res) => {
+  need(req.user, 'members.manage');
+  run('DELETE FROM invite_links WHERE token = ?', req.params.token);
+  res.json({ ok: true });
 });
 
 api.delete('/users/:id', (req, res) => {
