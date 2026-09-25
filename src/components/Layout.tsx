@@ -146,7 +146,10 @@ function Dock() {
             <DockLink to="/joueurs" tip="Joueurs" icon={<Users />} active={loc.pathname.startsWith('/joueurs')} />
           </>
         ) : (
-          child && <DockLink to={`/joueurs/${child.id}`} tip={child.firstName} icon={<UserRound />} />
+          <>
+            <DockLink to="/exercices" tip="Exercices" icon={<LayoutGrid />} active={loc.pathname.startsWith('/exercices')} />
+            {child && <DockLink to={`/joueurs/${child.id}`} tip={child.firstName} icon={<UserRound />} />}
+          </>
         )}
       </div>
       <div className="dock-group">

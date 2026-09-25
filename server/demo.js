@@ -223,7 +223,10 @@ export const STARTER_EXERCISES = [
 /** Bibliothèque du club : sans auteur (« Club »), modifiable par l'administrateur uniquement. */
 export function seedStarterLibrary() {
   for (const e of STARTER_EXERCISES) {
-    run(`INSERT INTO exercises VALUES (?, NULL, 'club', 1, ?, ?, ?)`, newId(), JSON.stringify(e), now(), now());
+    run(
+      `INSERT INTO exercises (id, owner_id, visibility, validated, data, created_at, updated_at) VALUES (?, NULL, 'club', 1, ?, ?, ?)`,
+      newId(), JSON.stringify(e), now(), now(),
+    );
   }
 }
 
@@ -252,9 +255,12 @@ export function seedDemoTeam(adminId) {
   const exIds = Object.fromEntries(
     STARTER_EXERCISES.map((e) => [e.title, newId()]),
   );
-  // Copies personnelles pour que la séance d'exemple soit modifiable.
+  // Copies de l'équipe pour que la séance d'exemple soit modifiable par tous ses éducateurs.
   for (const e of STARTER_EXERCISES) {
-    run(`INSERT INTO exercises VALUES (?, ?, 'private', 0, ?, ?, ?)`, exIds[e.title], adminId, JSON.stringify(e), now(), now());
+    run(
+      `INSERT INTO exercises (id, owner_id, visibility, validated, data, created_at, updated_at, team_id) VALUES (?, ?, 'private', 0, ?, ?, ?, ?)`,
+      exIds[e.title], adminId, JSON.stringify(e), now(), now(), teamId,
+    );
   }
   const block = (kind, title, duration, extra = {}) => ({ id: newId(6), kind, title, duration, ...extra });
   const training = {

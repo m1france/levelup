@@ -383,6 +383,18 @@ p { margin: 0; }
 .stage-float .float-value { min-width: 40px; height: 30px; border: 0; background: none; border-radius: 8px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-2); cursor: pointer; }
 .stage-float .float-value:hover { background: var(--surface-2); }
 .stage-float .chip { height: 32px; flex: none; }
+
+/* Collaboration en direct */
+.presence { display: flex; align-items: center; flex: none; }
+.presence-dot { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .02em; box-shadow: 0 0 0 2px var(--surface); cursor: default; }
+.presence-dot + .presence-dot { margin-left: -6px; }
+.presence-dot.more { background: var(--surface-2); color: var(--ink-2); }
+.peer-cursor { position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none; display: flex; align-items: flex-start; gap: 2px; transition: transform 90ms linear; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+.peer-cursor svg { flex: none; stroke: #fff; stroke-width: 1.5; }
+.peer-cursor span { margin-top: 14px; padding: 2px 7px; border-radius: 8px; color: #fff; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.live-note { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px; color: var(--ink-2); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: #e03131; box-shadow: 0 0 0 0 rgba(224,49,49,.5); animation: live-pulse 1.6s infinite; }
+@keyframes live-pulse { 70% { box-shadow: 0 0 0 7px rgba(224,49,49,0); } 100% { box-shadow: 0 0 0 0 rgba(224,49,49,0); } }
 .menu .menu-check { margin-left: auto; color: var(--accent); }
 
 /* Réglages : barre flottante à droite du terrain, dans le style du dock principal. */

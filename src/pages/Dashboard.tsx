@@ -5,6 +5,7 @@ import { LivePitch, SceneThumb, coverToExercise } from '../components/Pitch';
 import { Calendar } from '../components/Calendar';
 import { Spinner, useAsync, useToast } from '../components/ui';
 import { api } from '../lib/api';
+import { useLive } from '../lib/live';
 import { MONTHS_LONG, agenda, formatTime, relativeDay, toYMD } from '../lib/events';
 import { dateTile, todayISO, useApp } from '../lib/store';
 import type { ExerciseData, TeamEvent, Training } from '../lib/types';
@@ -166,6 +167,10 @@ export function Dashboard() {
     ]);
     return { trainings, events };
   }, [team?.id]);
+  // Séances créées ou modifiées par les autres éducateurs, et exercices de couverture.
+  useLive((m) => {
+    if ((m.t === 'training' || m.t === 'exercise') && m.teamId === team?.id) q.reload();
+  });
 
   const newTraining = async () => {
     if (!team) return;

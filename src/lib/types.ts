@@ -153,6 +153,10 @@ export interface Exercise extends ExerciseData {
   id: string;
   ownerId?: string | null;
   ownerName?: string;
+  /** Équipe de l'exercice : partagé entre ses éducateurs, consultable par ses joueurs. */
+  teamId?: string | null;
+  /** Calculé par le serveur pour l'utilisateur connecté. */
+  canEdit?: boolean;
   visibility: 'private' | 'club';
   validated: boolean;
   updatedAt?: number;

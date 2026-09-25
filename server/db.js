@@ -137,6 +137,30 @@ if (!db.prepare('PRAGMA table_info(invites)').all().some((c) => c.name === 'invi
   db.exec('ALTER TABLE invites ADD COLUMN invited_by TEXT REFERENCES users(id) ON DELETE SET NULL');
 }
 
+/* Exercices d'équipe : partagés entre tous les éducateurs de l'équipe, consultables par ses joueurs. */
+if (!db.prepare('PRAGMA table_info(exercises)').all().some((c) => c.name === 'team_id')) {
+  db.exec(`
+    ALTER TABLE exercises ADD COLUMN team_id TEXT REFERENCES teams(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS idx_exercises_team ON exercises(team_id);
+  `);
+  // Rattache les exercices personnels existants : à l'équipe d'une séance qui les utilise,
+  // sinon à l'équipe de leur auteur s'il n'en encadre qu'une.
+  const used = new Map();
+  for (const t of db.prepare('SELECT team_id, data FROM trainings').all()) {
+    for (const b of JSON.parse(t.data).blocks || []) {
+      for (const id of [b.exerciseId, ...(b.stations || []).map((s) => s.exerciseId)]) if (id && !used.has(id)) used.set(id, t.team_id);
+    }
+  }
+  for (const e of db.prepare(`SELECT id, owner_id FROM exercises WHERE visibility = 'private'`).all()) {
+    let team = used.get(e.id);
+    if (!team && e.owner_id) {
+      const teams = db.prepare('SELECT team_id FROM team_staff WHERE user_id = ?').all(e.owner_id);
+      if (teams.length === 1) team = teams[0].team_id;
+    }
+    if (team) db.prepare('UPDATE exercises SET team_id = ? WHERE id = ?').run(team, e.id);
+  }
+}
+
 export const all = (sql, ...p) => db.prepare(sql).all(...p);
 export const get = (sql, ...p) => db.prepare(sql).get(...p);
 export const run = (sql, ...p) => db.prepare(sql).run(...p);
