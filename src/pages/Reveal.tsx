@@ -1,10 +1,10 @@
 import { ArrowLeft, RotateCcw, Share2, Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { FutBack, FutCard, TIERS } from '../components/FutCard';
 import { Spinner, useAsync, useToast } from '../components/ui';
 import { api } from '../lib/api';
-import type { PlayerCard, Reveal } from '../lib/types';
+import type { GameResult, PlayerCard, Reveal } from '../lib/types';
 
 /** Cartes du match, dans l'app (connecté). */
 export function RevealPage() {
@@ -85,12 +85,50 @@ function Bolt({ className }: { className?: string }) {
   );
 }
 
+/** Plateau : le score de chaque match, en colonne à gauche du terrain. */
+function GamesBoard({ games, team }: { games: GameResult[]; team: string }) {
+  const played = games.filter((g) => g.us !== null);
+  const w = played.filter((g) => g.us! > g.them!).length;
+  const d = played.filter((g) => g.us === g.them).length;
+  const l = played.length - w - d;
+  return (
+    <aside className="rv-games" aria-label="Scores du plateau">
+      <div className="rv-games-head">
+        <b>{team}</b>
+        <span>
+          <i className="w">{w}V</i>
+          <i className="d">{d}N</i>
+          <i className="l">{l}D</i>
+        </span>
+      </div>
+      <ol>
+        {games.map((g, i) => {
+          const res = g.us === null ? 'todo' : g.us > g.them! ? 'win' : g.us === g.them ? 'draw' : 'loss';
+          return (
+            <li key={g.id} className={res} style={{ ['--i' as string]: i } as CSSProperties}>
+              <span className="rv-g-opp">{g.opponent}</span>
+              <b>{g.us === null ? '–' : `${g.us}–${g.them}`}</b>
+            </li>
+          );
+        })}
+      </ol>
+    </aside>
+  );
+}
+
+type Rect = { x: number; y: number; w: number; h: number };
+
 export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void }) {
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>('intro');
   const [flipped, setFlipped] = useState<Set<string>>(new Set());
   const [focus, setFocus] = useState<PlayerCard | null>(null);
   const [stage, setStage] = useState<'fly' | 'flip' | 'award'>('fly');
+  /** Carte agrandie : position de départ (son emplacement sur le terrain) et carte déjà retournée ou non. */
+  const origin = useRef<{ rect: Rect; open: boolean } | null>(null);
+  const flipper = useRef<HTMLDivElement>(null);
+  const closing = useRef(false);
+  const [leaving, setLeaving] = useState(false);
   const [finale, setFinale] = useState(false);
   const [run, setRun] = useState(0);
   const rows = layout(data.cards.length);
@@ -98,35 +136,99 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
   const draw = data.score.us === data.score.them;
 
   // Séquence d'ouverture : éclair « Match terminé », score, puis distribution des cartes.
+  // Plateau : le score de chaque match reste affiché un peu plus longtemps.
+  const scoreMs = 1400 + (data.games?.length ?? 0) * 260;
   useEffect(() => {
     setPhase('intro');
     const t = [
       setTimeout(() => setPhase('flash'), 350),
       setTimeout(() => setPhase('score'), 1900),
-      setTimeout(() => setPhase('deal'), 3300),
-      setTimeout(() => setPhase('play'), 3300 + data.cards.length * 140 + 700),
+      setTimeout(() => setPhase('deal'), 1900 + scoreMs),
+      setTimeout(() => setPhase('play'), 1900 + scoreMs + data.cards.length * 140 + 700),
     ];
     return () => t.forEach(clearTimeout);
-  }, [run, data.cards.length]);
+  }, [run, data.cards.length, scoreMs]);
 
-  const open = (c: PlayerCard) => {
+  const games = data.games?.length ? data.games : null;
+  const plateau = !!games;
+
+  // La carte touchée quitte sa place, grandit jusqu'au centre en tournant sur elle-même, puis se retourne.
+  const open = (c: PlayerCard, el: HTMLElement) => {
     if (phase !== 'play' && phase !== 'deal') return;
+    if (focus || closing.current) return;
+    const r = el.getBoundingClientRect();
+    origin.current = { rect: { x: r.left, y: r.top, w: r.width, h: r.height }, open: flipped.has(c.id) };
     setFocus(c);
-    setStage('fly');
-    setTimeout(() => setStage('flip'), 380);
-    setTimeout(() => setStage('award'), 380 + 950);
+    setStage(flipped.has(c.id) ? 'award' : 'fly');
   };
+
+  useLayoutEffect(() => {
+    const el = flipper.current;
+    const from = origin.current;
+    if (!focus || !el || !from) return;
+    const to = el.getBoundingClientRect();
+    const dx = from.rect.x + from.rect.w / 2 - (to.left + to.width / 2);
+    const dy = from.rect.y + from.rect.h / 2 - (to.top + to.height / 2);
+    const k = from.rect.w / to.width;
+    const base = from.open ? 180 : 0;
+    // Déjà retournée : un tour complet en grandissant. Sinon : elle grandit de dos, puis se retourne.
+    const anim = el.animate(
+      from.open
+        ? [
+            { transform: `translate(${dx}px, ${dy}px) scale(${k}) rotateY(${base}deg)` },
+            { transform: `translate(${dx * 0.3}px, ${dy * 0.3}px) scale(${(k + 1.15) / 2}) rotateY(${base + 200}deg)`, offset: 0.55 },
+            { transform: `translate(0, 0) scale(1) rotateY(${base + 360}deg)` },
+          ]
+        : [
+            { transform: `translate(${dx}px, ${dy}px) scale(${k}) rotateZ(0deg)` },
+            { transform: `translate(${dx * 0.25}px, ${dy * 0.25}px) scale(1.12) rotateZ(-6deg)`, offset: 0.7 },
+            { transform: 'translate(0, 0) scale(1) rotateZ(0deg)' },
+          ],
+      { duration: from.open ? 750 : 520, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)' },
+    );
+    if (from.open) return () => anim.cancel();
+    const t1 = setTimeout(() => setStage('flip'), 540);
+    const t2 = setTimeout(() => setStage('award'), 540 + 950);
+    return () => {
+      anim.cancel();
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+    // Seulement à l'ouverture d'une carte.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.id]);
+
   const close = () => {
-    if (!focus) return;
+    if (!focus || closing.current) return;
     const next = new Set(flipped).add(focus.id);
-    setFlipped(next);
-    setFocus(null);
-    if (next.size === data.cards.length) setTimeout(() => setFinale(true), 350);
+    const done = () => {
+      closing.current = false;
+      setLeaving(false);
+      setFlipped(next);
+      setFocus(null);
+      if (next.size === data.cards.length && flipped.size < data.cards.length) setTimeout(() => setFinale(true), 350);
+    };
+    // Retour à sa place sur le terrain, en rétrécissant.
+    const el = flipper.current;
+    const slot = document.querySelector<HTMLElement>(`[data-card="${focus.id}"]`);
+    if (!el || !slot) return done();
+    closing.current = true;
+    setLeaving(true);
+    const to = el.getBoundingClientRect();
+    const r = slot.getBoundingClientRect();
+    const dx = r.left + r.width / 2 - (to.left + to.width / 2);
+    const dy = r.top + r.height / 2 - (to.top + to.height / 2);
+    const k = r.width / to.width;
+    el.animate(
+      [{ transform: 'translate(0, 0) scale(1) rotateY(180deg)' }, { transform: `translate(${dx}px, ${dy}px) scale(${k}) rotateY(180deg)` }],
+      { duration: 380, easing: 'cubic-bezier(0.5, 0, 0.75, 0)', fill: 'forwards' },
+    ).onfinish = done;
   };
   const replay = () => {
     setFlipped(new Set());
     setFinale(false);
     setFocus(null);
+    closing.current = false;
     setRun((r) => r + 1);
   };
   const share = async () => {
@@ -143,14 +245,23 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
   };
 
   // Taille des cartes : tout doit tenir à l'écran, même sur un petit téléphone.
+  // Plateau : la colonne des scores prend la gauche de l'écran (en haut sur un téléphone).
   const maxCols = Math.max(...rows.map((r) => r.length));
+  const wide = window.innerWidth >= 720;
+  const side = plateau && wide ? 230 : 0;
+  const top = plateau && !wide ? 64 : 0;
   const cardW = Math.max(
-    70,
-    Math.min(150, Math.floor((window.innerWidth - 36 - (maxCols - 1) * 12) / maxCols), Math.floor((window.innerHeight - 230 - (rows.length - 1) * 14) / rows.length / 1.4)),
+    64,
+    Math.min(
+      150,
+      Math.floor((window.innerWidth - side - 36 - (maxCols - 1) * 12) / maxCols),
+      Math.floor((window.innerHeight - 230 - top - (rows.length - 1) * 14) / rows.length / 1.4),
+    ),
   );
+  const bigW = Math.round(Math.min(340, window.innerWidth * 0.72, (window.innerHeight - 250) / 1.4));
 
   return (
-    <div className={`rv phase-${phase}`}>
+    <div className={`rv phase-${phase}${plateau ? ' plateau' : ''}`}>
       <div className="rv-pitch" aria-hidden>
         <div className="rv-field">
           <i className="mid" />
@@ -185,10 +296,20 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
           <div className="rv-flash" key={`f${run}`} />
           <Bolt className="l" />
           <Bolt className="r" />
-          <h1 className="rv-title" data-text="MATCH TERMINÉ">
-            MATCH TERMINÉ
+          <h1 className="rv-title" data-text={plateau ? 'PLATEAU TERMINÉ' : 'MATCH TERMINÉ'}>
+            {plateau ? 'PLATEAU TERMINÉ' : 'MATCH TERMINÉ'}
           </h1>
-          {phase === 'score' && (
+          {phase === 'score' && games && (
+            <div className="rv-score-list">
+              {games.map((g, i) => (
+                <span key={g.id} style={{ ['--i' as string]: i } as CSSProperties}>
+                  <em>{g.opponent}</em>
+                  <b>{g.us === null ? '–' : `${g.us} – ${g.them}`}</b>
+                </span>
+              ))}
+            </div>
+          )}
+          {phase === 'score' && !games && (
             <div className="rv-score">
               <span>{data.team.category}</span>
               <b>
@@ -204,13 +325,17 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
 
       {(phase === 'deal' || phase === 'play') && (
         <>
-          <div className="rv-head">
-            <span className={`rv-result ${win ? 'win' : draw ? 'draw' : 'loss'}`}>{win ? 'Victoire' : draw ? 'Match nul' : 'Match terminé'}</span>
-            <b>
-              {data.team.category} {data.score.us} – {data.score.them} {data.opponent || ''}
-            </b>
-          </div>
-          <div className="rv-grid">
+          {games ? (
+            <GamesBoard games={games} team={data.team.category} />
+          ) : (
+            <div className="rv-head">
+              <span className={`rv-result ${win ? 'win' : draw ? 'draw' : 'loss'}`}>{win ? 'Victoire' : draw ? 'Match nul' : 'Match terminé'}</span>
+              <b>
+                {data.team.category} {data.score.us} – {data.score.them} {data.opponent || ''}
+              </b>
+            </div>
+          )}
+          <div className="rv-grid" style={side ? { left: side } : top ? { top: `calc(50% + ${top / 2}px)` } : undefined}>
             {rows.map((row, r) => (
               <div key={r} className="rv-row">
                 {row.map((i) => {
@@ -219,16 +344,13 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
                   return (
                     <button
                       key={`${run}-${c.id}`}
+                      data-card={c.id}
                       className={`rv-slot${done ? ' done' : ''}${focus?.id === c.id ? ' away' : ''}`}
                       style={{ ['--i' as string]: i } as CSSProperties}
-                      onClick={() => {
-                        if (!done) return open(c);
-                        setFocus(c);
-                        setStage('award');
-                      }}
+                      onClick={(e) => open(c, e.currentTarget)}
                       aria-label={done ? `Carte de ${c.firstName}` : 'Retourner la carte'}
                     >
-                      {done ? <FutCard card={c} team={data.team} size={cardW} /> : <FutBack team={data.team} size={cardW} mine={c.mine} />}
+                      {done ? <FutCard card={c} team={data.team} size={cardW} /> : <FutBack size={cardW} mine={c.mine} />}
                     </button>
                   );
                 })}
@@ -262,14 +384,14 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
 
       {/* Carte au centre : vol, retournement, récompense */}
       {focus && (
-        <div className={`rv-focus stage-${stage}`} onClick={(e) => e.target === e.currentTarget && stage === 'award' && close()}>
+        <div className={`rv-focus stage-${stage}${leaving ? ' leaving' : ''}`} onClick={(e) => e.target === e.currentTarget && stage === 'award' && close()}>
           <div className="rv-rays" style={{ ['--glow' as string]: (TIERS[focus.award.tier] ?? TIERS.gold).glow } as CSSProperties} />
-          <div className="rv-flip">
+          <div className="rv-flip" ref={flipper} style={{ width: bigW }}>
             <div className="rv-face back">
-              <FutBack team={data.team} size={260} />
+              <FutBack size={bigW} />
             </div>
             <div className="rv-face front">
-              <FutCard card={focus} team={data.team} size={260} />
+              <FutCard card={focus} team={data.team} size={bigW} />
             </div>
           </div>
           {stage === 'award' && (

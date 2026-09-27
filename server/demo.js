@@ -342,7 +342,7 @@ export function seedDemoTeam(adminId) {
   // Vie d'équipe : discussion, sondage, « qui apporte quoi », covoiturage pour le prochain match.
   const thread = newId();
   const t0 = now() - 2 * 3600e3;
-  run(`INSERT INTO chat_threads VALUES (?, 'team', ?, '', NULL, ?, ?)`, thread, teamId, t0, now());
+  run(`INSERT INTO chat_threads (id, kind, team_id, title, created_by, created_at, updated_at) VALUES (?, 'team', ?, '', NULL, ?, ?)`, thread, teamId, t0, now());
   const msg = (kind, body, data, at) => run('INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?, ?, ?, 0)', newId(), thread, adminId, kind, body, JSON.stringify(data), at);
   msg('text', 'Bienvenue dans la discussion de l’équipe 👋 Ici : infos, covoiturage, photos. Pensez à activer les notifications !', {}, t0);
   msg('poll', '', { question: 'Tenue pour la photo d’équipe ?', multi: false, options: [{ id: 'o1', label: 'Maillot vert' }, { id: 'o2', label: 'Maillot blanc' }] }, t0 + 60e3);

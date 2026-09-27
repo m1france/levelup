@@ -1,8 +1,8 @@
-import { ArrowDownUp, Car, Check, ChevronRight, Eye, Megaphone, Play, Plus } from 'lucide-react';
+import { ArrowDownUp, CalendarClock, Car, Check, ChevronRight, Eye, Megaphone, Play, Plus, Repeat } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LivePitch, SceneThumb, coverToExercise } from '../components/Pitch';
-import { Calendar, hasConv } from '../components/Calendar';
+import { Calendar, EventForm, hasConv, usePrepareSession } from '../components/Calendar';
 import { PHASE, matchPath } from '../lib/convocations';
 import { GlassArt, HeroSlide, Showcase, type ShowcaseSlide } from '../components/Showcase';
 import { PlayerAvatar } from '../components/PlayerAvatar';
@@ -12,9 +12,9 @@ import { Spinner, useAsync, useToast } from '../components/ui';
 import { nextStep, useTickets } from './Matches';
 import { api } from '../lib/api';
 import { useLive } from '../lib/live';
-import { MONTHS_LONG, MONTHS_TILE, agenda, formatTime, fromYMD, relativeDay, toYMD } from '../lib/events';
+import { MONTHS_LONG, MONTHS_TILE, agenda, formatTime, fromYMD, relativeDay, toYMD, type Agenda } from '../lib/events';
 import { dateTile, relative, todayISO, useApp } from '../lib/store';
-import type { Announcement, Carpool, ConvSnapshot, ExerciseData, TeamEvent, Ticket, Training } from '../lib/types';
+import type { Carpool, ConvSnapshot, ExerciseData, TeamEvent, Ticket, Training } from '../lib/types';
 import { HERO_PALETTE } from '../pitch/render';
 import { createTraining, totalMinutes } from './Trainings';
 
@@ -153,6 +153,30 @@ function MonthAccordion({ list, onOpen }: { list: Training[]; onOpen: (t: Traini
   );
 }
 
+/** Entraînement programmé dont la séance n'est pas encore préparée : la date est connue de tous, le contenu viendra. */
+function PlannedCard({ it, canPrepare, onPrepare }: { it: Agenda; canPrepare: boolean; onPrepare: () => void }) {
+  const tile = dateTile(`${it.date}T${it.time || '12:00'}`);
+  return (
+    <div className={`s-card planned${canPrepare ? '' : ' readonly'}`} onClick={canPrepare ? onPrepare : undefined} role={canPrepare ? 'button' : undefined}>
+      <div className="cover">
+        <div className="cover-planned">
+          <CalendarClock />
+          <span>{canPrepare ? 'Préparer la séance' : 'Séance bientôt en ligne'}</span>
+        </div>
+        <span className="date-chip">
+          {tile.weekday} {tile.day} {tile.month}
+        </span>
+      </div>
+      <b className="s-title">{it.event?.title || 'Entraînement'}</b>
+      <span className="s-meta">
+        {it.time ? formatTime(it.time) : 'Journée'}
+        {it.event?.endTime && it.time ? ` – ${formatTime(it.event.endTime)}` : ''}
+        {it.event?.location ? ` · ${it.event.location}` : ''}
+      </span>
+    </div>
+  );
+}
+
 /** Prochain événement (calendrier ou séance) à partir de maintenant. */
 function nextItem(events: TeamEvent[], trainings: Training[]) {
   const now = new Date();
@@ -167,6 +191,7 @@ export function Dashboard() {
   const nav = useNavigate();
   const toast = useToast();
   const [byMonth, setByMonth] = useState(false);
+  const [plan, setPlan] = useState(false);
   const q = useAsync(async () => {
     if (!team) return null;
     const [trainings, events, convs] = await Promise.all([
@@ -177,15 +202,16 @@ export function Dashboard() {
     return { trainings, events, convs };
   }, [team?.id]);
   const tickets = useTickets();
-  const anns = useAsync(() => api.get<Announcement[]>('/announcements'), []);
+  const anns = useAsync(() => api.get<{ threadId: string | null; messages: { id: string; author: string | null; preview: string; at: number; unread: boolean }[] }>('/chat/announce'), []);
   const carpools = useAsync(() => api.get<Carpool[]>('/carpool-upcoming').catch(() => [] as Carpool[]), []);
-  const freshAnns = (anns.data ?? []).filter((a) => a.target && (!a.read || (a.important && Date.now() - a.createdAt < 3 * 864e5))).slice(0, 3);
+  // Annonces du club non lues (salon Annonces de la messagerie).
+  const freshAnns = (anns.data?.messages ?? []).filter((a) => a.unread).slice(0, 3);
   // Séances créées ou modifiées par les autres éducateurs, et exercices de couverture.
   useLive((m) => {
     if ((m.t === 'training' || m.t === 'exercise') && m.teamId === team?.id) q.reload();
     if (m.t === 'conv' && isStaff) q.reload();
     if (m.t === 'carpool') carpools.reload();
-    if (m.t === 'announcement') anns.reload();
+    if (m.t === 'chat' && m.threadId === anns.data?.threadId) anns.reload();
   });
 
   const newTraining = async () => {
@@ -202,6 +228,11 @@ export function Dashboard() {
   const canPlan = isStaff && can('trainings.manage');
   const next = d ? nextItem(d.events, d.trainings) : null;
   const all = [...upcoming, ...past];
+  // Entraînements programmés des 4 prochaines semaines sans séance préparée.
+  const planned = d
+    ? agenda(d.events.filter((e) => e.type === 'training'), d.trainings, todayISO(), toYMD(new Date(Date.now() + 28 * 864e5))).filter((it) => it.event && !it.training).slice(0, 8)
+    : [];
+  const prepare = usePrepareSession(team?.id ?? '');
   const now = Date.now();
   // Éducateur : convocations à préparer dans les 10 prochains jours, en tête d'accueil.
   const todo = (d?.convs ?? []).filter((c) => c.timeline.start > now && c.timeline.start - now < 10 * 864e5 && c.phase !== 'published');
@@ -232,21 +263,22 @@ export function Dashboard() {
   // Diapositives : les actualités passent avant l'aperçu de la séance.
   const slides: ShowcaseSlide[] = [];
   for (const a of freshAnns) {
+    const [first, ...rest] = a.preview.split('\n');
+    const open = () => nav(`/messages/${anns.data?.threadId}`);
     slides.push({
       key: `ann:${a.id}`,
       node: (
         <HeroSlide
-          eyebrow={<><Megaphone size={14} /> {a.important ? 'Annonce importante' : 'Annonce du club'} · {relative(a.createdAt)}</>}
-          warn={a.important}
-          title={a.title}
-          text={a.body}
-          onOpen={() => nav(`/annonces/${a.id}`)}
+          eyebrow={<><Megaphone size={14} /> Annonce du club · {relative(a.at)}{a.author ? ` · ${a.author}` : ''}</>}
+          title={first.length > 90 ? `${first.slice(0, 88)}…` : first}
+          text={rest.join(' ').trim() || undefined}
+          onOpen={open}
           actions={
-            <button className="btn lime" onClick={() => nav(`/annonces/${a.id}`)}>
+            <button className="btn lime" onClick={open}>
               Lire l’annonce
             </button>
           }
-          visual={<GlassArt glow={a.important ? 'rgba(255, 150, 120, 0.4)' : undefined}><div className="ga-emoji">{a.emoji}</div></GlassArt>}
+          visual={<GlassArt><div className="ga-emoji">📣</div></GlassArt>}
         />
       ),
     });
@@ -429,7 +461,7 @@ export function Dashboard() {
 
           {team && d && (
             <section>
-              <Calendar teamId={team.id} events={d.events} trainings={d.trainings} canEdit={isStaff && can('events.manage')} onChanged={q.reload} />
+              <Calendar teamId={team.id} events={d.events} trainings={d.trainings} canEdit={isStaff && can('events.manage')} onChanged={q.reload} onExpand={() => nav('/calendrier')} />
             </section>
           )}
 
@@ -440,6 +472,11 @@ export function Dashboard() {
                 {all.length >= 6 && (
                   <button className={`plain-toggle${byMonth ? ' on' : ''}`} onClick={() => setByMonth((b) => !b)} aria-pressed={byMonth}>
                     <ArrowDownUp size={15} /> Date
+                  </button>
+                )}
+                {isStaff && can('events.manage') && (
+                  <button className="plain-toggle" onClick={() => setPlan(true)} title="Programmer des entraînements réguliers (ex. chaque mercredi et vendredi)">
+                    <Repeat size={15} /> Programmer
                   </button>
                 )}
                 {canPlan && (
@@ -460,9 +497,15 @@ export function Dashboard() {
                     </div>
                   </button>
                 )}
-                {upcoming.map((t) => (
-                  <SessionCard key={t.id} t={t} onClick={() => nav(`/seances/${t.id}`)} />
-                ))}
+                {[
+                  ...upcoming.map((t) => ({ at: t.date, node: <SessionCard key={t.id} t={t} onClick={() => nav(`/seances/${t.id}`)} /> })),
+                  ...planned.map((it) => ({
+                    at: `${it.date}T${it.time || '12:00'}`,
+                    node: <PlannedCard key={it.key} it={it} canPrepare={canPlan} onPrepare={() => void prepare(it)} />,
+                  })),
+                ]
+                  .sort((a, b) => a.at.localeCompare(b.at))
+                  .map((x) => x.node)}
                 {past.map((t) => (
                   <SessionCard key={t.id} t={t} past onClick={() => nav(`/seances/${t.id}`)} />
                 ))}
@@ -470,6 +513,19 @@ export function Dashboard() {
             )}
           </section>
         </>
+      )}
+      {plan && team && (
+        <EventForm
+          teamId={team.id}
+          date={todayISO()}
+          initialType="training"
+          initialWeekly
+          onClose={() => setPlan(false)}
+          onSaved={() => {
+            setPlan(false);
+            q.reload();
+          }}
+        />
       )}
     </div>
   );

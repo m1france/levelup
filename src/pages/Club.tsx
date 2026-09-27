@@ -117,7 +117,7 @@ function Overview() {
               <tr key={x.team.id}>
                 <td>
                   <span className="row" style={{ gap: 10 }}>
-                    <TeamBadge team={{ ...x.team, name: x.team.category, season: '', staff: [], playerCount: x.players }} size={32} />
+                    <TeamBadge team={{ ...x.team, name: x.team.category, season: '', staff: [], playerCount: x.players }} size={32} brand={false} />
                     <span>
                       <b>{x.team.category}</b>
                       <small className="muted" style={{ display: 'block' }}>{x.staff.join(', ') || 'Sans éducateur'}</small>
@@ -220,7 +220,7 @@ function Roster() {
         {rows.map((r) => (
           <div key={r.id} className="roster-row">
             <Link to={`/joueurs/${r.id}`} className="roster-who">
-              <TeamBadge team={{ ...r.team, name: r.team.category, season: '', staff: [], playerCount: 0 }} size={30} />
+              <TeamBadge team={{ ...r.team, name: r.team.category, season: '', staff: [], playerCount: 0 }} size={30} brand={false} />
               <span>
                 <b>
                   {r.lastName.toUpperCase()} {r.firstName}

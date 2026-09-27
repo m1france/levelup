@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { all, get, run, tx, parse, kvGet, kvSet, UPLOADS } from './db.js';
+import { all, get, run, tx, parse, kvSet, UPLOADS, clubLogoUrl } from './db.js';
 import {
   ROLES, PERMISSIONS, permsFor, setRolePerms, newId, hashPassword, checkPassword,
   startSession, endSession, requireUser, can, need, needTeam, teamIdsFor, isStaff,
@@ -191,6 +191,9 @@ api.use(convPublic);
 api.use(revealPublic);
 api.use(clubPublic);
 
+// Logo du club : public, il figure aussi sur les cartes de match partagées sans compte.
+api.get('/club/logo', (req, res) => sendLogo(res, 'club_logo'));
+
 api.use(requireUser);
 
 /* ------------------------------------------------------------------ logos (club, clubs organisateurs) */
@@ -211,10 +214,7 @@ function sendLogo(res, file) {
   res.set('Cache-Control', 'private, max-age=31536000, immutable');
   res.type(type).send(buf);
 }
-const clubLogo = () => {
-  const v = kvGet('club.logo');
-  return v ? `/api/club/logo?v=${v}` : null;
-};
+const clubLogo = clubLogoUrl;
 
 api.get('/me', (req, res) => {
   const u = req.user;
@@ -265,7 +265,13 @@ api.post('/club/logo', (req, res) => {
   kvSet('club.logo', String(now()));
   res.json({ logo: clubLogo() });
 });
-api.get('/club/logo', (req, res) => sendLogo(res, 'club_logo'));
+api.delete('/club/logo', (req, res) => {
+  if (req.user.role !== 'admin') throw new HttpError(403, "Réservé à l'administrateur");
+  const path = join(UPLOADS, 'club_logo.img');
+  if (existsSync(path)) unlinkSync(path);
+  run(`DELETE FROM kv WHERE key = 'club.logo'`);
+  res.json({ logo: null });
+});
 
 api.get('/permissions', (req, res) => {
   const roles = {};
@@ -746,7 +752,7 @@ const hhmm = (v) => (/^\d{2}:\d{2}$/.test(v || '') ? v : '');
 const ymd = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '');
 
 function eventOut(r, staff) {
-  const e = { ...JSON.parse(r.data), id: r.id, teamId: r.team_id, updatedAt: r.updated_at };
+  const e = { ...JSON.parse(r.data), id: r.id, teamId: r.team_id, createdAt: r.created_at, updatedAt: r.updated_at };
   if (!staff) delete e.notes;
   return e;
 }
@@ -760,6 +766,22 @@ api.get('/teams/:teamId/events', (req, res) => {
       .filter((e) => staff || e.parents !== false),
   );
 });
+
+/** Matchs d'un plateau : adversaire, heure, durée et terrain (12 au plus). */
+function cleanGames(b) {
+  if (b.type !== 'plateau' || !Array.isArray(b.games)) return undefined;
+  const games = b.games
+    .slice(0, 12)
+    .map((g) => ({
+      id: ID.test(String(g?.id || '')) ? g.id : newId(8),
+      opponent: str(g?.opponent, 80),
+      time: hhmm(g?.time),
+      minutes: Math.max(1, Math.min(90, Math.round(Number(g?.minutes) || 10))),
+      pitch: str(g?.pitch, 40) || undefined,
+    }))
+    .filter((g) => g.opponent);
+  return games.length ? games : undefined;
+}
 
 api.put('/events/:id', (req, res) => {
   need(req.user, 'events.manage');
@@ -799,7 +821,10 @@ api.put('/events/:id', (req, res) => {
     group: groups.includes(b.group) ? b.group : undefined,
     organizer: str(b.organizer, 80) || undefined,
     logo: existing ? JSON.parse(existing.data).logo : undefined,
+    games: cleanGames(b),
   };
+  // Plateau : l'adversaire affiché partout est la liste des équipes rencontrées.
+  if (data.games) data.opponent = [...new Set(data.games.map((g) => g.opponent).filter(Boolean))].join(', ').slice(0, 200);
   if (existing) run('UPDATE events SET team_id = ?, data = ?, updated_at = ? WHERE id = ?', b.teamId, JSON.stringify(data), now(), id);
   else run('INSERT INTO events VALUES (?, ?, ?, ?, ?)', id, b.teamId, JSON.stringify(data), now(), now());
   res.json(eventOut(get('SELECT * FROM events WHERE id = ?', id), true));

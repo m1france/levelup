@@ -1,15 +1,16 @@
-import { ChevronLeft, ChevronRight, Clock, ImagePlus, MapPin, Megaphone, Pencil, Plus, Repeat, Trash2, Users } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Clock, ImagePlus, MapPin, Maximize2, Megaphone, Pencil, Plus, Repeat, Trash2, Users } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, uid } from '../lib/api';
 import {
-  EVENT_TYPES, MONTHS_LONG, WEEKDAYS_SHORT, agenda, eventTitle, formatTime, fromYMD, toYMD, type Agenda,
+  EVENT_TYPES, MONTHS_LONG, WEEKDAYS_SHORT, agenda, eventTitle, formatTime, fromYMD, playsPlateaux, toYMD, type Agenda,
 } from '../lib/events';
 import { CONV_TYPES, DEFAULT_SETTINGS, matchPath } from '../lib/convocations';
 import type { ConvPreset, ConvSettings, EventType, Recurrence, TeamEvent, Training } from '../lib/types';
 import { ConvSettingsEditor, TimelinePreview } from './ConvSettings';
 import { createTraining } from '../pages/Trainings';
-import { Field, Seg, Sheet, useConfirm, useToast } from './ui';
+import { Field, Menu, Seg, Sheet, useConfirm, useToast } from './ui';
+import { PlateauWizard } from './Plateau';
 import { groupsOf } from '../lib/groups';
 import { prepareLogo } from '../lib/images';
 import { useApp } from '../lib/store';
@@ -25,14 +26,28 @@ const dayTitle = (ymd: string) => {
 
 /** Calendrier mensuel minimaliste : points de couleur par événement, un jour = un clic. */
 export function Calendar({
-  teamId, events, trainings, canEdit, onChanged,
-}: { teamId: string; events: TeamEvent[]; trainings: Training[]; canEdit: boolean; onChanged: () => void }) {
+  teamId, events, trainings, canEdit, onChanged, big, onExpand, jump,
+}: {
+  teamId: string; events: TeamEvent[]; trainings: Training[]; canEdit: boolean; onChanged: () => void;
+  /** Grand calendrier (page Calendrier) : plusieurs événements écrits dans chaque case. */
+  big?: boolean;
+  /** Petite icône pour ouvrir le calendrier en grand. */
+  onExpand?: () => void;
+  /** Ouvre un jour donné depuis l'extérieur (fil des nouveautés) ; `n` change à chaque demande. */
+  jump?: { date: string; n: number } | null;
+}) {
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1, 12);
   });
   const [day, setDay] = useState<string | null>(null);
   const today = toYMD(new Date());
+  useEffect(() => {
+    if (!jump) return;
+    const d = fromYMD(jump.date);
+    setMonth(new Date(d.getFullYear(), d.getMonth(), 1, 12));
+    setDay(jump.date);
+  }, [jump]);
 
   const cells = useMemo(() => {
     const first = new Date(month);
@@ -54,10 +69,15 @@ export function Calendar({
   const monthIdx = month.getMonth();
 
   return (
-    <div className="cal">
+    <div className={`cal${big ? ' big' : ''}`}>
       <div className="cal-head">
         <h2>
           {cap(MONTHS_LONG[monthIdx])} <span className="muted">{month.getFullYear()}</span>
+          {onExpand && (
+            <button className="cal-expand" onClick={onExpand} aria-label="Ouvrir le calendrier en grand" title="Ouvrir en grand">
+              <Maximize2 size={14} />
+            </button>
+          )}
         </h2>
         <div className="row" style={{ gap: 2 }}>
           <button className="btn sm ghost" onClick={() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1, 12))}>
@@ -88,12 +108,26 @@ export function Calendar({
               aria-label={`${dayTitle(d)}${list.length ? `, ${list.length} événement${list.length > 1 ? 's' : ''}` : ''}`}
             >
               <span className="n">{date.getDate()}</span>
-              <span className="cal-dots">
-                {list.slice(0, 3).map((it) => (
-                  <i key={it.key} style={{ background: it.color }} />
-                ))}
-              </span>
-              {list[0] && <span className="cal-label">{list[0].title}</span>}
+              {big ? (
+                <span className="cal-pills">
+                  {list.slice(0, 3).map((it) => (
+                    <span key={it.key} className={`cal-pill${it.event?.type === 'training' && !it.training ? ' planned' : ''}`} style={{ ['--c' as string]: it.color }}>
+                      <b>{it.title}</b>
+                      {it.time && <small>{formatTime(it.time)}{it.event?.location ? ` · ${it.event.location}` : ''}</small>}
+                    </span>
+                  ))}
+                  {list.length > 3 && <small className="cal-more">+{list.length - 3}</small>}
+                </span>
+              ) : (
+                <>
+                  <span className="cal-dots">
+                    {list.slice(0, 3).map((it) => (
+                      <i key={it.key} style={{ background: it.color }} />
+                    ))}
+                  </span>
+                  {list[0] && <span className="cal-label">{list[0].title}</span>}
+                </>
+              )}
             </button>
           );
         })}
@@ -107,6 +141,8 @@ function DaySheet({
   teamId, date, items, canEdit, onClose, onChanged,
 }: { teamId: string; date: string; items: Agenda[]; canEdit: boolean; onClose: () => void; onChanged: () => void }) {
   const nav = useNavigate();
+  const { can, isStaff } = useApp();
+  const prepare = usePrepareSession(teamId);
   const [edit, setEdit] = useState<{ event?: TeamEvent; occurrence?: string } | null>(items.length || !canEdit ? null : {});
   if (edit)
     return (
@@ -145,13 +181,18 @@ function DaySheet({
                 {it.event?.endTime && !it.event.allDay ? ` – ${formatTime(it.event.endTime)}` : ''}
                 {it.event?.meetTime ? ` · RDV ${formatTime(it.event.meetTime)}` : ''}
                 {it.event?.location ? ` · ${it.event.location}` : ''}
-                {it.training ? ' · Séance préparée' : ''}
+                {it.training ? ' · Séance préparée' : it.event?.type === 'training' ? ' · Séance à préparer' : ''}
               </small>
             </span>
             {it.event && hasConv(it.event) && <Megaphone size={15} color="var(--accent)" />}
             {it.event && it.event.recurrence.freq !== 'none' && <Repeat size={15} color="var(--ink-3)" />}
           </button>
-          {canEdit && it.event && hasConv(it.event) && (
+          {isStaff && can('trainings.manage') && it.event?.type === 'training' && !it.training && (
+            <button className="btn sm" onClick={() => void prepare(it)}>
+              <ClipboardList /> Préparer
+            </button>
+          )}
+          {canEdit && it.event && (hasConv(it.event) || it.training) && (
             <button className="btn icon ghost" onClick={() => setEdit({ event: it.event, occurrence: it.date })} aria-label="Modifier l’événement">
               <Pencil />
             </button>
@@ -169,6 +210,20 @@ function DaySheet({
   );
 }
 
+ /** Crée la séance d'un entraînement programmé (même jour, même heure), puis l'ouvre. */
+export function usePrepareSession(teamId: string) {
+  const nav = useNavigate();
+  const toast = useToast();
+  return async (it: Pick<Agenda, 'date' | 'time' | 'event'>) => {
+    try {
+      const t = await createTraining(teamId, `${it.date}T${it.time || it.event?.time || '14:00'}`, it.event?.title || 'Entraînement');
+      nav(`/seances/${t.id}`);
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+}
+
 type RepeatPreset = 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
 const presetOf = (r: Recurrence): RepeatPreset => {
   if (r.freq === 'none') return 'none';
@@ -181,46 +236,171 @@ const presetOf = (r: Recurrence): RepeatPreset => {
 
 const SWATCHES = ['#3f8f63', '#e03131', '#f08c00', '#7048e8', '#1c7ed6', '#d6336c', '#0ca678', '#868e96'];
 
-export function EventForm({
-  teamId, date, event, occurrence, initialType = 'training', initialGroup, onClose, onSaved,
-}: {
-  teamId: string; date: string; event?: TeamEvent; occurrence?: string;
-  /** Nouvel événement : type et catégorie proposés (ex. « Nouveau match » depuis la page Matchs). */
-  initialType?: EventType; initialGroup?: string | null;
-  onClose: () => void; onSaved: () => void;
-}) {
-  const toast = useToast();
-  const confirm = useConfirm();
-  const nav = useNavigate();
-  const { me } = useApp();
-  const groups = groupsOf(me.teams.find((t) => t.id === teamId)?.category);
-  const weekday = fromYMD(date).getDay();
-  const [e, setE] = useState<Omit<TeamEvent, 'id' | 'teamId'>>(
-    event ?? {
-      type: initialType, title: '', start: date, allDay: false, time: initialType === 'training' ? '14:00' : '10:00', endTime: initialType === 'training' ? '15:30' : '11:30', meetTime: '', location: '',
-      opponent: '', venue: '', notes: '', color: '', parents: true, exdates: [], group: initialGroup ?? undefined,
-      recurrence: { freq: 'none', interval: 1, days: [weekday], until: null, count: null },
-    },
+/** Types proposés : jusqu'en U9, les matchs se jouent en plateau (le type « Match » disparaît). */
+export function eventTypesFor(plateaux: boolean, current?: EventType) {
+  return (Object.keys(EVENT_TYPES) as EventType[]).filter((t) => !(plateaux && t === 'match' && current !== 'match'));
+}
+
+/** Type d'événement, affiché en simple texte collé à droite du titre, avec une liste pour en changer. */
+export function TypePicker({ value, types, onChange }: { value: EventType; types: EventType[]; onChange: (t: EventType) => void }) {
+  return (
+    <Menu
+      trigger={(open) => (
+        <button type="button" className="type-pick" onClick={open} aria-label={`Type : ${EVENT_TYPES[value].label}`}>
+          <i style={{ background: EVENT_TYPES[value].color }} />
+          {EVENT_TYPES[value].label}
+          <ChevronDown size={15} />
+        </button>
+      )}
+    >
+      {(close) =>
+        types.map((t) => (
+          <button
+            key={t}
+            className={t === value ? 'on' : ''}
+            onClick={() => {
+              onChange(t);
+              close();
+            }}
+          >
+            <i className="type-dot" style={{ background: EVENT_TYPES[t].color }} />
+            <span className="grow">{EVENT_TYPES[t].label}</span>
+            {t === value && <Check size={15} color="var(--accent)" />}
+          </button>
+        ))
+      }
+    </Menu>
   );
-  const [ends, setEnds] = useState<'never' | 'until' | 'count'>(event?.recurrence.until ? 'until' : event?.recurrence.count ? 'count' : 'never');
-  const [prepare, setPrepare] = useState(false);
-  const [presets, setPresets] = useState<ConvPreset[] | null>(null);
-  useEffect(() => {
-    api.get<{ presets: ConvPreset[] }>('/conv-presets').then((r) => setPresets(r.presets.filter((p) => !p.teamId || p.teamId === teamId))).catch(() => setPresets([]));
-  }, [teamId]);
-  const [busy, setBusy] = useState(false);
-  /** Logo du club organisateur choisi dans le formulaire, envoyé après l'enregistrement du match. */
+}
+
+/** Logo du club organisateur : choisi dans le formulaire, envoyé après l'enregistrement du match. */
+export function useLogoPick() {
+  const toast = useToast();
   const [logo, setLogo] = useState<string | null>(null);
-  const logoRef = useRef<HTMLInputElement>(null);
-  const pickLogo = async (file?: File) => {
+  const ref = useRef<HTMLInputElement>(null);
+  const pick = async (file?: File) => {
     if (!file) return;
     try {
       setLogo(await prepareLogo(file));
     } catch {
       toast('Image illisible', true);
     }
-    if (logoRef.current) logoRef.current.value = '';
+    if (ref.current) ref.current.value = '';
   };
+  const input = <input ref={ref} type="file" accept="image/*" hidden onChange={(x) => void pick(x.target.files?.[0])} />;
+  return { logo, open: () => ref.current?.click(), input };
+}
+
+export function LogoField({ logo, saved, eventId, home, onPick }: { logo: string | null; saved?: number; eventId?: string; home: boolean; onPick: () => void }) {
+  return (
+    <div className="row" style={{ gap: 12 }}>
+      <span className="ev-logo">{logo || saved ? <img src={logo ?? `/api/events/${eventId}/logo?v=${saved}`} alt="" /> : <ImagePlus size={20} />}</span>
+      <button type="button" className="btn sm" onClick={onPick}>
+        {logo || saved ? 'Changer le logo' : 'Ajouter le logo'}
+      </button>
+      {!logo && !saved && home && <small className="muted">Sinon, le logo de votre club</small>}
+    </div>
+  );
+}
+
+/** Réglages de convocation d'un événement (demandes de dispos, relances, publication). */
+export function ConvBox({ teamId, e, setE }: { teamId: string; e: Omit<TeamEvent, 'id' | 'teamId'>; setE: (e: Omit<TeamEvent, 'id' | 'teamId'>) => void }) {
+  const [presets, setPresets] = useState<ConvPreset[] | null>(null);
+  useEffect(() => {
+    api.get<{ presets: ConvPreset[] }>('/conv-presets').then((r) => setPresets(r.presets.filter((p) => !p.teamId || p.teamId === teamId))).catch(() => setPresets([]));
+  }, [teamId]);
+  const convOn = e.conv?.enabled ?? CONV_TYPES.includes(e.type);
+  const teamDefault = presets?.find((p) => p.teamId === teamId && p.isDefault) ?? presets?.find((p) => !p.teamId && p.isDefault) ?? presets?.[0];
+  const chosen = e.conv?.custom ? null : presets?.find((p) => p.id === e.conv?.presetId) ?? teamDefault;
+  const convSettings: ConvSettings = e.conv?.custom ?? chosen?.settings ?? DEFAULT_SETTINGS;
+  const setConv = (patch: TeamEvent['conv']) => setE({ ...e, conv: { ...e.conv, ...patch } });
+  return (
+    <div className="conv-box">
+      <label className="check">
+        <input type="checkbox" checked={convOn} onChange={(x) => setConv({ enabled: x.target.checked })} />
+        <span>
+          <Megaphone size={14} style={{ verticalAlign: -2 }} /> <b>Convocation</b> : demander les disponibilités, puis convoquer
+        </span>
+      </label>
+      {convOn && (
+        <>
+          <Field label="Réglage">
+            <select
+              className="select"
+              value={e.conv?.custom ? 'custom' : e.conv?.presetId ?? ''}
+              onChange={(x) => {
+                const v = x.target.value;
+                if (v === 'custom') setConv({ custom: { ...convSettings }, presetId: null });
+                else setConv({ custom: null, presetId: v || null });
+              }}
+            >
+              <option value="">Par défaut{teamDefault ? ` (${teamDefault.name})` : ''}</option>
+              {presets?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.teamId ? ' · équipe' : ''}
+                </option>
+              ))}
+              <option value="custom">Personnalisé pour ce match…</option>
+            </select>
+          </Field>
+          {e.conv?.custom ? (
+            <ConvSettingsEditor value={e.conv.custom} onChange={(custom) => setConv({ custom })} date={e.start} time={e.time} />
+          ) : (
+            <TimelinePreview settings={convSettings} date={e.start} time={e.time} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+type Draft = Omit<TeamEvent, 'id' | 'teamId'>;
+
+export interface EventFormProps {
+  teamId: string; date: string; event?: TeamEvent; occurrence?: string;
+  /** Nouvel événement : type et catégorie proposés (ex. « Nouveau match » depuis la page Matchs). */
+  initialType?: EventType; initialGroup?: string | null;
+  /** Nouvel événement répété chaque semaine (programmer les entraînements de la saison). */
+  initialWeekly?: boolean;
+  onClose: () => void; onSaved: () => void;
+}
+
+/**
+ * Création ou modification d'un événement. Jusqu'en U9, un match est un plateau :
+ * il s'organise dans un assistant en plusieurs étapes (adversaires, matchs, convocation).
+ */
+export function EventForm(props: EventFormProps) {
+  const { me } = useApp();
+  const category = me.teams.find((t) => t.id === props.teamId)?.category;
+  const plateaux = playsPlateaux(category);
+  const first = props.event?.type ?? props.initialType ?? 'training';
+  const [type, setType] = useState<EventType>(plateaux && first === 'match' && !props.event ? 'plateau' : first);
+  if (plateaux && type === 'plateau') return <PlateauWizard {...props} onType={setType} />;
+  return <ClassicEventForm key={type} {...props} type={type} plateaux={plateaux} onType={setType} />;
+}
+
+function ClassicEventForm({
+  teamId, date, event, occurrence, type, plateaux, initialGroup, initialWeekly, onType, onClose, onSaved,
+}: EventFormProps & { type: EventType; plateaux: boolean; onType: (t: EventType) => void }) {
+  const toast = useToast();
+  const nav = useNavigate();
+  const { me } = useApp();
+  const groups = groupsOf(me.teams.find((t) => t.id === teamId)?.category);
+  const weekday = fromYMD(date).getDay();
+  const [e, setE] = useState<Draft>(() =>
+    event
+      ? { ...event, type }
+      : {
+          type, title: '', start: date, allDay: false, time: type === 'training' ? '14:00' : '10:00', endTime: type === 'training' ? '15:30' : '11:30', meetTime: '', location: '',
+          opponent: '', venue: '', notes: '', color: '', parents: true, exdates: [], group: initialGroup ?? undefined,
+          recurrence: { freq: initialWeekly ? 'weekly' : 'none', interval: 1, days: [weekday], until: null, count: null },
+        },
+  );
+  const [ends, setEnds] = useState<'never' | 'until' | 'count'>(event?.recurrence.until ? 'until' : event?.recurrence.count ? 'count' : 'never');
+  const [prepare, setPrepare] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const logo = useLogoPick();
   const r = e.recurrence;
   const preset = presetOf(r);
   const setR = (patch: Partial<Recurrence>) => setE({ ...e, recurrence: { ...r, ...patch } });
@@ -235,6 +415,10 @@ export function EventForm({
     if (p === 'custom') setR({ freq: r.freq === 'none' ? 'weekly' : r.freq, interval: Math.max(2, r.interval), days });
   };
 
+  const isMatch = e.type === 'match' || e.type === 'plateau' || e.type === 'tournament';
+  // Équipe U8/U9 : chaque match appartient à une seule catégorie.
+  const group = isMatch && groups.length ? (e.group && groups.includes(e.group) ? e.group : groups[0]) : undefined;
+
   const save = async () => {
     setBusy(true);
     try {
@@ -242,11 +426,12 @@ export function EventForm({
         ...e,
         group,
         teamId,
+        games: undefined,
         recurrence: { ...r, until: ends === 'until' ? r.until : null, count: ends === 'count' ? r.count ?? 10 : null },
       };
       const id = event?.id ?? uid();
       await api.put(`/events/${id}`, body);
-      if (logo && isMatch) await api.post(`/events/${id}/logo`, { image: logo });
+      if (logo.logo && isMatch) await api.post(`/events/${id}/logo`, { image: logo.logo });
       if (prepare && !event) {
         const t = await createTraining(teamId, `${e.start}T${e.time || '14:00'}`, e.title || 'Entraînement');
         nav(`/seances/${t.id}`);
@@ -260,30 +445,9 @@ export function EventForm({
     }
   };
 
-  const remove = async () => {
-    if (!event) return;
-    if (event.recurrence.freq !== 'none' && occurrence) {
-      const onlyThis = await confirm({ title: 'Événement récurrent', text: 'Supprimer uniquement cette date, ou toute la série ?', confirm: 'Cette date seulement' });
-      if (onlyThis) {
-        await api.put(`/events/${event.id}`, { ...event, exdates: [...event.exdates, occurrence] });
-        onSaved();
-        return;
-      }
-      if (!(await confirm({ title: 'Supprimer toute la série ?', confirm: 'Supprimer la série', danger: true }))) return;
-    } else if (!(await confirm({ title: 'Supprimer cet événement ?', confirm: 'Supprimer', danger: true }))) return;
-    await api.del(`/events/${event.id}`);
-    onSaved();
-  };
-
+  const remove = useRemoveEvent(event, occurrence, onSaved);
   const color = e.color || EVENT_TYPES[e.type].color;
-  const convOn = e.conv?.enabled ?? CONV_TYPES.includes(e.type);
-  const teamDefault = presets?.find((p) => p.teamId === teamId && p.isDefault) ?? presets?.find((p) => !p.teamId && p.isDefault) ?? presets?.[0];
-  const chosen = e.conv?.custom ? null : presets?.find((p) => p.id === e.conv?.presetId) ?? teamDefault;
-  const convSettings: ConvSettings = e.conv?.custom ?? chosen?.settings ?? DEFAULT_SETTINGS;
-  const setConv = (patch: TeamEvent['conv']) => setE({ ...e, conv: { ...e.conv, ...patch } });
-  const isMatch = e.type === 'match' || e.type === 'plateau' || e.type === 'tournament';
-  // Équipe U8/U9 : chaque match appartient à une seule catégorie.
-  const group = isMatch && groups.length ? (e.group && groups.includes(e.group) ? e.group : groups[0]) : undefined;
+  const home = e.venue === 'home';
 
   return (
     <Sheet
@@ -307,33 +471,20 @@ export function EventForm({
       }
     >
       <div className="stack" style={{ gap: 16 }}>
-        <div className="chips">
-          {(Object.keys(EVENT_TYPES) as EventType[]).map((t) => (
-            <button key={t} className={`chip${e.type === t ? ' on' : ''}`} onClick={() => setE({ ...e, type: t })}>
-              <i style={{ width: 8, height: 8, borderRadius: 4, background: EVENT_TYPES[t].color }} /> {EVENT_TYPES[t].label}
-            </button>
-          ))}
+        <div className="title-field">
+          <input className="input title" placeholder={eventTitle({ ...e, title: '' })} value={e.title} onChange={(x) => setE({ ...e, title: x.target.value })} />
+          <TypePicker value={e.type} types={eventTypesFor(plateaux, event?.type)} onChange={onType} />
         </div>
 
-        <input
-          className="input title"
-          style={{ fontSize: 22, fontWeight: 650 }}
-          placeholder={eventTitle({ ...e, title: '' })}
-          value={e.title}
-          onChange={(x) => setE({ ...e, title: x.target.value })}
-        />
-
-        {isMatch && groups.length > 0 && (
-          <Field label="Catégorie">
-            <Seg<string> value={group!} onChange={(g) => setE({ ...e, group: g })} options={groups.map((g) => ({ value: g, label: g }))} />
-          </Field>
-        )}
-
         {isMatch && (
-          <div className="row wrap" style={{ gap: 10 }}>
-            <Field label="Adversaire">
-              <input className="input" value={e.opponent} placeholder="Ex. Teyran" onChange={(x) => setE({ ...e, opponent: x.target.value })} />
-            </Field>
+          <div className="ev-2col">
+            {groups.length > 0 ? (
+              <Field label="Catégorie">
+                <Seg<string> value={group!} onChange={(g) => setE({ ...e, group: g })} options={groups.map((g) => ({ value: g, label: g }))} />
+              </Field>
+            ) : (
+              <span className="ev-2col-gap" />
+            )}
             <Field label="Lieu du match">
               <Seg<string>
                 value={e.venue}
@@ -341,31 +492,30 @@ export function EventForm({
                 options={[{ value: 'home', label: 'Domicile' }, { value: 'away', label: 'Extérieur' }, { value: 'neutral', label: 'Neutre' }]}
               />
             </Field>
-            {e.venue !== 'home' && (
-              <Field label="Club organisateur">
-                <input
-                  className="input"
-                  value={e.organizer ?? ''}
-                  placeholder={e.opponent || 'Ex. AS Teyran'}
-                  onChange={(x) => setE({ ...e, organizer: x.target.value })}
-                />
-              </Field>
-            )}
+          </div>
+        )}
+
+        {isMatch && (
+          <div className="ev-2col">
+            <Field label="Adversaire">
+              <input className="input" value={e.opponent} placeholder="Ex. Teyran" onChange={(x) => setE({ ...e, opponent: x.target.value })} />
+            </Field>
+            <Field label="Club organisateur">
+              <input
+                className="input"
+                value={home ? '' : e.organizer ?? ''}
+                disabled={home}
+                placeholder={home ? me.club?.name ?? 'Votre club' : e.opponent || 'Ex. AS Teyran'}
+                onChange={(x) => setE({ ...e, organizer: x.target.value })}
+              />
+            </Field>
           </div>
         )}
 
         {isMatch && (
           <Field label="Logo du club organisateur">
-            <div className="row" style={{ gap: 12 }}>
-              <span className="ev-logo">
-                {logo || e.logo ? <img src={logo ?? `/api/events/${event?.id}/logo?v=${e.logo}`} alt="" /> : <ImagePlus size={20} />}
-              </span>
-              <input ref={logoRef} type="file" accept="image/*" hidden onChange={(x) => void pickLogo(x.target.files?.[0])} />
-              <button type="button" className="btn sm" onClick={() => logoRef.current?.click()}>
-                {logo || e.logo ? 'Changer le logo' : 'Ajouter le logo'}
-              </button>
-              {!logo && !e.logo && e.venue === 'home' && <small className="muted">Sinon, le logo de votre club</small>}
-            </div>
+            <LogoField logo={logo.logo} saved={e.logo} eventId={event?.id} home={home} onPick={logo.open} />
+            {logo.input}
           </Field>
         )}
 
@@ -392,7 +542,7 @@ export function EventForm({
           <span>Toute la journée</span>
         </label>
 
-        <Field label="Lieu">
+        <Field label="Adresse">
           <div style={{ position: 'relative' }}>
             <MapPin size={16} style={{ position: 'absolute', left: 12, top: 13, color: 'var(--ink-3)' }} />
             <input className="input" style={{ paddingLeft: 36 }} value={e.location} placeholder="Stade, gymnase, adresse…" onChange={(x) => setE({ ...e, location: x.target.value })} />
@@ -456,45 +606,7 @@ export function EventForm({
           </div>
         )}
 
-        {e.type !== 'training' && e.type !== 'meeting' && (
-          <div className="conv-box">
-            <label className="check">
-              <input type="checkbox" checked={convOn} onChange={(x) => setConv({ enabled: x.target.checked })} />
-              <span>
-                <Megaphone size={14} style={{ verticalAlign: -2 }} /> <b>Convocation</b> : demander les disponibilités, puis convoquer
-              </span>
-            </label>
-            {convOn && (
-              <>
-                <Field label="Réglage">
-                  <select
-                    className="select"
-                    value={e.conv?.custom ? 'custom' : e.conv?.presetId ?? ''}
-                    onChange={(x) => {
-                      const v = x.target.value;
-                      if (v === 'custom') setConv({ custom: { ...convSettings }, presetId: null });
-                      else setConv({ custom: null, presetId: v || null });
-                    }}
-                  >
-                    <option value="">Par défaut{teamDefault ? ` (${teamDefault.name})` : ''}</option>
-                    {presets?.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                        {p.teamId ? ' · équipe' : ''}
-                      </option>
-                    ))}
-                    <option value="custom">Personnalisé pour ce match…</option>
-                  </select>
-                </Field>
-                {e.conv?.custom ? (
-                  <ConvSettingsEditor value={e.conv.custom} onChange={(custom) => setConv({ custom })} date={e.start} time={e.time} />
-                ) : (
-                  <TimelinePreview settings={convSettings} date={e.start} time={e.time} />
-                )}
-              </>
-            )}
-          </div>
-        )}
+        {e.type !== 'training' && e.type !== 'meeting' && <ConvBox teamId={teamId} e={e} setE={setE} />}
 
         <Field label="Couleur">
           <div className="row" style={{ gap: 8 }}>
@@ -526,4 +638,23 @@ export function EventForm({
       </div>
     </Sheet>
   );
+}
+
+/** Suppression d'un événement (une date ou toute la série s'il se répète). */
+export function useRemoveEvent(event: TeamEvent | undefined, occurrence: string | undefined, onSaved: () => void) {
+  const confirm = useConfirm();
+  return async () => {
+    if (!event) return;
+    if (event.recurrence.freq !== 'none' && occurrence) {
+      const onlyThis = await confirm({ title: 'Événement récurrent', text: 'Supprimer uniquement cette date, ou toute la série ?', confirm: 'Cette date seulement' });
+      if (onlyThis) {
+        await api.put(`/events/${event.id}`, { ...event, exdates: [...event.exdates, occurrence] });
+        onSaved();
+        return;
+      }
+      if (!(await confirm({ title: 'Supprimer toute la série ?', confirm: 'Supprimer la série', danger: true }))) return;
+    } else if (!(await confirm({ title: 'Supprimer cet événement ?', confirm: 'Supprimer', danger: true }))) return;
+    await api.del(`/events/${event.id}`);
+    onSaved();
+  };
 }

@@ -432,6 +432,18 @@ if (!db.prepare(`SELECT 1 FROM kv WHERE key = 'migr.playerCategory'`).get()) {
 export const kvGet = (key) => db.prepare('SELECT value FROM kv WHERE key = ?').get(key)?.value ?? null;
 export const kvSet = (key, value) => db.prepare('INSERT INTO kv VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
+/* Messagerie : salons (annonces, groupes) avec icône et permissions, discussions supprimées par un membre. */
+if (!cols('chat_threads').includes('data')) db.exec(`ALTER TABLE chat_threads ADD COLUMN data TEXT NOT NULL DEFAULT '{}'`);
+if (!cols('chat_members').includes('cleared_at')) {
+  db.exec(`ALTER TABLE chat_members ADD COLUMN cleared_at INTEGER NOT NULL DEFAULT 0; ALTER TABLE chat_members ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;`);
+}
+
+/** Adresse du logo du club (versionnée), ou null. */
+export const clubLogoUrl = () => {
+  const v = kvGet('club.logo');
+  return v ? `/api/club/logo?v=${v}` : null;
+};
+
 export const all = (sql, ...p) => db.prepare(sql).all(...p);
 export const get = (sql, ...p) => db.prepare(sql).get(...p);
 export const run = (sql, ...p) => db.prepare(sql).run(...p);

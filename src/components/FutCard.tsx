@@ -28,7 +28,24 @@ function Silhouette({ color }: { color: string }) {
  * Carte de joueur, face visible. `size` = largeur en px (tout le reste est proportionnel).
  * `foot` remplace la ligne du bas (minutes, buts) : l'effectif y met l'année de naissance.
  */
-export function FutCard({ card, team, size = 240, foot }: { card: PlayerCard; team: { category: string; color: string }; size?: number; foot?: ReactNode }) {
+export interface CardTeam { category: string; color: string; logo?: string | null }
+
+/** Écusson de la carte : le logo du club, sinon la catégorie sur la couleur de l'équipe. */
+function Crest({ team }: { team: CardTeam }) {
+  if (team.logo)
+    return (
+      <span className="fut-club logo">
+        <img src={team.logo} alt="" draggable={false} />
+      </span>
+    );
+  return (
+    <span className="fut-club" style={{ background: team.color }}>
+      {team.category.replace(/\s+/g, '').slice(0, 5)}
+    </span>
+  );
+}
+
+export function FutCard({ card, team, size = 240, foot }: { card: PlayerCard; team: CardTeam; size?: number; foot?: ReactNode }) {
   const uid = useId().replace(/:/g, '');
   const t = TIERS[card.award.tier] ?? TIERS.gold;
   return (
@@ -65,10 +82,7 @@ export function FutCard({ card, team, size = 240, foot }: { card: PlayerCard; te
       <div className="fut-left">
         <b className="fut-ovr">{card.ovr}</b>
         <span className="fut-pos">{card.position}</span>
-        <span className="fut-club" style={{ background: team.color }}>
-          {team.category.replace(/\s+/g, '').slice(0, 5)}
-        </span>
-        {card.award.emoji && <span className="fut-emoji">{card.award.emoji}</span>}
+        <Crest team={team} />
       </div>
       <div className="fut-name">{card.firstName}</div>
       <div className="fut-stats">
@@ -93,7 +107,7 @@ export function FutCard({ card, team, size = 240, foot }: { card: PlayerCard; te
 }
 
 /** Dos de carte (avant le retournement). */
-export function FutBack({ team, size = 240, mine }: { team: { category: string; color: string }; size?: number; mine?: boolean }) {
+export function FutBack({ size = 240, mine }: { size?: number; mine?: boolean }) {
   const uid = useId().replace(/:/g, '');
   return (
     <div className={`fut fut-back${mine ? ' mine' : ''}`} style={{ width: size, fontSize: size / 10 }}>
@@ -117,7 +131,6 @@ export function FutBack({ team, size = 240, mine }: { team: { category: string; 
         <path d={SHAPE} fill="none" stroke="#d5f58e" strokeOpacity=".7" strokeWidth="2.5" transform="translate(125 175) scale(.93) translate(-125 -175)" />
       </svg>
       <div className="fut-back-mark">
-        <span style={{ background: team.color }}>{team.category.replace(/\s+/g, '').slice(0, 5)}</span>
         <b>?</b>
       </div>
       {mine && <em className="fut-mine">Mon enfant</em>}

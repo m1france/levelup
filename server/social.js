@@ -7,7 +7,7 @@ import { Router } from 'express';
 import { writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { all, get, run, tx, UPLOADS } from './db.js';
-import { can, need, needTeam, isStaff, childIdsFor, teamIdsFor, permsFor, newId, HttpError } from './auth.js';
+import { can, needTeam, isStaff, childIdsFor, teamIdsFor, permsFor, newId, HttpError } from './auth.js';
 
 const asUser = (u) => ({ ...u, perms: new Set(permsFor(u.role)) });
 import { occ, evTitle, teamPlayers, occPlayers, parentsOf, staffOf, convOf } from './convocations.js';
@@ -177,37 +177,129 @@ function teamMemberIds(teamId) {
   return [...ids];
 }
 
+const createThread = (kind, teamId, title, by = null, data = {}) => {
+  const id = newId();
+  run(
+    'INSERT INTO chat_threads (id, kind, team_id, title, created_by, created_at, updated_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    id, kind, teamId, title, by, now(), now(), JSON.stringify(data),
+  );
+  return get('SELECT * FROM chat_threads WHERE id = ?', id);
+};
+
 function ensureTeamThread(teamId) {
-  let t = get(`SELECT * FROM chat_threads WHERE kind = 'team' AND team_id = ?`, teamId);
-  if (!t) {
-    const id = newId();
-    run(`INSERT INTO chat_threads VALUES (?, 'team', ?, '', NULL, ?, ?)`, id, teamId, now(), now());
-    t = get('SELECT * FROM chat_threads WHERE id = ?', id);
-  }
-  return t;
+  return get(`SELECT * FROM chat_threads WHERE kind = 'team' AND team_id = ?`, teamId) ?? createThread('team', teamId, '');
 }
 
 function ensureStaffThread() {
-  let t = get(`SELECT * FROM chat_threads WHERE kind = 'staff'`);
-  if (!t) {
-    const id = newId();
-    run(`INSERT INTO chat_threads VALUES (?, 'staff', NULL, 'Éducateurs du club', NULL, ?, ?)`, id, now(), now());
-    t = get('SELECT * FROM chat_threads WHERE id = ?', id);
-  }
+  return get(`SELECT * FROM chat_threads WHERE kind = 'staff'`) ?? createThread('staff', null, 'Éducateurs du club');
+}
+
+/**
+ * Salon « Annonces du club » : tout le club le lit, seuls ceux qui ont la permission « Publier dans le salon
+ * Annonces » y écrivent. Les anciennes annonces (avec accusé de lecture) y sont reprises une fois.
+ */
+function ensureAnnounceThread() {
+  let t = get(`SELECT * FROM chat_threads WHERE kind = 'announce'`);
+  if (t) return t;
+  t = createThread('announce', null, 'Annonces du club');
+  tx(() => {
+    const hasOld = get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'announcements'`);
+    for (const a of hasOld ? all('SELECT * FROM announcements ORDER BY created_at') : []) {
+      const d = JSON.parse(a.data || '{}');
+      run('INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?, ?, ?, 0)', newId(), t.id, a.author_id, 'text', `${d.emoji || '📣'} ${a.title}\n\n${a.body}`, '{}', a.created_at);
+    }
+    // Les annonces reprises ne comptent pas comme non lues.
+    for (const u of all(`SELECT id FROM users WHERE status = 'active'`)) markRead(t.id, u.id);
+  });
   return t;
 }
 
+const tData = (t) => {
+  try {
+    return JSON.parse(t.data || '{}');
+  } catch {
+    return {};
+  }
+};
+
 function memberIds(t) {
-  if (t.kind === 'team') return teamMemberIds(t.team_id);
-  if (t.kind === 'staff') return all(`SELECT id FROM users WHERE role != 'parent' AND status = 'active'`).map((u) => u.id);
+  if (t.kind === 'team') return teamMemberIds(t.team_id).filter((id) => canIn(userById(id), t, 'view'));
+  if (t.kind === 'staff') return all(`SELECT id FROM users WHERE role != 'parent' AND status = 'active'`).map((u) => u.id).filter((id) => canIn(userById(id), t, 'view'));
+  if (t.kind === 'announce') return all(`SELECT id FROM users WHERE status = 'active'`).map((u) => u.id).filter((id) => canIn(userById(id), t, 'view'));
   return all('SELECT user_id FROM chat_members WHERE thread_id = ?', t.id).map((r) => r.user_id);
+}
+
+function userById(id) {
+  const u = get('SELECT id, name, role, status FROM users WHERE id = ?', id);
+  return u ? asUser(u) : null;
+}
+
+/* ---------------------------------------------------------------- permissions des salons (façon Discord) */
+
+/** Permissions d'un salon. Chaque rôle hérite des valeurs par défaut, que l'on peut autoriser ou refuser salon par salon. */
+export const CHANNEL_PERMS = [
+  { key: 'view', label: 'Voir le salon', hint: 'Sans cette permission, le salon n’apparaît pas.' },
+  { key: 'send', label: 'Envoyer des messages' },
+  { key: 'media', label: 'Joindre des photos et des cartes', hint: 'Photos, sondages, covoiturage, match, lieu…' },
+  { key: 'react', label: 'Réagir aux messages' },
+  { key: 'manage', label: 'Gérer les messages', hint: 'Supprimer les messages des autres.' },
+];
+const PERM_KEYS = CHANNEL_PERMS.map((p) => p.key);
+const CHANNEL_ROLES = ['parent', 'coach', 'dirigeant'];
+
+/** Valeur par défaut d'une permission pour un rôle, selon le type de salon. */
+function defaultPerm(kind, role, perm, user) {
+  const staff = role !== 'parent';
+  switch (kind) {
+    case 'team':
+      return perm === 'manage' ? staff : true;
+    case 'staff':
+      return staff && (perm !== 'manage' || role === 'dirigeant');
+    case 'announce':
+      // Les parents lisent (et réagissent) ; seuls ceux qui ont le droit de publier écrivent.
+      if (perm === 'view' || perm === 'react') return true;
+      if (perm === 'manage') return role === 'dirigeant';
+      return staff && (user ? can(user, 'announcements.send') : permsFor(role).includes('announcements.send'));
+    default:
+      return perm !== 'manage';
+  }
+}
+
+/** Permission effective d'un utilisateur dans un salon. L'administrateur (et le créateur d'un groupe) peut tout. */
+function canIn(user, t, perm) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (t.kind === 'group' && t.created_by === user.id) return true;
+  const over = tData(t).perms?.[user.role] ?? {};
+  const val = (k) => (typeof over[k] === 'boolean' ? over[k] : defaultPerm(t.kind, user.role, k, user));
+  if (perm !== 'view' && !val('view')) return false;
+  return val(perm);
+}
+const myPerms = (user, t) => Object.fromEntries(PERM_KEYS.map((k) => [k, canIn(user, t, k)]));
+
+function needIn(user, t, perm) {
+  if (!canIn(user, t, perm)) throw new HttpError(403, perm === 'send' ? 'Ce salon est en lecture seule pour vous' : 'Action non autorisée dans ce salon');
+}
+
+/** Qui peut régler un salon : l'admin, les responsables des membres, le créateur d'un groupe, les éducateurs de l'équipe. */
+function canConfigure(user, t) {
+  if (user.role === 'admin' || can(user, 'members.manage')) return true;
+  if (t.kind === 'group') return t.created_by === user.id;
+  if (t.kind === 'team') return isStaff(user) && staffOf(t.team_id).includes(user.id);
+  if (t.kind === 'announce' || t.kind === 'staff') return user.role === 'dirigeant';
+  return false;
 }
 
 function threadAccess(user, id) {
   const t = get('SELECT * FROM chat_threads WHERE id = ?', id);
   if (!t) throw new HttpError(404, 'Discussion introuvable');
-  const ok = t.kind === 'team' ? teamIdsFor(user).includes(t.team_id) : t.kind === 'staff' ? isStaff(user) : !!get('SELECT 1 FROM chat_members WHERE thread_id = ? AND user_id = ?', t.id, user.id);
-  if (!ok) throw new HttpError(404, 'Discussion introuvable');
+  const member = () => !!get('SELECT 1 FROM chat_members WHERE thread_id = ? AND user_id = ?', t.id, user.id);
+  const ok =
+    t.kind === 'team' ? teamIdsFor(user).includes(t.team_id)
+    : t.kind === 'staff' ? isStaff(user)
+    : t.kind === 'announce' ? true
+    : member();
+  if (!ok || !canIn(user, t, 'view')) throw new HttpError(404, 'Discussion introuvable');
   return t;
 }
 
@@ -215,10 +307,13 @@ const lastRead = (threadId, userId) => get('SELECT last_read_at FROM chat_member
 
 function markRead(threadId, userId, at = now()) {
   run(
-    `INSERT INTO chat_members VALUES (?, ?, ?) ON CONFLICT(thread_id, user_id) DO UPDATE SET last_read_at = MAX(last_read_at, excluded.last_read_at)`,
+    `INSERT INTO chat_members (thread_id, user_id, last_read_at) VALUES (?, ?, ?) ON CONFLICT(thread_id, user_id) DO UPDATE SET last_read_at = MAX(last_read_at, excluded.last_read_at)`,
     threadId, userId, at,
   );
 }
+
+/** Discussion supprimée par ce membre : les messages d'avant restent cachés pour lui. */
+const clearedAt = (threadId, userId) => get('SELECT cleared_at FROM chat_members WHERE thread_id = ? AND user_id = ?', threadId, userId)?.cleared_at ?? 0;
 
 function preview(m) {
   if (m.deleted) return 'Message supprimé';
@@ -240,26 +335,38 @@ function threadTitle(t, user) {
     return { title: `Équipe ${team?.category ?? ''}`.trim(), color: team?.color ?? null, category: team?.category ?? null };
   }
   if (t.kind === 'staff') return { title: t.title || 'Éducateurs du club', color: '#1f5b3f', category: null };
+  if (t.kind === 'announce') return { title: 'Annonces du club', color: '#e8590c', category: null };
+  if (t.kind === 'group') return { title: t.title || 'Groupe', color: tData(t).icon?.color ?? null, category: null };
   const other = all('SELECT u.id, u.name, u.role FROM chat_members m JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.user_id != ?', t.id, user.id)[0];
   return { title: other?.name ?? 'Discussion', color: null, category: null, otherId: other?.id ?? null, otherRole: other?.role ?? null };
 }
 
 function threadSummary(t, user) {
-  const last = get('SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? ORDER BY m.created_at DESC LIMIT 1', t.id);
-  const read = lastRead(t.id, user.id);
+  const cleared = clearedAt(t.id, user.id);
+  const last = get('SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.created_at > ? ORDER BY m.created_at DESC LIMIT 1', t.id, cleared);
+  const read = Math.max(lastRead(t.id, user.id), cleared);
   const unread = get('SELECT COUNT(*) n FROM chat_messages WHERE thread_id = ? AND created_at > ? AND (user_id IS NULL OR user_id != ?) AND deleted = 0', t.id, read, user.id).n;
+  const icon = tData(t).icon ?? null;
   return {
     id: t.id, kind: t.kind, teamId: t.team_id, ...threadTitle(t, user), unread,
+    icon: icon ? { emoji: icon.emoji ?? null, image: icon.image ? `/api/chat/threads/${t.id}/icon?v=${icon.image}` : null } : null,
+    perms: myPerms(user, t),
+    canConfigure: canConfigure(user, t),
+    // Discussion privée ou groupe : chacun peut la supprimer de sa liste ; le créateur d'un groupe peut le supprimer pour tous.
+    canDelete: t.kind === 'direct' || t.kind === 'group',
+    owner: t.kind === 'group' && (t.created_by === user.id || user.role === 'admin'),
     last: last ? { preview: preview(last), author: last.author, mine: last.user_id === user.id, at: last.created_at } : null,
-    updatedAt: last?.created_at ?? t.created_at,
+    updatedAt: last?.created_at ?? Math.max(t.created_at, cleared),
   };
 }
 
 function userThreads(user) {
-  const list = teamIdsFor(user).map(ensureTeamThread);
+  const list = [ensureAnnounceThread(), ...teamIdsFor(user).map(ensureTeamThread)];
   if (isStaff(user)) list.push(ensureStaffThread());
-  list.push(...all(`SELECT t.* FROM chat_threads t JOIN chat_members m ON m.thread_id = t.id WHERE t.kind = 'direct' AND m.user_id = ?`, user.id));
-  return list;
+  list.push(
+    ...all(`SELECT t.* FROM chat_threads t JOIN chat_members m ON m.thread_id = t.id WHERE t.kind IN ('direct', 'group') AND m.user_id = ? AND m.hidden = 0`, user.id),
+  );
+  return list.filter((t) => canIn(user, t, 'view'));
 }
 
 socialApi.get('/chat/threads', (req, res) => {
@@ -300,14 +407,162 @@ socialApi.post('/chat/direct', (req, res) => {
     `SELECT t.id FROM chat_threads t JOIN chat_members a ON a.thread_id = t.id AND a.user_id = ? JOIN chat_members b ON b.thread_id = t.id AND b.user_id = ? WHERE t.kind = 'direct'`,
     req.user.id, other,
   );
-  if (existing) return res.json({ id: existing.id });
-  const id = newId();
-  tx(() => {
-    run(`INSERT INTO chat_threads VALUES (?, 'direct', NULL, '', ?, ?, ?)`, id, req.user.id, now(), now());
-    run('INSERT INTO chat_members VALUES (?, ?, ?)', id, req.user.id, now());
-    run('INSERT INTO chat_members VALUES (?, ?, 0)', id, other);
+  if (existing) {
+    run('UPDATE chat_members SET hidden = 0 WHERE thread_id = ? AND user_id = ?', existing.id, req.user.id);
+    return res.json({ id: existing.id });
+  }
+  const id = tx(() => {
+    const t = createThread('direct', null, '', req.user.id);
+    run('INSERT INTO chat_members (thread_id, user_id, last_read_at) VALUES (?, ?, ?)', t.id, req.user.id, now());
+    run('INSERT INTO chat_members (thread_id, user_id, last_read_at) VALUES (?, ?, 0)', t.id, other);
+    return t.id;
   });
   res.json({ id });
+});
+
+/* ---------------------------------------------------------------- groupes */
+
+/** Membres qu'on peut ajouter à un groupe : ceux qui partagent une équipe (tous pour l'admin). */
+function reachable(user) {
+  if (user.role === 'admin') return new Set(all(`SELECT id FROM users WHERE status = 'active'`).map((u) => u.id));
+  const ids = new Set();
+  for (const teamId of teamIdsFor(user)) teamMemberIds(teamId).forEach((id) => ids.add(id));
+  return ids;
+}
+
+/** Icône d'un groupe : un emoji sur une couleur, ou une image (data URL). */
+function saveIcon(t, body) {
+  const d = tData(t);
+  const icon = { ...(d.icon || {}) };
+  if (typeof body.emoji === 'string') icon.emoji = str(body.emoji, 16) || null;
+  if (typeof body.color === 'string' && /^#[0-9a-f]{6}$/i.test(body.color)) icon.color = body.color;
+  if (body.image === null) delete icon.image;
+  else if (body.image) {
+    writeFileSync(join(UPLOADS, `chat_icon_${t.id}.jpg`), decodeImage(body.image, 1_500_000));
+    icon.image = now();
+  }
+  run('UPDATE chat_threads SET data = ? WHERE id = ?', JSON.stringify({ ...d, icon }), t.id);
+}
+
+socialApi.post('/chat/groups', (req, res) => {
+  const title = str(req.body.title, 60);
+  if (!title) throw new HttpError(400, 'Donnez un titre au groupe');
+  const allowed = reachable(req.user);
+  const members = [...new Set((Array.isArray(req.body.members) ? req.body.members : []).map(String))].filter((id) => id !== req.user.id && allowed.has(id));
+  if (!members.length) throw new HttpError(400, 'Ajoutez au moins une personne');
+  const t = tx(() => {
+    const t = createThread('group', null, title, req.user.id);
+    run('INSERT INTO chat_members (thread_id, user_id, last_read_at) VALUES (?, ?, ?)', t.id, req.user.id, now());
+    for (const id of members.slice(0, 200)) run('INSERT INTO chat_members (thread_id, user_id, last_read_at) VALUES (?, ?, 0)', t.id, id);
+    return t;
+  });
+  saveIcon(t, req.body);
+  broadcast(t, { t: 'chat', threadId: t.id });
+  res.json({ id: t.id });
+});
+
+socialApi.get('/chat/threads/:id/icon', (req, res) => {
+  const t = threadAccess(req.user, req.params.id);
+  const file = join(UPLOADS, `chat_icon_${t.id}.jpg`);
+  if (!existsSync(file)) throw new HttpError(404, 'Icône introuvable');
+  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  res.type('jpeg').sendFile(file);
+});
+
+/** Titre, icône et membres d'un groupe. */
+socialApi.patch('/chat/threads/:id', (req, res) => {
+  const t = threadAccess(req.user, req.params.id);
+  if (t.kind !== 'group') throw new HttpError(400, 'Seuls les groupes se renomment');
+  if (!canConfigure(req.user, t)) throw new HttpError(403, 'Seul le créateur du groupe peut le modifier');
+  const title = str(req.body.title, 60);
+  if (title) run('UPDATE chat_threads SET title = ? WHERE id = ?', title, t.id);
+  saveIcon(t, req.body);
+  if (Array.isArray(req.body.add) || Array.isArray(req.body.remove)) {
+    const allowed = reachable(req.user);
+    tx(() => {
+      for (const id of (req.body.add || []).map(String)) {
+        if (allowed.has(id)) run('INSERT INTO chat_members (thread_id, user_id, last_read_at) VALUES (?, ?, 0) ON CONFLICT(thread_id, user_id) DO UPDATE SET hidden = 0', t.id, id);
+      }
+      for (const id of (req.body.remove || []).map(String)) if (id !== t.created_by) run('DELETE FROM chat_members WHERE thread_id = ? AND user_id = ?', t.id, id);
+    });
+  }
+  broadcast(get('SELECT * FROM chat_threads WHERE id = ?', t.id), { t: 'chat', threadId: t.id });
+  res.json(threadSummary(get('SELECT * FROM chat_threads WHERE id = ?', t.id), req.user));
+});
+
+/**
+ * Supprimer une discussion. Privée : elle disparaît de ma liste avec son historique (elle revient, vide, au prochain message).
+ * Groupe : je le quitte ; son créateur (ou l'admin) peut le supprimer pour tout le monde (`?all=1`).
+ */
+socialApi.delete('/chat/threads/:id', (req, res) => {
+  const t = threadAccess(req.user, req.params.id);
+  if (t.kind !== 'direct' && t.kind !== 'group') throw new HttpError(400, 'Les salons du club ne peuvent pas être supprimés');
+  if (t.kind === 'group' && req.query.all === '1') {
+    if (t.created_by !== req.user.id && req.user.role !== 'admin') throw new HttpError(403, 'Seul le créateur peut supprimer le groupe');
+    const members = memberIds(t);
+    run('DELETE FROM chat_threads WHERE id = ?', t.id);
+    toUsers(members, { t: 'chat', threadId: t.id });
+    return res.json({ ok: true });
+  }
+  if (t.kind === 'group' && t.created_by !== req.user.id) {
+    run('DELETE FROM chat_members WHERE thread_id = ? AND user_id = ?', t.id, req.user.id);
+    broadcast(t, { t: 'chat', threadId: t.id });
+    return res.json({ ok: true });
+  }
+  run('UPDATE chat_members SET cleared_at = ?, hidden = 1, last_read_at = MAX(last_read_at, ?) WHERE thread_id = ? AND user_id = ?', now(), now(), t.id, req.user.id);
+  res.json({ ok: true });
+});
+
+/* ---------------------------------------------------------------- réglages d'un salon */
+
+socialApi.get('/chat/threads/:id/settings', (req, res) => {
+  const t = threadAccess(req.user, req.params.id);
+  if (!canConfigure(req.user, t)) throw new HttpError(403, 'Action non autorisée');
+  const overrides = tData(t).perms ?? {};
+  res.json({
+    kind: t.kind,
+    catalog: CHANNEL_PERMS,
+    roles: (t.kind === 'direct' ? [] : CHANNEL_ROLES).map((role) => ({
+      role,
+      defaults: Object.fromEntries(PERM_KEYS.map((k) => [k, defaultPerm(t.kind, role, k, null)])),
+      overrides: overrides[role] ?? {},
+    })),
+    members: t.kind === 'group'
+      ? all('SELECT m.user_id id, u.name, u.role FROM chat_members m JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? ORDER BY u.name', t.id).map((m) => ({ ...m, owner: m.id === t.created_by }))
+      : null,
+  });
+});
+
+socialApi.put('/chat/threads/:id/permissions', (req, res) => {
+  const t = threadAccess(req.user, req.params.id);
+  if (!canConfigure(req.user, t)) throw new HttpError(403, 'Action non autorisée');
+  if (t.kind === 'direct') throw new HttpError(400, 'Pas de permissions dans une discussion privée');
+  const perms = {};
+  for (const role of CHANNEL_ROLES) {
+    const src = req.body.perms?.[role] ?? {};
+    const out = {};
+    for (const k of PERM_KEYS) if (typeof src[k] === 'boolean') out[k] = src[k];
+    if (Object.keys(out).length) perms[role] = out;
+  }
+  run('UPDATE chat_threads SET data = ? WHERE id = ?', JSON.stringify({ ...tData(t), perms }), t.id);
+  // Tout le monde recharge sa liste : un salon peut apparaître ou disparaître.
+  toUsers(all(`SELECT id FROM users WHERE status = 'active'`).map((u) => u.id), { t: 'chat', threadId: t.id });
+  res.json({ ok: true });
+});
+
+/** Dernières annonces (accueil) : les messages récents du salon Annonces. */
+socialApi.get('/chat/announce', (req, res) => {
+  const t = ensureAnnounceThread();
+  if (!canIn(req.user, t, 'view')) return res.json({ threadId: null, messages: [] });
+  const read = lastRead(t.id, req.user.id);
+  const rows = all(
+    `SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.deleted = 0 AND m.created_at > ? ORDER BY m.created_at DESC LIMIT 5`,
+    t.id, now() - 14 * 864e5,
+  );
+  res.json({
+    threadId: t.id,
+    messages: rows.map((m) => ({ id: m.id, author: m.author, preview: preview(m), at: m.created_at, unread: m.created_at > read && m.user_id !== req.user.id })),
+  });
 });
 
 const REACTIONS = ['❤️', '👍', '👎', '😂', '‼️', '❓', '⚽', '👏'];
@@ -359,8 +614,8 @@ socialApi.get('/chat/threads/:id/messages', (req, res) => {
   const t = threadAccess(req.user, req.params.id);
   const before = Number(req.query.before) || now() + 1;
   const rows = all(
-    `SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.created_at < ? ORDER BY m.created_at DESC LIMIT 60`,
-    t.id, before,
+    `SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.created_at < ? AND m.created_at > ? ORDER BY m.created_at DESC LIMIT 60`,
+    t.id, before, clearedAt(t.id, req.user.id),
   ).reverse();
   const members = memberIds(t);
   const reads = Object.fromEntries(all('SELECT user_id, last_read_at FROM chat_members WHERE thread_id = ?', t.id).map((r) => [r.user_id, r.last_read_at]));
@@ -381,6 +636,8 @@ function insertMessage(t, user, kind, body, data) {
   const at = now();
   run('INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?, ?, ?, 0)', id, t.id, user.id, kind, body, JSON.stringify(data || {}), at);
   run('UPDATE chat_threads SET updated_at = ? WHERE id = ?', at, t.id);
+  // Une discussion supprimée réapparaît chez ceux qui l'avaient retirée de leur liste.
+  if (t.kind === 'direct' || t.kind === 'group') run('UPDATE chat_members SET hidden = 0 WHERE thread_id = ?', t.id);
   markRead(t.id, user.id, at);
   const title = threadTitle(t, user).title;
   const text = preview({ kind, body, data: JSON.stringify(data || {}), deleted: 0 });
@@ -400,6 +657,8 @@ export function postToTeam(teamId, user, kind, body, data) {
 socialApi.post('/chat/threads/:id/messages', (req, res) => {
   const t = threadAccess(req.user, req.params.id);
   const kind = String(req.body.kind || 'text');
+  needIn(req.user, t, 'send');
+  if (kind !== 'text') needIn(req.user, t, 'media');
   const d = req.body.data || {};
   let data = {};
   let body = str(req.body.body, 4000);
@@ -437,6 +696,8 @@ function decodeImage(dataUrl, maxBytes) {
 
 socialApi.post('/chat/threads/:id/image', (req, res) => {
   const t = threadAccess(req.user, req.params.id);
+  needIn(req.user, t, 'send');
+  needIn(req.user, t, 'media');
   const buf = decodeImage(req.body.image, 5_000_000);
   const file = newId();
   writeFileSync(join(UPLOADS, `chat_${file}.jpg`), buf);
@@ -477,6 +738,7 @@ const refresh = (m, t, user) => {
 
 socialApi.post('/chat/messages/:id/react', (req, res) => {
   const { m, t } = messageAccess(req.user, req.params.id);
+  needIn(req.user, t, 'react');
   const emoji = REACTIONS.includes(req.body.emoji) ? req.body.emoji : null;
   const cur = get('SELECT emoji FROM chat_reactions WHERE msg_id = ? AND user_id = ?', m.id, req.user.id);
   if (!emoji || cur?.emoji === emoji) run('DELETE FROM chat_reactions WHERE msg_id = ? AND user_id = ?', m.id, req.user.id);
@@ -513,111 +775,8 @@ socialApi.post('/chat/messages/:id/claim', (req, res) => {
 
 socialApi.delete('/chat/messages/:id', (req, res) => {
   const { m, t } = messageAccess(req.user, req.params.id);
-  if (m.user_id !== req.user.id && req.user.role !== 'admin') throw new HttpError(403, 'Action non autorisée');
+  if (m.user_id !== req.user.id && !canIn(req.user, t, 'manage')) throw new HttpError(403, 'Action non autorisée');
   run('UPDATE chat_messages SET deleted = 1 WHERE id = ?', m.id);
   broadcast(t, { t: 'chat', threadId: t.id });
   res.json({ ok: true });
 });
-
-/* ================================================================== annonces du club */
-
-function audience(user, body) {
-  const allowed = teamIdsFor(user);
-  let teams = Array.isArray(body.teamIds) ? body.teamIds.filter((id) => allowed.includes(id)) : [];
-  if (!teams.length) {
-    if (!can(user, 'club.dashboard') && user.role !== 'admin') throw new HttpError(400, 'Choisissez au moins une équipe');
-    teams = allowed;
-  }
-  const roles = (Array.isArray(body.roles) ? body.roles : ['parent', 'coach']).filter((r) => ['parent', 'coach'].includes(r));
-  if (!roles.length) throw new HttpError(400, 'Choisissez les destinataires');
-  const ids = new Set();
-  for (const teamId of teams) {
-    if (roles.includes('coach')) staffOf(teamId).forEach((id) => ids.add(id));
-    if (roles.includes('parent')) for (const p of teamPlayers(teamId)) parentsOf(p.id).forEach((u) => ids.add(u.id));
-  }
-  ids.delete(user.id);
-  return { teams, roles, ids: [...ids] };
-}
-
-function annOut(a, user) {
-  const d = JSON.parse(a.data || '{}');
-  const t = get('SELECT read_at FROM announcement_targets WHERE ann_id = ? AND user_id = ?', a.id, user.id);
-  const stats = get('SELECT COUNT(*) total, COUNT(read_at) read FROM announcement_targets WHERE ann_id = ?', a.id);
-  const teams = (d.teams || []).map((id) => get('SELECT id, category, color FROM teams WHERE id = ?', id)).filter(Boolean);
-  return {
-    id: a.id, title: a.title, body: a.body, important: !!d.important, emoji: d.emoji || '📣', teams, roles: d.roles || [], createdAt: a.created_at,
-    author: { id: a.author_id, name: a.author_id ? userName(a.author_id) : 'Le club' }, mine: a.author_id === user.id,
-    target: !!t, read: !!t?.read_at, stats: a.author_id === user.id || can(user, 'club.dashboard') || user.role === 'admin' ? stats : null,
-  };
-}
-
-socialApi.get('/announcements', (req, res) => {
-  const u = req.user;
-  const seeAll = can(u, 'club.dashboard') || u.role === 'admin';
-  const rows = all(
-    `SELECT DISTINCT a.* FROM announcements a LEFT JOIN announcement_targets t ON t.ann_id = a.id
-     WHERE t.user_id = ? OR a.author_id = ? ${seeAll ? 'OR 1 = 1' : ''} ORDER BY a.created_at DESC LIMIT 60`,
-    u.id, u.id,
-  );
-  res.json(rows.map((a) => annOut(a, u)));
-});
-
-socialApi.post('/announcements', (req, res) => {
-  need(req.user, 'announcements.send');
-  const title = str(req.body.title, 140);
-  const body = str(req.body.body, 4000);
-  if (!title || !body) throw new HttpError(400, 'Titre et message requis');
-  const { teams, roles, ids } = audience(req.user, req.body);
-  const emoji = str(req.body.emoji, 8) || '📣';
-  const id = newId();
-  tx(() => {
-    run('INSERT INTO announcements VALUES (?, ?, ?, ?, ?, ?)', id, req.user.id, title, body, JSON.stringify({ teams, roles, important: !!req.body.important, emoji }), now());
-    for (const uid of ids) run('INSERT INTO announcement_targets VALUES (?, ?, NULL)', id, uid);
-  });
-  notify(ids, { kind: 'announcement', title: `${emoji} ${title}`, body: body.slice(0, 200), url: `/annonces/${id}` });
-  res.json(annOut(get('SELECT * FROM announcements WHERE id = ?', id), req.user));
-});
-
-socialApi.get('/announcements/:id', (req, res) => {
-  const a = get('SELECT * FROM announcements WHERE id = ?', req.params.id);
-  if (!a) throw new HttpError(404, 'Annonce introuvable');
-  const out = annOut(a, req.user);
-  if (!out.target && !out.mine && !out.stats) throw new HttpError(404, 'Annonce introuvable');
-  const recipients = out.stats
-    ? all(
-        `SELECT t.user_id, t.read_at, u.name, u.role FROM announcement_targets t JOIN users u ON u.id = t.user_id WHERE ann_id = ? ORDER BY t.read_at IS NULL, u.name`,
-        a.id,
-      ).map((r) => ({
-        id: r.user_id, name: r.name, role: r.role, readAt: r.read_at,
-        kids: all('SELECT p.data FROM player_parents pp JOIN players p ON p.id = pp.player_id WHERE pp.user_id = ?', r.user_id).map((p) => JSON.parse(p.data).firstName),
-      }))
-    : null;
-  res.json({ ...out, recipients });
-});
-
-socialApi.post('/announcements/:id/read', (req, res) => {
-  const a = get('SELECT * FROM announcements WHERE id = ?', req.params.id);
-  if (!a) throw new HttpError(404, 'Annonce introuvable');
-  run('UPDATE announcement_targets SET read_at = ? WHERE ann_id = ? AND user_id = ? AND read_at IS NULL', now(), a.id, req.user.id);
-  if (a.author_id) toUsers([a.author_id], { t: 'announcement', id: a.id });
-  res.json({ ok: true });
-});
-
-socialApi.post('/announcements/:id/remind', (req, res) => {
-  const a = get('SELECT * FROM announcements WHERE id = ?', req.params.id);
-  if (!a) throw new HttpError(404, 'Annonce introuvable');
-  if (a.author_id !== req.user.id && req.user.role !== 'admin') throw new HttpError(403, 'Action non autorisée');
-  const ids = all('SELECT user_id FROM announcement_targets WHERE ann_id = ? AND read_at IS NULL', a.id).map((r) => r.user_id);
-  const emoji = JSON.parse(a.data || '{}').emoji || '📣';
-  notify(ids, { kind: 'announcement', title: `Rappel : ${emoji} ${a.title}`, body: a.body.slice(0, 200), url: `/annonces/${a.id}` });
-  res.json({ sent: ids.length });
-});
-
-socialApi.delete('/announcements/:id', (req, res) => {
-  const a = get('SELECT * FROM announcements WHERE id = ?', req.params.id);
-  if (!a) return res.json({ ok: true });
-  if (a.author_id !== req.user.id && req.user.role !== 'admin') throw new HttpError(403, 'Action non autorisée');
-  run('DELETE FROM announcements WHERE id = ?', a.id);
-  res.json({ ok: true });
-});
-

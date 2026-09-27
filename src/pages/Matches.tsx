@@ -221,6 +221,12 @@ export function nextStep(c: ConvSnapshot) {
     case 'published':
       return now > c.timeline.start ? 'Match en cours ou à compléter' : `Lue par ${c.reads}/${c.readers} parents`;
     default:
+      if (c.score?.games) {
+        const g = c.score.games.filter((x) => x.us !== null && !x.live);
+        const w = g.filter((x) => x.us! > x.them!).length;
+        const d = g.filter((x) => x.us === x.them).length;
+        return `Plateau · ${w} V · ${d} N · ${g.length - w - d} D`;
+      }
       return c.score ? `${c.score.us} – ${c.score.them}` : 'Terminé';
   }
 }
@@ -240,7 +246,7 @@ export function ConvCard({ c, showTeam }: { c: ConvSnapshot; showTeam?: boolean 
       <DateTile date={c.date} />
       <div className="grow">
         <div className="row wrap" style={{ gap: 6 }}>
-          {showTeam && team && <TeamBadge team={team} size={22} />}
+          {showTeam && team && <TeamBadge team={team} size={22} brand={false} />}
           <b className="ellipsis">{c.title}</b>
         </div>
         <small className="muted">

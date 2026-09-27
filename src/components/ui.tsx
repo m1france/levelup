@@ -213,7 +213,7 @@ function Popover({
     };
   }, [onClose, anchor]);
   return createPortal(
-    <div ref={ref} className="menu" style={{ position: 'fixed', left: pos?.left ?? -9999, top: pos?.top ?? -9999 }} onContextMenu={(e) => e.preventDefault()}>
+    <div ref={ref} className="menu" style={{ position: 'fixed', zIndex: 350, left: pos?.left ?? -9999, top: pos?.top ?? -9999 }} onContextMenu={(e) => e.preventDefault()}>
       {children}
     </div>,
     document.body,

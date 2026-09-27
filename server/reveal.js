@@ -6,9 +6,9 @@
 import { Router } from 'express';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { get, parse, UPLOADS } from './db.js';
+import { get, parse, UPLOADS, clubLogoUrl } from './db.js';
 import { childIdsFor, isStaff, need, needTeam, HttpError } from './auth.js';
-import { occ, saveData, evTitle } from './convocations.js';
+import { occ, saveData, evTitle, gameResults } from './convocations.js';
 import { eventGroup } from './groups.js';
 import { sign, verify } from './tokens.js';
 import { toTeam } from './live.js';
@@ -91,7 +91,8 @@ function card(p, m, awardKey, totalSec, photoUrl) {
         ['PHY', to(g('endurance', 'equilibre', 'combativite')) + (seconds >= totalSec * 0.75 ? 2 : 0) + boost('engine')],
       ];
   const clamped = stats.map(([k, v]) => [k, clamp(v)]);
-  const ovr = clamp(clamped.reduce((a, [, v]) => a + v, 0) / clamped.length + Math.min(3, goals) + (awardKey === 'mvp' ? 2 : 0));
+  // Note provisoire : `revealPayload` donne ensuite la même note à toute l'équipe.
+  const ovr = clamp(clamped.reduce((a, [, v]) => a + v, 0) / clamped.length);
   const award = AWARDS[awardKey] ?? AWARDS.spirit;
   return {
     id: p.id,
@@ -120,6 +121,7 @@ export function revealPayload(o, { user = null, publicToken = null } = {}) {
   const team = get('SELECT category, color FROM teams WHERE id = ?', o.e.teamId);
   // Équipe U8/U9 : les cartes portent la catégorie du match.
   if (team && eventGroup(o.e)) team.category = eventGroup(o.e);
+  if (team) team.logo = clubLogoUrl();
   const cards = present
     .map((pid) => {
       const row = get('SELECT * FROM players WHERE id = ?', pid);
@@ -131,8 +133,13 @@ export function revealPayload(o, { user = null, publicToken = null } = {}) {
       return { ...card(p, m, awards[pid], totalSec, url), mine: kids.includes(pid) };
     })
     .filter(Boolean);
+  // Pas de classement entre les enfants : tout le monde reçoit la même note générale (celle de l'équipe).
+  const teamOvr = cards.length ? clamp(cards.reduce((a, c) => a + c.ovr, 0) / cards.length + 2) : 80;
+  for (const c of cards) c.ovr = teamOvr;
   return {
     eventId: o.e.id,
+    type: o.e.type,
+    games: gameResults(o.e, m),
     date: o.date,
     title: evTitle(o.e),
     opponent: o.e.opponent || '',
