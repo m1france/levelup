@@ -4,6 +4,13 @@ L'application du club : convocations et matchs, séances, suivi des joueurs, alb
 
 ## Fonctionnalités
 
+### V5 : catégories, diapositives et éditeur plus précis
+
+- **U8 / U9 séparés** : une équipe « U8/U9 » s'entraîne ensemble, mais chaque match, plateau ou tournoi appartient à une catégorie (choisie dans le calendrier). Convocations, disponibilités, temps de jeu, équité, covoiturage, billets des parents et cartes de match ne concernent que les enfants de cette catégorie (déduite de l'année de naissance et de la saison). La page Matchs a un sélecteur U8 / U9.
+- **Page Matchs** : les prochains matchs en grandes diapositives, titre et lieu à gauche, **logo du club organisateur** à droite (envoyé depuis la diapositive ; logo du club dans Paramètres › Club pour les matchs à domicile, sinon un écusson aux initiales).
+- **Accueil** : annonces, convocations à préparer, réponses attendues et covoiturages défilent en diapositives (toutes les 5 s, bâtonnets en bas au centre) avant l'aperçu de la séance.
+- **Éditeur** : les éléments sont plus petits (l'ancienne taille 80 % est la nouvelle taille 100 %), la zone cliquable épouse exactement la forme dessinée, le texte s'écrit directement sur le terrain (double-clic), Entrée valide le titre. Les motifs de maillot (rayé, cerclé, moitié) et la bibliothèque du club ont été retirés.
+
 ### V4 : cartes de match, vie d'équipe et club
 
 - **Cartes de fin de match** : au coup de sifflet, chaque enfant reçoit une carte façon Ultimate Team (note générale, poste le plus joué, six statistiques généreuses, photo) et une **récompense** (meilleur buteur, meilleur passeur, meilleur gardien, mur défensif, infatigable, esprit d’équipe…), proposée d’après le match et modifiable par l’éducateur. Les parents vivent une animation : terrain, éclair « Match terminé », score, cartes distribuées face cachée, puis ils retournent chaque carte et découvrent la récompense. Un lien sans compte (`/m/…`) permet de les partager ; les photos n’y apparaissent qu’avec l’autorisation des parents.
@@ -62,7 +69,6 @@ L'application du club : convocations et matchs, séances, suivi des joueurs, alb
 - **Hors ligne** : l'app est installable (PWA), les données déjà consultées restent disponibles, et les modifications sont mises en file puis envoyées au retour du réseau.
 
 ### V2 : le club
-- **Bibliothèque du club** : partage des exercices, validation par un dirigeant, duplication. 7 exercices animés sont fournis au démarrage.
 - **Administrateur unique** et rôles *Dirigeant*, *Éducateur*, *Joueur/parent* avec une **matrice de permissions** modifiable.
 - **Équipes** : la catégorie (U6 à Seniors, Féminines, Futsal…) sert de nom à l'équipe. Chaque équipe a aussi sa saison, sa couleur et ses éducateurs.
 - **Paramètres** : le profil et, selon les droits, l'administration (membres, équipes, permissions, club).

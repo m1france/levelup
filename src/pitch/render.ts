@@ -1,6 +1,6 @@
 import type { ExerciseData, Item, Path } from '../lib/types';
 import type { Positions } from './anim';
-import { COLORS, applyView, colorHex, itemUnit, polyLength, smooth, type Vec, type View } from './geometry';
+import { COLORS, applyView, colorHex, itemUnit, polyLength, smooth, toScreen, type Vec, type View } from './geometry';
 
 export interface RenderOptions {
   view: View;
@@ -13,6 +13,8 @@ export interface RenderOptions {
   ghost?: Positions;
   /** Aperçu pendant un tracé ou un outil « ligne ». */
   draft?: { path?: Path; items?: Item[]; rect?: [Vec, Vec] };
+  /** Éléments à ne pas dessiner (texte en cours de saisie dans l'éditeur). */
+  hidden?: Set<string>;
   /** Couleur de fond de tout le canvas (export vidéo). */
   bg?: string;
   /** Couleurs du terrain (ex. version sombre pour la une de l'accueil). */
@@ -180,7 +182,7 @@ export function drawPath(ctx: CanvasRenderingContext2D, path: Path, v: View, u: 
   ctx.restore();
 }
 
-const FONT = 'ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", sans-serif';
+export const FONT = 'ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", sans-serif';
 
 function label(ctx: CanvasRenderingContext2D, v: View, text: string, x: number, y: number, size: number, color: string) {
   ctx.save();
@@ -206,6 +208,11 @@ export function shade(hex: string, amt: number) {
 /** Éléments dessinés « debout » : ils restent droits à l'écran quand le terrain pivote. */
 const UPRIGHT = new Set<Item['kind']>(['player', 'coach', 'marker', 'pole', 'dummy', 'flag', 'wall', 'text']);
 
+/** Taille de base des éléments : un élément à 100 % est dessiné à 80 % de l'unité du terrain. */
+export const ITEM_BASE = 0.8;
+/** Facteur de taille effectif d'un élément. */
+export const itemScale = (it: Item) => (it.scale ?? 1) * ITEM_BASE;
+
 export function drawItem(ctx: CanvasRenderingContext2D, it: Item, p: Vec, v: View, u: number, alpha = 1) {
   const [x, y] = p;
   const px = 1 / v.s;
@@ -219,7 +226,7 @@ export function drawItem(ctx: CanvasRenderingContext2D, it: Item, p: Vec, v: Vie
     ctx.translate(x, y);
     if (v.rot && UPRIGHT.has(it.kind)) ctx.rotate(-Math.PI / 2);
     ctx.rotate(((it.rot ?? 0) * Math.PI) / 180);
-    const sc = it.scale ?? 1;
+    const sc = itemScale(it);
     ctx.scale(sc, sc);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -273,7 +280,6 @@ const drawPlayer: Art = (ctx, it, u, px) => {
   const k = 0.88 * u;
   const c = COLORS[it.color ?? 'blue'] ?? COLORS.blue;
   const keeper = !!it.keeper;
-  const sec = it.color === 'white' || it.color === 'yellow' ? '#25262b' : '#ffffff';
 
   // Liseré blanc : se détache sur l'herbe, même pour les maillots verts.
   shirtPath(ctx, k, keeper);
@@ -282,17 +288,6 @@ const drawPlayer: Art = (ctx, it, u, px) => {
   ctx.stroke();
   ctx.fillStyle = c.hex;
   ctx.fill();
-
-  ctx.save();
-  ctx.clip();
-  const kit = it.kit ?? 'plain';
-  ctx.fillStyle = sec;
-  ctx.globalAlpha *= 0.92;
-  if (kit === 'stripes') for (let i = -3; i <= 3; i += 2) ctx.fillRect((i * 0.2 - 0.1) * k, -k, 0.2 * k, 2 * k);
-  if (kit === 'hoops') for (let i = -1; i < 4; i += 2) ctx.fillRect(-1.2 * k, (-0.62 + i * 0.26) * k, 2.4 * k, 0.26 * k);
-  if (kit === 'halves') ctx.fillRect(0, -k, 1.2 * k, 2 * k);
-  ctx.globalAlpha /= 0.92;
-  ctx.restore();
 
   // Col et poignets
   ctx.strokeStyle = shade(c.hex, -0.35);
@@ -322,17 +317,6 @@ const drawPlayer: Art = (ctx, it, u, px) => {
     ctx.font = `750 ${size}px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    if (kit !== 'plain') {
-      // Sur un maillot à motif, le numéro repose sur un écusson uni pour rester lisible.
-      const w = Math.max(ctx.measureText(it.label).width + 0.22 * k, 0.62 * k);
-      ctx.fillStyle = c.hex;
-      ctx.strokeStyle = shade(c.hex, -0.3);
-      ctx.lineWidth = Math.max(0.03 * k, 0.6 * px);
-      ctx.beginPath();
-      ctx.roundRect(-w / 2, 0.14 * k - size * 0.56, w, size * 1.12, 0.14 * k);
-      ctx.fill();
-      ctx.stroke();
-    }
     ctx.lineWidth = 0.14 * k;
     ctx.strokeStyle = c.ink === '#fff' ? 'rgba(0,0,0,0.38)' : 'rgba(255,255,255,0.55)';
     ctx.strokeText(it.label, 0, 0.14 * k);
@@ -889,9 +873,12 @@ const drawWall: Art = (ctx, it, u, px) => {
   }
 };
 
+/** Taille de police d'un texte, en mètres, avant le facteur de taille de l'élément. */
+export const TEXT_SIZE = 0.9;
+
 const drawText: Art = (ctx, it, u) => {
   const text = it.label || 'Texte';
-  const size = 0.9 * u;
+  const size = TEXT_SIZE * u;
   ctx.font = `700 ${size}px ${FONT}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -997,7 +984,7 @@ export const layerOf = (it: Item) => Z[it.kind];
 export const byLayer = (a: Item, b: Item) => Z[a.kind] - Z[b.kind];
 
 export function selectionRadius(it: Item, u: number) {
-  const sc = it.scale ?? 1;
+  const sc = itemScale(it);
   switch (it.kind) {
     case 'player': return 0.95 * u * sc;
     case 'coach': return 1.15 * u * sc;
@@ -1009,7 +996,7 @@ export function selectionRadius(it: Item, u: number) {
     case 'wall': return 1.9 * u * sc;
     case 'hoop': case 'ballbag': case 'flag': case 'pole': return 0.95 * u * sc;
     case 'hurdle': return 0.8 * u * sc;
-    case 'text': return Math.max(1, (it.label || 'Texte').length * 0.3) * u * sc;
+    case 'text': return Math.max(1, (it.label || 'Texte').length * 0.25) * u * sc;
     case 'measure': return (it.w ?? 5) / 2;
     case 'zone': return Math.max(it.w ?? 6, it.h ?? 6) / 2;
     default: return 0.55 * u * sc;
@@ -1065,7 +1052,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, ex: ExerciseData, o: Re
   }
 
   for (const it of items) {
-    if (it.kind === 'zone') continue;
+    if (it.kind === 'zone' || o.hidden?.has(it.id)) continue;
     const p = o.pos.get(it.id) ?? [it.x, it.y];
     drawItem(ctx, it, p, v, u);
   }
@@ -1082,4 +1069,37 @@ export function drawScene(ctx: CanvasRenderingContext2D, ex: ExerciseData, o: Re
     ctx.strokeRect(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]));
     ctx.restore();
   }
+}
+
+/* ------------------------------------------------------------------ détection au pixel */
+
+let hitCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * L'élément est-il dessiné à moins de `tol` pixels écran du point `p` ?
+ * On redessine l'élément seul dans un petit canvas centré sur le point : la zone cliquable épouse
+ * exactement sa forme (texte, rotation, taille), sans cercle approximatif qui déborde.
+ */
+export function hitsItem(it: Item, at: Vec, p: Vec, v: View, u: number, tol: number): boolean {
+  const n = Math.max(3, Math.ceil(tol) * 2 + 1);
+  hitCanvas ??= document.createElement('canvas');
+  if (hitCanvas.width !== n) {
+    hitCanvas.width = n;
+    hitCanvas.height = n;
+  }
+  const ctx = hitCanvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, n, n);
+  const sp = toScreen(v, p[0], p[1]);
+  const half = (n - 1) / 2 + 0.5;
+  applyView(ctx, { ...v, ox: v.ox - sp[0] + half, oy: v.oy - sp[1] + half }, 1);
+  drawItem(ctx, it, at, v, u);
+  const px = ctx.getImageData(0, 0, n, n).data;
+  const r2 = (n / 2) ** 2;
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      if ((x + 0.5 - n / 2) ** 2 + (y + 0.5 - n / 2) ** 2 > r2) continue;
+      if (px[(y * n + x) * 4 + 3] > 24) return true;
+    }
+  return false;
 }

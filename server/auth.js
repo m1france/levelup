@@ -12,8 +12,6 @@ export const PERMISSIONS = [
   { key: 'notes.view', label: 'Consulter les fiches joueurs (évaluations, objectifs, suivi)', group: 'Joueurs', defaults: ['dirigeant', 'coach'] },
   { key: 'notes.write', label: 'Évaluer les joueurs, fixer des objectifs, noter des observations', group: 'Joueurs', defaults: ['coach'] },
   { key: 'exercises.create', label: 'Créer des exercices', group: 'Exercices', defaults: ['dirigeant', 'coach'] },
-  { key: 'library.share', label: 'Partager dans la bibliothèque du club', group: 'Exercices', defaults: ['dirigeant', 'coach'] },
-  { key: 'library.validate', label: 'Valider les exercices du club', group: 'Exercices', defaults: ['dirigeant'] },
   { key: 'trainings.manage', label: 'Préparer et animer les séances', group: 'Séances', defaults: ['coach'] },
   { key: 'trainings.publish', label: 'Publier une séance aux parents / lien public', group: 'Séances', defaults: ['coach'] },
   { key: 'convocations.manage', label: 'Convoquer les joueurs et animer le mode match', group: 'Matchs', defaults: ['dirigeant', 'coach'] },

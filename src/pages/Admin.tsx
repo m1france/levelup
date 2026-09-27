@@ -1,10 +1,11 @@
-import { Copy, Link2, Plus, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
-import { Fragment, useMemo, useState } from 'react';
+import { Copy, Image as ImageIcon, Link2, Plus, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Avatar, Empty, Field, Seg, Sheet, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
 import { Account } from './Account';
 import { ConvPresets } from './ConvPresets';
 import { api, uid } from '../lib/api';
+import { prepareLogo } from '../lib/images';
 import { CATEGORIES, ROLE_LABELS, playerName, useApp } from '../lib/store';
 import type { InviteLink, Member, Player, Role, Team } from '../lib/types';
 
@@ -678,6 +679,43 @@ function Permissions() {
 
 /* ------------------------------------------------------------------ club */
 
+/** Logo du club : affiché sur les matchs à domicile. */
+function ClubLogo() {
+  const { me, reload } = useApp();
+  const toast = useToast();
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const upload = async (file?: File) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      await api.post('/club/logo', { image: await prepareLogo(file) });
+      await reload();
+      toast('Logo enregistré');
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setBusy(false);
+      if (ref.current) ref.current.value = '';
+    }
+  };
+  return (
+    <div className="row" style={{ gap: 14 }}>
+      <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--surface-2)', display: 'grid', placeItems: 'center', overflow: 'hidden', flex: 'none' }}>
+        {me.club?.logo ? <img src={me.club.logo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <ImageIcon size={22} className="muted" />}
+      </div>
+      <div className="grow">
+        <b className="small">Logo du club</b>
+        <p className="small muted">Affiché sur les matchs à domicile. PNG transparent de préférence.</p>
+      </div>
+      <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => void upload(e.target.files?.[0])} />
+      <button className="btn" disabled={busy} onClick={() => ref.current?.click()}>
+        {me.club?.logo ? 'Changer' : 'Ajouter'}
+      </button>
+    </div>
+  );
+}
+
 function Club() {
   const { me, reload } = useApp();
   const toast = useToast();
@@ -699,6 +737,8 @@ function Club() {
       >
         Enregistrer
       </button>
+      <div className="divider" />
+      <ClubLogo />
       <div className="divider" />
       <p className="small muted">
         Atelier complète SportEasy : le calendrier, les convocations et la messagerie restent dans SportEasy. Ici, on prépare et on anime le terrain.

@@ -659,7 +659,7 @@ export function ExercisePicker({ teamId, onPick, onClose }: { teamId: string; on
         <Seg
           value={scope}
           onChange={setScope}
-          options={[{ value: 'team', label: 'Équipe' }, { value: 'mine', label: 'Personnels' }, { value: 'club', label: 'Club' }]}
+          options={[{ value: 'team', label: 'Équipe' }, { value: 'mine', label: 'Personnels' }]}
         />
         {can('exercises.create') && (
           <button className="btn sm" onClick={async () => nav(`/exercices/${(await createExercise(teamId)).id}`)}>
@@ -677,7 +677,7 @@ export function ExercisePicker({ teamId, onPick, onClose }: { teamId: string; on
           ))}
         </div>
       ) : (
-        <Empty title="Aucun exercice" text={scope !== 'club' ? 'Regardez dans la bibliothèque du club.' : undefined} />
+        <Empty title="Aucun exercice" />
       )}
     </Sheet>
   );

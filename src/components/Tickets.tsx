@@ -132,7 +132,7 @@ export function MatchTicket({ t, onChanged, showChild = true, carpool: carpoolOp
       <Link to={matchPath(t.eventId, t.date)} className="tk-body">
         <DateBlock date={t.date} />
         <div className="grow">
-          <b className="tk-title">{t.title}</b>
+          <b className="tk-title">{t.group ? `${t.group} · ${t.title}` : t.title}</b>
           <div className="tk-meta">
             {t.venue === 'home' && (
               <span>

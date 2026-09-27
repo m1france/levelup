@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, BadgeCheck, Check, ChevronRight, Copy, Download, Magnet, Maximize2, Minus, MoreHorizontal, MousePointer2,
+  ArrowLeft, ChevronRight, Copy, Download, Magnet, Maximize2, Minus, MoreHorizontal, MousePointer2,
   NotebookPen, PanelRight, Pause, PenLine, Play, Plus, Proportions, Redo2, RotateCcw, RotateCw, Trash2, Undo2, Users, X,
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
@@ -11,7 +11,7 @@ import { CLIENT_ID, api, uid } from '../lib/api';
 import { initials, peerColor, sendLive, useLive, useWatchExercise, type PresenceUser } from '../lib/live';
 import { equal, merge3 } from '../lib/merge';
 import { useApp } from '../lib/store';
-import type { Exercise, ExerciseData, FieldPreset, Item, ItemKind, KitPattern, PathKind } from '../lib/types';
+import type { Exercise, ExerciseData, FieldPreset, Item, ItemKind, PathKind } from '../lib/types';
 import { buildTimeline, evaluate, type Positions } from '../pitch/anim';
 import {
   COLORABLE, attachTarget, circlePoints, clampToField, deleteIds, distribute, duplicateIds, finishPath, gridPoints, idsInRect, itemAt,
@@ -19,9 +19,9 @@ import {
 } from '../pitch/editing';
 import { canExportVideo, exportVideo, shareOrDownload } from '../pitch/export';
 import {
-  COLORS, ITEM_LABELS, PLAYER_COLORS, PRESETS, computeView, dist, equipmentOf, itemUnit, pluralize, type Vec, type View,
+  COLORS, ITEM_LABELS, PLAYER_COLORS, PRESETS, colorHex, computeView, dist, equipmentOf, itemUnit, pluralize, type Vec, type View,
 } from '../pitch/geometry';
-import { PATH_STYLE, drawScene } from '../pitch/render';
+import { FONT, PATH_STYLE, TEXT_SIZE, drawScene, itemScale } from '../pitch/render';
 import { fitCanvas, usePlayback, useSize } from '../pitch/usePitch';
 
 export function ExerciseEditor() {
@@ -90,10 +90,6 @@ function ExerciseView({ ex, onChange, onReload }: { ex: Exercise; onChange: (e: 
     toast(team ? `Ajouté aux exercices ${team.category}` : 'Ajouté à vos exercices');
     nav(`/exercices/${copy.id}`);
   };
-  const validate = async (v: boolean) => {
-    onChange(await api.post<Exercise>(`/exercises/${ex.id}/validate`, { validated: v }));
-    toast(v ? 'Exercice validé pour le club' : 'Validation retirée');
-  };
   return (
     <div className="page">
       <Link to="/exercices" className="back">
@@ -111,11 +107,6 @@ function ExerciseView({ ex, onChange, onReload }: { ex: Exercise; onChange: (e: 
         </div>
         <div className="actions">
           <PresenceBar peers={peers} />
-          {can('library.validate') && ex.visibility === 'club' && (
-            <button className="btn" onClick={() => validate(!ex.validated)}>
-              <BadgeCheck /> {ex.validated ? 'Retirer la validation' : 'Valider'}
-            </button>
-          )}
           {isStaff && can('exercises.create') && (
             <button className="btn primary" onClick={duplicate}>
               <Copy /> {team ? `Dupliquer dans ${team.category}` : 'Dupliquer dans mes exercices'}
@@ -131,16 +122,11 @@ function ExerciseView({ ex, onChange, onReload }: { ex: Exercise; onChange: (e: 
   );
 }
 
-export function ExerciseSheet({ ex }: { ex: ExerciseData & { validated?: boolean } }) {
+export function ExerciseSheet({ ex }: { ex: ExerciseData }) {
   const eq = equipmentOf(ex);
   return (
     <div className="card pad stack" style={{ gap: 16 }}>
       <div className="chips">
-        {ex.validated && (
-          <span className="badge green">
-            <BadgeCheck /> Validé club
-          </span>
-        )}
         {ex.themes.map((t) => (
           <span key={t} className="badge">
             {t}
@@ -247,12 +233,6 @@ const SHAPES: { key: ShapeTool | 'text'; label: string }[] = [
 ];
 const GEAR_COLORS = ['orange', 'yellow', 'red', 'blue', 'green', 'white'];
 const INK_COLORS = ['white', 'yellow', 'red', 'blue', 'black'];
-const KITS: { value: KitPattern; label: string }[] = [
-  { value: 'plain', label: 'Uni' },
-  { value: 'stripes', label: 'Rayé' },
-  { value: 'hoops', label: 'Cerclé' },
-  { value: 'halves', label: 'Moitié' },
-];
 /** Palette de couleurs proposée pour un élément. */
 const colorsFor = (kind: ItemKind) =>
   kind === 'player' || kind === 'coach' ? PLAYER_COLORS : kind === 'text' || kind === 'measure' || kind === 'zone' ? INK_COLORS : GEAR_COLORS;
@@ -271,7 +251,7 @@ function Editor({ initial }: { initial: Exercise }) {
   const nav = useNavigate();
   const toast = useToast();
   const confirm = useConfirm();
-  const { can, team, me } = useApp();
+  const { team, me } = useApp();
 
   const [ex, setEx] = useState<Exercise>(initial);
   const exRef = useRef(ex);
@@ -296,6 +276,9 @@ function Editor({ initial }: { initial: Exercise }) {
   const [present, setPresent] = useState(false);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'offline' | 'error'>('saved');
   const [exporting, setExporting] = useState<number | null>(null);
+  /** Texte modifié directement sur le terrain (double-clic). */
+  const [editingText, setEditingText] = useState<string | null>(null);
+  const lastTap = useRef<{ id: string; at: number } | null>(null);
 
   const tl = useMemo(() => buildTimeline(ex), [ex]);
   const pb = usePlayback(ex, { loop: false });
@@ -524,10 +507,11 @@ function Editor({ initial }: { initial: Exercise }) {
       selected: pb.playing ? undefined : selection,
       ghost: !pb.playing && frame > 0 ? tl.rest[frame - 1] : undefined,
       draft: draft ?? undefined,
+      hidden: editingText ? new Set([editingText]) : undefined,
     });
-  }, [ex, tl, size, displayPos, selection, draft, frame, pb.playing]);
+  }, [ex, tl, size, displayPos, selection, draft, frame, pb.playing, editingText]);
 
-  const toWorldPt = (e: RPointerEvent | React.DragEvent): Vec => {
+  const toWorldPt = (e: { clientX: number; clientY: number }): Vec => {
     const r = stageRef.current!.getBoundingClientRect();
     const v = viewRef.current!;
     const sx = e.clientX - r.left;
@@ -582,7 +566,22 @@ function Editor({ initial }: { initial: Exercise }) {
     const s = viewRef.current.s;
 
     if (tool.t === 'select') {
-      const hit = itemAt(cur, displayPos, w, s) ?? pathAt(cur, w, s);
+      // Au pixel près d'abord, puis les tracés, puis une petite marge autour des éléments (plus large au doigt).
+      const touch = e.pointerType !== 'mouse';
+      const v = viewRef.current;
+      const hit = itemAt(cur, displayPos, w, v, touch ? 3 : 1) ?? pathAt(cur, w, s, touch ? 12 : 6) ?? itemAt(cur, displayPos, w, v, touch ? 12 : 5);
+      // Double-clic (ou double tape) sur un texte : on l'écrit directement sur le terrain.
+      const now = performance.now();
+      const isText = hit && 'kind' in hit && hit.kind === 'text';
+      if (isText && lastTap.current?.id === hit.id && now - lastTap.current.at < 400) {
+        lastTap.current = null;
+        // Sans cela, le clic sur le terrain retirerait aussitôt le focus du champ de saisie.
+        e.preventDefault();
+        setSelection(new Set([hit.id]));
+        startTextEdit(hit.id);
+        return;
+      }
+      lastTap.current = hit ? { id: hit.id, at: now } : null;
       if (hit) {
         if (e.shiftKey || e.metaKey) {
           setSelection((sel) => {
@@ -620,7 +619,11 @@ function Editor({ initial }: { initial: Exercise }) {
       drags.current.set(e.pointerId, {
         kind: 'items', ids: [it.id], start: w, orig: new Map([[it.id, [it.x, it.y]]]), paths: new Map(), moved: false, base: true, created: true,
       });
-      if (tool.kind === 'text') setTool({ t: 'select' });
+      if (tool.kind === 'text') {
+        e.preventDefault();
+        setTool({ t: 'select' });
+        startTextEdit(it.id, true);
+      }
       return;
     }
     if (tool.t === 'draw') {
@@ -761,6 +764,32 @@ function Editor({ initial }: { initial: Exercise }) {
     const it = newItem(exRef.current, kind, p, kind === 'player' ? color : defaultColor(kind, gearColor));
     mutate((d) => d.items.push(it));
     setSelection(new Set([it.id]));
+    if (kind === 'text') startTextEdit(it.id, true);
+  };
+
+  /* ---------------------------------------------------------------- texte sur le terrain */
+
+  /** État avant la saisie : une seule entrée d'historique pour toute la frappe. */
+  const textBefore = useRef<Exercise | null>(null);
+  const startTextEdit = (id: string, fresh = false) => {
+    textBefore.current = fresh ? null : exRef.current;
+    setEditingText(id);
+  };
+  const endTextEdit = () => {
+    const id = editingText;
+    if (!id) return;
+    setEditingText(null);
+    const it = exRef.current.items.find((i) => i.id === id);
+    if (it && !(it.label ?? '').trim()) {
+      // Un texte vidé disparaît.
+      mutate((d) => deleteIds(d, new Set([id])), textBefore.current ?? false);
+      setSelection(new Set());
+    } else if (textBefore.current && JSON.stringify(textBefore.current) !== JSON.stringify(exRef.current)) {
+      past.current.push(textBefore.current);
+      future.current = [];
+      bump((n) => n + 1);
+    }
+    textBefore.current = null;
   };
 
   /* ---------------------------------------------------------------- étapes */
@@ -957,21 +986,25 @@ function Editor({ initial }: { initial: Exercise }) {
         {palette && selItems.length > 0 && (
           <Swatches colors={palette} value={selItems[0].color ?? palette[0]} onChange={(c) => setItemProp({ color: c })} />
         )}
-        {one && ['player', 'zone', 'coach', 'text'].includes(one.kind) && (
+        {one && ['player', 'zone', 'coach'].includes(one.kind) && (
           <input
             className="input float-input"
             style={{ width: one.kind === 'player' ? 52 : one.kind === 'coach' ? 90 : 130 }}
             value={one.label ?? ''}
-            maxLength={one.kind === 'player' ? 3 : one.kind === 'text' ? 40 : 18}
-            placeholder={one.kind === 'player' ? 'N°' : one.kind === 'coach' ? 'Nom' : one.kind === 'text' ? 'Texte' : 'Nom'}
+            maxLength={one.kind === 'player' ? 3 : 18}
+            placeholder={one.kind === 'player' ? 'N°' : 'Nom'}
             onChange={(e) => setItemProp({ label: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.currentTarget.blur();
+              setSelection(new Set());
+            }}
             aria-label="Libellé"
           />
         )}
         {allPlayers && (
           <>
             <span className="sep" />
-            <Seg value={players[0].kit ?? 'plain'} onChange={(kit) => setItemProp({ kit: kit === 'plain' ? undefined : kit })} options={KITS} />
             <button
               className={`chip${players.every((p) => p.keeper) ? ' on' : ''}`}
               onClick={() => setItemProp({ keeper: players.every((p) => p.keeper) ? undefined : true })}
@@ -1044,6 +1077,7 @@ function Editor({ initial }: { initial: Exercise }) {
           value={ex.title}
           placeholder="Nom de l’exercice"
           onChange={(e) => mutate((d) => void (d.title = e.target.value), false)}
+          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
           onBlur={() => bump((n) => n + 1)}
         />
         <PresenceBar peers={peers} />
@@ -1077,15 +1111,6 @@ function Editor({ initial }: { initial: Exercise }) {
               <button className="only-mobile" onClick={() => (close(), setPresent(true))}>
                 <Maximize2 /> Présenter aux enfants
               </button>
-              {can('library.share') && (
-                <button
-                  onClick={() => (close(), mutate((d) => void (d.visibility = d.visibility === 'club' ? 'private' : 'club')))}
-                  title={ex.validated ? 'Validé par le club — une modification retirera la validation.' : 'Visible par tous les éducateurs, qui pourront le dupliquer.'}
-                >
-                  {ex.validated ? <BadgeCheck /> : <Users />} Partager avec le club
-                  {ex.visibility === 'club' && <Check className="menu-check" />}
-                </button>
-              )}
               {team && ex.teamId !== team.id && (ex.ownerId === me.user.id || me.user.role === 'admin') && (
                 <button
                   onClick={() => (close(), mutate((d) => void (d.teamId = team.id)), toast(`Partagé avec les éducateurs et joueurs ${team.category}`))}
@@ -1144,6 +1169,20 @@ function Editor({ initial }: { initial: Exercise }) {
           style={{ cursor: tool.t === 'select' ? 'default' : 'crosshair' }}
         >
           <canvas ref={canvasRef} />
+          {editingText && (
+            <TextOverlay
+              key={editingText}
+              it={ex.items.find((i) => i.id === editingText)}
+              at={displayPos.get(editingText)}
+              view={viewRef.current}
+              u={u}
+              onChange={(label) => mutate((d) => {
+                const it = d.items.find((i) => i.id === editingText);
+                if (it) it.label = label;
+              }, false)}
+              onDone={endTextEdit}
+            />
+          )}
           {Object.entries(cursors).map(([cid, c]) => {
             const p = toScreen(c.at);
             if (!p) return null;
@@ -1285,6 +1324,62 @@ function Editor({ initial }: { initial: Exercise }) {
       )}
     </div>
   );
+}
+
+/** Saisie d'un texte directement sur le terrain, dans le style du dessin. */
+function TextOverlay({
+  it, at, view, u, onChange, onDone,
+}: { it?: Item; at?: Vec; view: View | null; u: number; onChange: (label: string) => void; onDone: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.select();
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+  if (!it || !view) return null;
+  const p = at ?? [it.x, it.y];
+  const [x, y] = view.rot ? [view.ox + (view.fh - p[1]) * view.s, view.oy + p[0] * view.s] : [view.ox + p[0] * view.s, view.oy + p[1] * view.s];
+  const size = TEXT_SIZE * u * itemScale(it) * view.s;
+  const font = `700 ${size}px ${FONT}`;
+  const text = it.label ?? '';
+  const width = measureText(text || 'Texte', font) + size * 0.8;
+  const light = it.color === 'white' || !it.color;
+  return (
+    <input
+      ref={ref}
+      className="text-overlay"
+      value={text}
+      placeholder="Texte"
+      maxLength={80}
+      spellCheck={false}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur();
+      }}
+      onBlur={onDone}
+      onPointerDown={(e) => e.stopPropagation()}
+      style={{
+        left: x,
+        top: y,
+        width,
+        font,
+        color: colorHex(it.color, 'white'),
+        WebkitTextStroke: `${size * 0.2}px ${light ? 'rgba(12,30,20,0.5)' : 'rgba(255,255,255,0.85)'}`,
+        transform: `translate(-50%, -50%) rotate(${it.rot ?? 0}deg)`,
+      }}
+    />
+  );
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+function measureText(text: string, font: string) {
+  measureCtx ??= document.createElement('canvas').getContext('2d');
+  if (!measureCtx) return text.length * 10;
+  measureCtx.font = font;
+  return measureCtx.measureText(text).width;
 }
 
 function FragmentWithSep({ sep, children }: { sep?: boolean; children: React.ReactNode }) {

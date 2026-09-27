@@ -99,7 +99,7 @@ export function agenda(events: TeamEvent[], trainings: Training[], from: string,
   const items: Agenda[] = [];
   for (const e of events) {
     for (const d of occurrences(e, from, to)) {
-      items.push({ key: `${e.id}:${d}`, date: d, time: e.allDay ? '' : e.time, title: eventTitle(e), color: e.color || EVENT_TYPES[e.type].color, event: e });
+      items.push({ key: `${e.id}:${d}`, date: d, time: e.allDay ? '' : e.time, title: e.group ? `${e.group} · ${eventTitle(e)}` : eventTitle(e), color: e.color || EVENT_TYPES[e.type].color, event: e });
     }
   }
   for (const t of trainings) {

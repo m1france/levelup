@@ -361,11 +361,11 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
   const card = async () => {
     try {
       const blob = await renderConvCard({
-        club: me.club?.name ?? '', team: team?.category ?? '', color: team?.color ?? '#1f6f4a', title: d.title, opponent: d.opponent,
+        club: me.club?.name ?? '', team: d.group ?? team?.category ?? '', color: team?.color ?? '#1f6f4a', title: d.title, opponent: d.opponent,
         venue: d.venue === 'home' ? 'Domicile' : d.venue === 'away' ? 'Extérieur' : '', date: d.date, time: d.time, meetTime: meet,
         location: d.location, bring: d.bring, message, players: convoked,
       });
-      const r = await shareCard(blob, `convocation-${d.date}`, `Convocation ${team?.category ?? ''} · ${d.title}`);
+      const r = await shareCard(blob, `convocation-${d.date}`, `Convocation ${d.group ?? team?.category ?? ''} · ${d.title}`);
       if (r === 'downloaded') toast('Image téléchargée');
     } catch (e) {
       toast((e as Error).message, true);
@@ -374,7 +374,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
 
   const textMessage = () =>
     [
-      `⚽ *Convocation ${team?.category ?? ''}* · ${d.title}`,
+      `⚽ *Convocation ${d.group ?? team?.category ?? ''}* · ${d.title}`,
       `📅 ${longDate(d.date)}${meet ? ` · RDV ${formatTime(meet)}` : ''}${d.time ? ` · coup d’envoi ${formatTime(d.time)}` : ''}`,
       d.location ? `📍 ${d.location}` : null,
       '',
@@ -408,6 +408,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
         </div>
         <div className="grow">
           <div className="row wrap" style={{ gap: 8, marginBottom: 6 }}>
+            {d.group && <span className="badge green">{d.group}</span>}
             <span className={`badge ${phase.tone}`}>{phase.label}</span>
             {d.publishedLate && <span className="badge warn">Publiée après la date limite</span>}
             {d.presetName && <span className="badge">{d.presetName}</span>}
@@ -446,7 +447,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
 
       {d.score && (
         <div className="cv-score">
-          <b>{team?.category}</b>
+          <b>{d.group ?? team?.category}</b>
           <span>
             {d.score.us} – {d.score.them}
           </span>
