@@ -2,7 +2,7 @@ export type Role = 'admin' | 'dirigeant' | 'coach' | 'parent';
 
 export type Perm =
   | 'members.manage' | 'teams.manage' | 'teams.all' | 'players.manage' | 'notes.view' | 'notes.write'
-  | 'exercises.create' | 'library.share' | 'library.validate' | 'trainings.manage' | 'trainings.publish'
+  | 'exercises.create' | 'trainings.manage' | 'trainings.publish'
   | 'events.manage' | 'album.manage' | 'convocations.manage' | 'club.dashboard' | 'announcements.send';
 
 export interface User { id: string; name: string; email: string; role: Role; phone?: string }
@@ -20,7 +20,7 @@ export interface Team {
 export interface Me {
   user: User;
   perms: Perm[];
-  club: { name: string } | null;
+  club: { name: string; logo?: string | null } | null;
   teams: Team[];
   children: Player[];
 }
@@ -164,9 +164,6 @@ export type ItemKind =
   | 'ladder' | 'minigoal' | 'goal' | 'dummy' | 'zone'
   | 'flag' | 'rebounder' | 'wall' | 'ballbag' | 'text' | 'measure';
 
-/** Tenue d'un joueur. */
-export type KitPattern = 'plain' | 'stripes' | 'hoops' | 'halves';
-
 export interface Item {
   id: string;
   kind: ItemKind;
@@ -181,8 +178,6 @@ export interface Item {
   /** Zones : largeur et hauteur ; mesure : longueur (mètres). */
   w?: number;
   h?: number;
-  /** Joueurs : motif du maillot. */
-  kit?: KitPattern;
   /** Joueurs : gardien de but (manches longues, gants). */
   keeper?: boolean;
 }
@@ -332,6 +327,12 @@ export interface TeamEvent {
   /** Occurrences annulées. */
   exdates: string[];
   conv?: EventConv;
+  /** Équipe à plusieurs catégories (U8/U9) : catégorie du match. */
+  group?: string;
+  /** Club organisateur, s'il diffère de l'adversaire (plateau, tournoi). */
+  organizer?: string;
+  /** Version du logo du club organisateur. */
+  logo?: number;
   updatedAt?: number;
 }
 
@@ -395,6 +396,11 @@ export interface ConvEventInfo {
   color: string;
   bring: string;
   message: string;
+  /** Catégorie du match (U8, U9…) dans une équipe à plusieurs catégories. */
+  group: string | null;
+  /** Club organisateur et son logo. */
+  organizer: string;
+  logo: string | null;
 }
 
 export interface ConvSnapshot extends ConvEventInfo {
@@ -513,6 +519,7 @@ export interface TeamStats {
 
 export interface ClubTeamOverview {
   team: { id: string; category: string; color: string };
+  group: string | null;
   staff: string[];
   players: number;
   past: number;

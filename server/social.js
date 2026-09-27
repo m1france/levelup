@@ -10,7 +10,7 @@ import { all, get, run, tx, UPLOADS } from './db.js';
 import { can, need, needTeam, isStaff, childIdsFor, teamIdsFor, permsFor, newId, HttpError } from './auth.js';
 
 const asUser = (u) => ({ ...u, perms: new Set(permsFor(u.role)) });
-import { occ, evTitle, teamPlayers, parentsOf, staffOf, convOf } from './convocations.js';
+import { occ, evTitle, teamPlayers, occPlayers, parentsOf, staffOf, convOf } from './convocations.js';
 import { occurrences, todayYMD, ymdAdd, shortDay, hm } from './occurrences.js';
 import { notify } from './notify.js';
 import { toUsers } from './live.js';
@@ -31,9 +31,9 @@ function carpoolOcc(user, eventId, date) {
   return o;
 }
 
-/** Enfants que l'utilisateur peut inscrire : les siens (parent) ou toute l'équipe (éducateur). */
-function bookableKids(user, teamId) {
-  const players = teamPlayers(teamId);
+/** Enfants que l'utilisateur peut inscrire : les siens (parent) ou toute la catégorie du match (éducateur). */
+function bookableKids(user, o) {
+  const players = occPlayers(o);
   if (isStaff(user)) return players;
   const kids = childIdsFor(user);
   return players.filter((p) => kids.includes(p.id));
@@ -65,7 +65,7 @@ export function carpoolView(o, user) {
   return {
     eventId: o.e.id, date: o.date, title: evTitle(o.e), time: o.e.time, meetTime: o.data.meetTime || o.e.meetTime || '', location: o.e.location,
     offers, requests, free, needs: requests.filter((r) => !r.solved).length,
-    kids: bookableKids(user, o.e.teamId).map((p) => ({ id: p.id, firstName: p.firstName, booked: booked.has(p.id) })),
+    kids: bookableKids(user, o).map((p) => ({ id: p.id, firstName: p.firstName, booked: booked.has(p.id) })),
   };
 }
 
@@ -83,6 +83,8 @@ socialApi.get('/carpool-upcoming', (req, res) => {
       if (!convOf(e).enabled || (!isStaff(req.user) && e.parents === false)) continue;
       for (const date of occurrences(e, today, ymdAdd(today, 12))) {
         const v = carpoolView(occ(e.id, date), req.user);
+        // Un parent ne voit que les matchs de la catégorie de son enfant (U8 ou U9).
+        if (!isStaff(req.user) && !v.kids.length) continue;
         out.push({ ...v, teamId, kids: undefined, iDrive: v.offers.some((x) => x.mine), iNeed: v.requests.some((x) => x.mine && !x.solved) });
       }
     }
@@ -107,7 +109,7 @@ socialApi.post('/carpool/:eventId/:date', (req, res) => {
     });
     if (req.body.share !== false) postToTeam(o.e.teamId, req.user, 'carpool', '', { offerId: id, eventId: o.e.id, date: o.date });
   } else {
-    const kid = bookableKids(req.user, o.e.teamId).find((p) => p.id === req.body.playerId);
+    const kid = bookableKids(req.user, o).find((p) => p.id === req.body.playerId);
     if (!kid) throw new HttpError(400, 'Choisissez l’enfant');
     run('INSERT INTO carpool VALUES (?, ?, ?, ?, ?, ?, 0, ?, \'\', ?, ?, ?)', id, o.e.id, o.date, req.user.id, kind, direction, '', str(req.body.note, 200), kid.id, now());
     if (req.body.share !== false) postToTeam(o.e.teamId, req.user, 'carpool', '', { requestId: id, eventId: o.e.id, date: o.date });
@@ -120,7 +122,7 @@ socialApi.post('/carpool/offer/:id/book', (req, res) => {
   const offer = get(`SELECT * FROM carpool WHERE id = ? AND kind = 'offer'`, req.params.id);
   if (!offer) throw new HttpError(404, 'Trajet introuvable');
   const o = carpoolOcc(req.user, offer.event_id, offer.date);
-  const kid = bookableKids(req.user, o.e.teamId).find((p) => p.id === req.body.playerId);
+  const kid = bookableKids(req.user, o).find((p) => p.id === req.body.playerId);
   if (!kid) throw new HttpError(400, 'Choisissez l’enfant');
   tx(() => {
     const taken = get('SELECT COUNT(*) n FROM carpool_bookings WHERE offer_id = ?', offer.id).n;

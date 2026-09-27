@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { get, parse, UPLOADS } from './db.js';
 import { childIdsFor, isStaff, need, needTeam, HttpError } from './auth.js';
 import { occ, saveData, evTitle } from './convocations.js';
+import { eventGroup } from './groups.js';
 import { sign, verify } from './tokens.js';
 import { toTeam } from './live.js';
 
@@ -117,6 +118,8 @@ export function revealPayload(o, { user = null, publicToken = null } = {}) {
   const totalSec = Math.max(1, Object.values(m.seconds || {}).reduce((a, b) => Math.max(a, b), 0));
   const kids = user && !isStaff(user) ? childIdsFor(user) : [];
   const team = get('SELECT category, color FROM teams WHERE id = ?', o.e.teamId);
+  // Équipe U8/U9 : les cartes portent la catégorie du match.
+  if (team && eventGroup(o.e)) team.category = eventGroup(o.e);
   const cards = present
     .map((pid) => {
       const row = get('SELECT * FROM players WHERE id = ?', pid);

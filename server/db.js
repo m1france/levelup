@@ -374,6 +374,40 @@ const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.nam
 if (!cols('photos').includes('event_id')) db.exec('ALTER TABLE photos ADD COLUMN event_id TEXT; ALTER TABLE photos ADD COLUMN event_date TEXT;');
 if (!cols('users').includes('phone')) db.exec(`ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''`);
 
+// Éléments d'exercice : l'ancienne taille 80 % devient la taille normale (100 %), les motifs de maillot disparaissent.
+if (!db.prepare(`SELECT 1 FROM kv WHERE key = 'migr.itemScale80'`).get()) {
+  const upd = db.prepare('UPDATE exercises SET data = ? WHERE id = ?');
+  db.exec('BEGIN');
+  for (const row of db.prepare('SELECT id, data FROM exercises').all()) {
+    const d = JSON.parse(row.data);
+    let changed = false;
+    for (const it of d.items ?? []) {
+      if ('kit' in it) {
+        delete it.kit;
+        changed = true;
+      }
+      if (typeof it.scale === 'number' && it.kind !== 'zone' && it.kind !== 'measure') {
+        const sc = Math.round((it.scale / 0.8) * 100) / 100;
+        if (Math.abs(sc - 1) < 0.01) delete it.scale;
+        else it.scale = sc;
+        changed = true;
+      }
+    }
+    if (changed) upd.run(JSON.stringify(d), row.id);
+  }
+  db.prepare(`INSERT INTO kv VALUES ('migr.itemScale80', '1')`).run();
+  db.exec('COMMIT');
+}
+
+// Bibliothèque du club supprimée : ses exercices disparaissent, ceux d'un éducateur ou d'une équipe redeviennent privés.
+if (!db.prepare(`SELECT 1 FROM kv WHERE key = 'migr.noClubLibrary'`).get()) {
+  db.exec(`BEGIN;
+    DELETE FROM exercises WHERE visibility = 'club' AND owner_id IS NULL AND team_id IS NULL;
+    UPDATE exercises SET visibility = 'private', validated = 0 WHERE visibility = 'club';
+    INSERT INTO kv VALUES ('migr.noClubLibrary', '1');
+    COMMIT;`);
+}
+
 export const kvGet = (key) => db.prepare('SELECT value FROM kv WHERE key = ?').get(key)?.value ?? null;
 export const kvSet = (key, value) => db.prepare('INSERT INTO kv VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 

@@ -1,15 +1,16 @@
 import { Router } from 'express';
-import { writeFileSync, unlinkSync } from 'node:fs';
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { all, get, run, tx, parse, UPLOADS } from './db.js';
+import { all, get, run, tx, parse, kvGet, kvSet, UPLOADS } from './db.js';
 import {
   ROLES, PERMISSIONS, permsFor, setRolePerms, newId, hashPassword, checkPassword,
   startSession, endSession, requireUser, can, need, needTeam, teamIdsFor, isStaff,
   childIdsFor, HttpError,
 } from './auth.js';
-import { seedStarterLibrary, seedDemoTeam } from './demo.js';
+import { seedDemoTeam } from './demo.js';
 import { openStream, clientOf, setWatch, toRoom, toTeam, toTeamAndRoom, refreshTeams } from './live.js';
 import { convApi, convPublic, cleanConv, evTitle } from './convocations.js';
+import { groupsOf } from './groups.js';
 import { occurrences, todayYMD, ymdAdd } from './occurrences.js';
 import { playersApi, playerOut } from './players.js';
 import { revealApi, revealPublic } from './reveal.js';
@@ -51,7 +52,6 @@ api.post('/setup', (req, res) => {
       `INSERT INTO users (id, email, name, password_hash, role, status, created_at) VALUES (?, ?, ?, ?, 'admin', 'active', ?)`,
       id, email, name, hashPassword(password), now(),
     );
-    seedStarterLibrary();
     if (req.body.demo) seedDemoTeam(id);
   });
   startSession(res, id);
@@ -193,9 +193,33 @@ api.use(clubPublic);
 
 api.use(requireUser);
 
+/* ------------------------------------------------------------------ logos (club, clubs organisateurs) */
+
+/** Logo en PNG (transparence conservée) ou JPEG, envoyé en data URL. */
+function saveLogo(file, dataUrl) {
+  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!m) throw new HttpError(400, 'Image invalide');
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length > 1_500_000) throw new HttpError(413, 'Image trop lourde');
+  writeFileSync(join(UPLOADS, `${file}.img`), buf);
+}
+function sendLogo(res, file) {
+  const path = join(UPLOADS, `${file}.img`);
+  if (!existsSync(path)) throw new HttpError(404, 'Logo introuvable');
+  const buf = readFileSync(path);
+  const type = buf[0] === 0x89 ? 'png' : buf.subarray(8, 12).toString() === 'WEBP' ? 'webp' : 'jpeg';
+  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  res.type(type).send(buf);
+}
+const clubLogo = () => {
+  const v = kvGet('club.logo');
+  return v ? `/api/club/logo?v=${v}` : null;
+};
+
 api.get('/me', (req, res) => {
   const u = req.user;
   const club = get('SELECT name FROM club WHERE id = 1');
+  if (club) club.logo = clubLogo();
   const children = u.role === 'parent'
     ? all(
         `SELECT p.id, p.team_id, p.data FROM player_parents pp JOIN players p ON p.id = pp.player_id WHERE pp.user_id = ?`,
@@ -234,6 +258,14 @@ api.patch('/club', (req, res) => {
   if (name) run('UPDATE club SET name = ? WHERE id = 1', name);
   res.json({ ok: true });
 });
+
+api.post('/club/logo', (req, res) => {
+  if (req.user.role !== 'admin') throw new HttpError(403, "Réservé à l'administrateur");
+  saveLogo('club_logo', req.body.image);
+  kvSet('club.logo', String(now()));
+  res.json({ logo: clubLogo() });
+});
+api.get('/club/logo', (req, res) => sendLogo(res, 'club_logo'));
 
 api.get('/permissions', (req, res) => {
   const roles = {};
@@ -473,11 +505,10 @@ function exerciseOut(row, user = null) {
   return out;
 }
 
-/** Lecture : l'auteur, toute personne de l'équipe (joueurs et parents compris), et les éducateurs pour la bibliothèque du club. */
+/** Lecture : l'auteur et toute personne de l'équipe (joueurs et parents compris). */
 function exerciseReadable(user, row) {
   if (user.role === 'admin' || row.owner_id === user.id) return true;
-  if (row.team_id && teamIdsFor(user).includes(row.team_id)) return true;
-  return isStaff(user) && row.visibility === 'club';
+  return !!row.team_id && teamIdsFor(user).includes(row.team_id);
 }
 
 /** Écriture : l'auteur, l'administrateur, et tous les éducateurs / dirigeants de l'équipe de l'exercice. */
@@ -506,9 +537,7 @@ api.get('/exercises', (req, res) => {
     rows = all('SELECT * FROM exercises WHERE team_id = ? ORDER BY updated_at DESC', req.query.teamId);
   } else {
     if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
-    rows = scope === 'club'
-      ? all(`SELECT * FROM exercises WHERE visibility = 'club' ORDER BY validated DESC, updated_at DESC`)
-      : all('SELECT * FROM exercises WHERE owner_id = ? AND team_id IS NULL ORDER BY updated_at DESC', req.user.id);
+    rows = all('SELECT * FROM exercises WHERE owner_id = ? AND team_id IS NULL ORDER BY updated_at DESC', req.user.id);
   }
   res.json(rows.map((r) => exerciseOut(r, req.user)));
 });
@@ -531,21 +560,17 @@ api.put('/exercises/:id', (req, res) => {
     if (req.body.teamId) needTeam(req.user, req.body.teamId, { staff: true });
     teamId = req.body.teamId || null;
   }
-  const visibility = req.body.visibility === 'club' ? 'club' : 'private';
-  if (visibility === 'club' && existing?.visibility !== 'club') need(req.user, 'library.share');
   const data = { ...req.body };
   for (const k of EX_META) delete data[k];
   data.title = str(data.title, 120) || 'Exercice sans titre';
   const json = JSON.stringify(data);
   if (json.length > 2_000_000) throw new HttpError(413, 'Exercice trop volumineux');
   if (existing) {
-    // Un exercice modifié doit être revalidé.
-    const validated = visibility === 'club' && existing.validated && existing.data === json ? 1 : 0;
-    run('UPDATE exercises SET visibility = ?, validated = ?, data = ?, team_id = ?, updated_at = ? WHERE id = ?', visibility, validated, json, teamId, now(), id);
+    run(`UPDATE exercises SET visibility = 'private', validated = 0, data = ?, team_id = ?, updated_at = ? WHERE id = ?`, json, teamId, now(), id);
   } else {
     run(
-      'INSERT INTO exercises (id, owner_id, visibility, validated, data, created_at, updated_at, team_id) VALUES (?, ?, ?, 0, ?, ?, ?, ?)',
-      id, req.user.id, visibility, json, now(), now(), teamId,
+      `INSERT INTO exercises (id, owner_id, visibility, validated, data, created_at, updated_at, team_id) VALUES (?, ?, 'private', 0, ?, ?, ?, ?)`,
+      id, req.user.id, json, now(), now(), teamId,
     );
   }
   const row = get('SELECT * FROM exercises WHERE id = ?', id);
@@ -553,16 +578,6 @@ api.put('/exercises/:id', (req, res) => {
   // Changement d'équipe : l'ancienne équipe retire l'exercice de sa liste.
   if (existing?.team_id && existing.team_id !== teamId) toTeam(existing.team_id, { t: 'exercise', id, teamId: existing.team_id, deleted: true }, origin(req));
   res.json(exerciseOut(row, req.user));
-});
-
-api.post('/exercises/:id/validate', (req, res) => {
-  need(req.user, 'library.validate');
-  const row = get('SELECT * FROM exercises WHERE id = ?', req.params.id);
-  if (!row || row.visibility !== 'club') throw new HttpError(404, 'Exercice introuvable');
-  run('UPDATE exercises SET validated = ? WHERE id = ?', req.body.validated ? 1 : 0, row.id);
-  const updated = get('SELECT * FROM exercises WHERE id = ?', row.id);
-  exerciseChanged(req, updated);
-  res.json(exerciseOut(updated, req.user));
 });
 
 api.delete('/exercises/:id', (req, res) => {
@@ -750,9 +765,10 @@ api.put('/events/:id', (req, res) => {
   need(req.user, 'events.manage');
   const id = checkId(req.params.id);
   needTeam(req.user, req.body.teamId, { staff: true });
-  const existing = get('SELECT team_id FROM events WHERE id = ?', id);
+  const existing = get('SELECT team_id, data FROM events WHERE id = ?', id);
   if (existing) needTeam(req.user, existing.team_id);
   const b = req.body;
+  const groups = groupsOf(get('SELECT category FROM teams WHERE id = ?', b.teamId)?.category);
   const start = ymd(b.start);
   if (!start) throw new HttpError(400, 'Date invalide');
   const r = b.recurrence || {};
@@ -779,10 +795,33 @@ api.put('/events/:id', (req, res) => {
     },
     exdates: Array.isArray(b.exdates) ? b.exdates.filter(ymd).slice(0, 400) : [],
     conv: cleanConv(b.conv),
+    // Équipe U8/U9 : chaque match est U8 ou U9.
+    group: groups.includes(b.group) ? b.group : undefined,
+    organizer: str(b.organizer, 80) || undefined,
+    logo: existing ? JSON.parse(existing.data).logo : undefined,
   };
   if (existing) run('UPDATE events SET team_id = ?, data = ?, updated_at = ? WHERE id = ?', b.teamId, JSON.stringify(data), now(), id);
   else run('INSERT INTO events VALUES (?, ?, ?, ?, ?)', id, b.teamId, JSON.stringify(data), now(), now());
   res.json(eventOut(get('SELECT * FROM events WHERE id = ?', id), true));
+});
+
+/** Logo du club organisateur d'un match. */
+api.post('/events/:id/logo', (req, res) => {
+  need(req.user, 'events.manage');
+  const row = get('SELECT * FROM events WHERE id = ?', req.params.id);
+  if (!row) throw new HttpError(404, 'Événement introuvable');
+  needTeam(req.user, row.team_id, { staff: true });
+  saveLogo(`event_logo_${row.id}`, req.body.image);
+  const data = { ...JSON.parse(row.data), logo: now() };
+  run('UPDATE events SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
+  toTeam(row.team_id, { t: 'conv', eventId: row.id }, origin(req));
+  res.json({ logo: `/api/events/${row.id}/logo?v=${data.logo}` });
+});
+api.get('/events/:id/logo', (req, res) => {
+  const row = get('SELECT team_id FROM events WHERE id = ?', req.params.id);
+  if (!row) throw new HttpError(404, 'Événement introuvable');
+  needTeam(req.user, row.team_id);
+  sendLogo(res, `event_logo_${req.params.id}`);
 });
 
 api.delete('/events/:id', (req, res) => {

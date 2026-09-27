@@ -10,6 +10,8 @@ import type { ConvPreset, ConvSettings, EventType, Recurrence, TeamEvent, Traini
 import { ConvSettingsEditor, TimelinePreview } from './ConvSettings';
 import { createTraining } from '../pages/Trainings';
 import { Field, Seg, Sheet, useConfirm, useToast } from './ui';
+import { groupsOf } from '../lib/groups';
+import { useApp } from '../lib/store';
 
 /** L'événement a-t-il une convocation (matchs, plateaux, tournois par défaut) ? */
 export const hasConv = (e: TeamEvent) => e.conv?.enabled ?? CONV_TYPES.includes(e.type);
@@ -184,6 +186,8 @@ function EventForm({
   const toast = useToast();
   const confirm = useConfirm();
   const nav = useNavigate();
+  const { me } = useApp();
+  const groups = groupsOf(me.teams.find((t) => t.id === teamId)?.category);
   const weekday = fromYMD(date).getDay();
   const [e, setE] = useState<Omit<TeamEvent, 'id' | 'teamId'>>(
     event ?? {
@@ -218,6 +222,7 @@ function EventForm({
     try {
       const body = {
         ...e,
+        group,
         teamId,
         recurrence: { ...r, until: ends === 'until' ? r.until : null, count: ends === 'count' ? r.count ?? 10 : null },
       };
@@ -257,6 +262,8 @@ function EventForm({
   const convSettings: ConvSettings = e.conv?.custom ?? chosen?.settings ?? DEFAULT_SETTINGS;
   const setConv = (patch: TeamEvent['conv']) => setE({ ...e, conv: { ...e.conv, ...patch } });
   const isMatch = e.type === 'match' || e.type === 'plateau' || e.type === 'tournament';
+  // Équipe U8/U9 : chaque match appartient à une seule catégorie.
+  const group = isMatch && groups.length ? (e.group && groups.includes(e.group) ? e.group : groups[0]) : undefined;
 
   return (
     <Sheet
@@ -296,6 +303,12 @@ function EventForm({
           onChange={(x) => setE({ ...e, title: x.target.value })}
         />
 
+        {isMatch && groups.length > 0 && (
+          <Field label="Catégorie">
+            <Seg<string> value={group!} onChange={(g) => setE({ ...e, group: g })} options={groups.map((g) => ({ value: g, label: g }))} />
+          </Field>
+        )}
+
         {isMatch && (
           <div className="row wrap" style={{ gap: 10 }}>
             <Field label="Adversaire">
@@ -308,6 +321,16 @@ function EventForm({
                 options={[{ value: 'home', label: 'Domicile' }, { value: 'away', label: 'Extérieur' }, { value: 'neutral', label: 'Neutre' }]}
               />
             </Field>
+            {e.venue !== 'home' && (
+              <Field label="Club organisateur">
+                <input
+                  className="input"
+                  value={e.organizer ?? ''}
+                  placeholder={e.opponent || 'Ex. AS Teyran'}
+                  onChange={(x) => setE({ ...e, organizer: x.target.value })}
+                />
+              </Field>
+            )}
           </div>
         )}
 

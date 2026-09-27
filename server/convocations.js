@@ -15,6 +15,7 @@ import { notify } from './notify.js';
 import { toTeam } from './live.js';
 import { publicKey, saveSubscription } from './push.js';
 import { AWARDS, autoAwards } from './reveal.js';
+import { eventGroup, inGroup, teamInfo } from './groups.js';
 
 export const CONV_TYPES = ['match', 'plateau', 'tournament'];
 
@@ -159,6 +160,13 @@ export function evTitle(e) {
   return TYPE_LABEL[e.type] || 'Événement';
 }
 
+/** Club qui organise le match : le nôtre à domicile, sinon celui indiqué (ou l'adversaire). */
+export function organizerOf(e) {
+  if (e.organizer) return e.organizer;
+  if (e.venue === 'home') return get('SELECT name FROM club WHERE id = 1')?.name ?? '';
+  return e.opponent || '';
+}
+
 export function loadEvent(id) {
   const r = get('SELECT * FROM events WHERE id = ?', id);
   return r ? { ...JSON.parse(r.data), id: r.id, teamId: r.team_id } : null;
@@ -205,6 +213,12 @@ export function teamPlayers(teamId) {
   return all('SELECT * FROM players WHERE team_id = ?', teamId)
     .map((r) => ({ ...parse(r), createdAt: r.created_at }))
     .sort((a, b) => (a.firstName || '').localeCompare(b.firstName || '', 'fr'));
+}
+
+/** Joueurs concernés par une occurrence : ceux de la catégorie du match (U8 ou U9), ou toute l'équipe. */
+export function occPlayers(o, players = teamPlayers(o.e.teamId)) {
+  const g = eventGroup(o.e);
+  return g ? players.filter((p) => inGroup(p, o.e.teamId, g)) : players;
 }
 
 export function parentsOf(playerId) {
@@ -310,13 +324,15 @@ function sendRequest(o, players, onlyMissing) {
  * Bilan de la saison par joueur : convocations, matchs joués, non retenu, indisponible,
  * absent sans prévenir, minutes, titularisations, buts. `excludeKey` ignore une occurrence (celle qu'on prépare).
  */
-export function teamStats(teamId, excludeKey = null) {
-  const players = teamPlayers(teamId);
+export function teamStats(teamId, excludeKey = null, group = null) {
+  const players = teamPlayers(teamId).filter((p) => inGroup(p, teamId, group));
   const today = todayYMD();
+  // Chaque catégorie a ses propres matchs : un match U9 ne compte pas dans l'équité des U8.
+  const groupOfEvent = new Map(all('SELECT id, data FROM events WHERE team_id = ?', teamId).map((r) => [r.id, eventGroup({ ...JSON.parse(r.data), teamId })]));
   const rows = all(
     `SELECT * FROM convocations WHERE team_id = ? AND published_at IS NOT NULL AND date >= ? ORDER BY date`,
     teamId, seasonStart(),
-  );
+  ).filter((r) => !group || !groupOfEvent.get(r.event_id) || groupOfEvent.get(r.event_id) === group);
   const avail = new Map();
   for (const a of all(
     'SELECT a.* FROM availability a JOIN events e ON e.id = a.event_id WHERE e.team_id = ? AND a.date >= ?',
@@ -345,7 +361,9 @@ export function teamStats(teamId, excludeKey = null) {
     lastDate = r.date;
     const absent = new Set(d.match?.absent || []);
     const starters = new Set(d.match?.starters || []);
+    const g = groupOfEvent.get(r.event_id);
     for (const p of players) {
+      if (!inGroup(p, teamId, g)) continue;
       // Un joueur arrivé en cours de saison n'est pas compté sur les matchs d'avant son arrivée.
       if (p.createdAt > new Date(`${r.date}T23:59`).getTime()) continue;
       const s = st[p.id];
@@ -437,13 +455,15 @@ function suggest(players, stats, avail, squad) {
 function eventInfo(o) {
   const e = o.e;
   return {
-    eventId: e.id, date: o.date, teamId: e.teamId, type: e.type, title: evTitle(e), time: e.allDay ? '' : e.time, endTime: e.endTime,
+    eventId: e.id, date: o.date, teamId: e.teamId, type: e.type, title: evTitle(e), group: eventGroup(e),
+    organizer: organizerOf(e), logo: e.logo ? `/api/events/${e.id}/logo?v=${e.logo}` : null, time: e.allDay ? '' : e.time, endTime: e.endTime,
     meetTime: meetOf(o), location: e.location, opponent: e.opponent, venue: e.venue, color: e.color, bring: bringOf(o), message: o.data.message || '',
   };
 }
 
 /** Résumé d'une convocation pour les listes (éducateurs). */
-function snapshot(o, players = teamPlayers(o.e.teamId)) {
+function snapshot(o, all_ = teamPlayers(o.e.teamId)) {
+  const players = occPlayers(o, all_);
   const avail = availabilityOf(o);
   const counts = { yes: 0, maybe: 0, no: 0, none: 0 };
   for (const p of players) counts[avail[p.id]?.status ?? 'none']++;
@@ -479,9 +499,9 @@ function snapshot(o, players = teamPlayers(o.e.teamId)) {
 
 /** Détail complet pour l'éducateur. */
 function detail(o) {
-  const players = teamPlayers(o.e.teamId);
+  const players = occPlayers(o);
   const avail = availabilityOf(o);
-  const stats = teamStats(o.e.teamId, `${o.e.id}|${o.date}`);
+  const stats = teamStats(o.e.teamId, `${o.e.id}|${o.date}`, eventGroup(o.e));
   const sug = suggest(players, stats, avail, o.settings.squad);
   const sel = new Set(o.data.selection || []);
   const reads = Object.fromEntries(all('SELECT user_id, read_at FROM conv_reads WHERE event_id = ? AND date = ?', o.e.id, o.date).map((r) => [r.user_id, r.read_at]));
@@ -526,7 +546,7 @@ function ticket(o, child, user) {
   else if (now() > o.t.start) status = 'past';
   else status = avail ? 'answered' : 'to_answer';
   const m = o.data.match;
-  const players = published ? teamPlayers(o.e.teamId).filter((p) => sel.has(p.id)) : [];
+  const players = published ? occPlayers(o).filter((p) => sel.has(p.id)) : [];
   const goals = (m?.events || []).filter((ev) => ev.t === 'goal' && ev.pid === child.id).length;
   return {
     key: `${o.e.id}:${o.date}:${child.id}`,
@@ -588,7 +608,7 @@ function runJobs() {
           console.error(`Tâche ${job} (${e.id} ${date}) :`, err);
         }
       };
-      const players = () => teamPlayers(e.teamId);
+      const players = () => occPlayers(o);
       if (!published && o.t.request && t >= o.t.request && t < o.t.deadline) once('request', () => sendRequest(o, players(), false));
       o.t.reminders.forEach((at, i) => {
         if (!published && t >= at && t < o.t.deadline && jobSent(o, 'request')) once(`reminder:${i}`, () => sendRequest(o, players(), true));
@@ -696,13 +716,16 @@ convApi.get('/teams/:teamId/convocations', (req, res) => {
   const today = todayYMD();
   const from = req.query.past ? seasonStart() : ymdAdd(today, -45);
   const players = teamPlayers(req.params.teamId);
-  res.json(teamOccurrences(req.params.teamId, from, ymdAdd(today, 60)).map((o) => snapshot(o, players)));
+  const group = teamInfo(req.params.teamId).groups.includes(req.query.group) ? req.query.group : null;
+  const list = teamOccurrences(req.params.teamId, from, ymdAdd(today, 60)).filter((o) => !group || !eventGroup(o.e) || eventGroup(o.e) === group);
+  res.json(list.map((o) => snapshot(o, players)));
 });
 
 convApi.get('/teams/:teamId/stats', (req, res) => {
   needTeam(req.user, req.params.teamId, { staff: true });
-  const s = teamStats(req.params.teamId);
-  const players = teamPlayers(req.params.teamId).map((p) => ({ id: p.id, firstName: p.firstName, lastName: p.lastName ?? '', number: p.number, ...s.players[p.id] }));
+  const group = teamInfo(req.params.teamId).groups.includes(req.query.group) ? req.query.group : null;
+  const s = teamStats(req.params.teamId, null, group);
+  const players = teamPlayers(req.params.teamId).filter((p) => inGroup(p, req.params.teamId, group)).map((p) => ({ id: p.id, firstName: p.firstName, lastName: p.lastName ?? '', number: p.number, ...s.players[p.id] }));
   res.json({ ...s, players });
 });
 
@@ -714,14 +737,14 @@ convApi.get('/convocations/:eventId/:date', (req, res) => {
   }
   // Parent : un billet par enfant de l'équipe.
   const kids = childIdsFor(req.user);
-  const children = teamPlayers(o.e.teamId).filter((p) => kids.includes(p.id));
+  const children = occPlayers(o).filter((p) => kids.includes(p.id));
   if (!children.length || o.e.parents === false) throw new HttpError(404, 'Match introuvable');
   res.json({ kind: 'parent', tickets: children.map((c) => ticket(o, c, req.user)) });
 });
 
 convApi.put('/convocations/:eventId/:date', (req, res) => {
   const o = staffOcc(req, true);
-  const ids = new Set(teamPlayers(o.e.teamId).map((p) => p.id));
+  const ids = new Set(occPlayers(o).map((p) => p.id));
   const patch = {};
   if (Array.isArray(req.body.selection)) patch.selection = [...new Set(req.body.selection.filter((id) => ids.has(id)))];
   if (req.body.message !== undefined) patch.message = str(req.body.message, 1000);
@@ -734,7 +757,7 @@ convApi.put('/convocations/:eventId/:date', (req, res) => {
 
 convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
   const o = staffOcc(req, true);
-  const players = teamPlayers(o.e.teamId);
+  const players = occPlayers(o);
   const sel = new Set(o.data.selection || []);
   if (!sel.size) throw new HttpError(400, 'Sélectionnez au moins un joueur');
   const first = !o.row?.published_at;
@@ -777,7 +800,7 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
 convApi.post('/convocations/:eventId/:date/request', (req, res) => {
   const o = staffOcc(req, true);
   const onlyMissing = jobSent(o, 'request') || !!req.body.onlyMissing;
-  const sent = sendRequest(o, teamPlayers(o.e.teamId), onlyMissing);
+  const sent = sendRequest(o, occPlayers(o), onlyMissing);
   markJob(o, 'request');
   res.json({ sent, reminder: onlyMissing });
 });
@@ -786,7 +809,7 @@ convApi.put('/convocations/:eventId/:date/availability/:playerId', (req, res) =>
   const o = occ(req.params.eventId, req.params.date);
   const pid = req.params.playerId;
   const p = get('SELECT team_id FROM players WHERE id = ?', pid);
-  if (!p || p.team_id !== o.e.teamId) throw new HttpError(404, 'Joueur introuvable');
+  if (!p || p.team_id !== o.e.teamId || !occPlayers(o).some((x) => x.id === pid)) throw new HttpError(404, 'Joueur introuvable');
   if (isStaff(req.user)) {
     needTeam(req.user, o.e.teamId, { staff: true });
     need(req.user, 'convocations.manage');
@@ -804,7 +827,7 @@ convApi.post('/convocations/:eventId/:date/read', (req, res) => {
   const o = occ(req.params.eventId, req.params.date);
   if (!isStaff(req.user) && o.row?.published_at) {
     const kids = childIdsFor(req.user);
-    if (teamPlayers(o.e.teamId).some((p) => kids.includes(p.id))) {
+    if (occPlayers(o).some((p) => kids.includes(p.id))) {
       run('INSERT OR IGNORE INTO conv_reads VALUES (?, ?, ?, ?)', o.e.id, o.date, req.user.id, now());
       toTeam(o.e.teamId, { t: 'conv', eventId: o.e.id, date: o.date });
     }
@@ -838,11 +861,11 @@ convApi.post('/convocations/:eventId/:date/finish', (req, res) => {
   if (req.body.publish !== false && o.e.parents !== false) {
     const us = m.score?.us ?? 0;
     const them = m.score?.them ?? 0;
-    const team = get('SELECT category FROM teams WHERE id = ?', o.e.teamId)?.category ?? 'Nous';
+    const team = eventGroup(o.e) ?? get('SELECT category FROM teams WHERE id = ?', o.e.teamId)?.category ?? 'Nous';
     const title = `Fin du match : ${team} ${us} – ${them} ${o.e.opponent || 'adversaire'}`;
     const sel = new Set(o.data.selection || []);
     const absent = new Set(m.absent || []);
-    for (const p of teamPlayers(o.e.teamId)) {
+    for (const p of occPlayers(o)) {
       const parents = parentsOf(p.id).map((u) => u.id);
       if (!parents.length) continue;
       let body = '';
@@ -869,7 +892,7 @@ convApi.get('/me/matches', (req, res) => {
   for (const teamId of [...new Set(children.map((c) => c.teamId))]) {
     for (const o of teamOccurrences(teamId, ymdAdd(today, -21), ymdAdd(today, 42))) {
       if (o.e.parents === false) continue;
-      for (const c of children.filter((c) => c.teamId === teamId)) out.push(ticket(o, c, req.user));
+      for (const c of occPlayers(o, children.filter((c) => c.teamId === teamId))) out.push(ticket(o, c, req.user));
     }
   }
   res.json(out.sort((a, b) => a.timeline.start - b.timeline.start));
@@ -880,22 +903,29 @@ convApi.get('/club/overview', (req, res) => {
   if (!can(req.user, 'club.dashboard')) throw new HttpError(403, 'Réservé aux responsables du club');
   const today = todayYMD();
   const teams = all('SELECT * FROM teams WHERE id IN (' + teamIdsFor(req.user).map(() => '?').join(',') + ') ORDER BY category', ...teamIdsFor(req.user));
-  res.json(teams.map((team) => {
-    const players = teamPlayers(team.id);
-    const list = teamOccurrences(team.id, seasonStart(), ymdAdd(today, 21));
-    const past = list.filter((o) => o.t.start < now());
-    const onTime = past.filter((o) => o.row?.published_at && o.row.published_at <= o.t.deadline).length;
-    const upcoming = list.filter((o) => o.t.start >= now()).slice(0, 3).map((o) => snapshot(o, players));
-    const stats = teamStats(team.id);
-    return {
-      team: { id: team.id, category: team.category, color: team.color },
-      staff: all('SELECT u.name FROM team_staff s JOIN users u ON u.id = s.user_id WHERE s.team_id = ?', team.id).map((u) => u.name),
-      players: players.length,
-      past: past.length,
-      onTime,
-      equity: stats.equity,
-      upcoming,
-    };
+  // Une équipe U8/U9 apparaît une fois par catégorie : chacune a ses matchs et son équité.
+  res.json(teams.flatMap((team) => {
+    const all_ = teamPlayers(team.id);
+    const occs = teamOccurrences(team.id, seasonStart(), ymdAdd(today, 21));
+    const staff = all('SELECT u.name FROM team_staff s JOIN users u ON u.id = s.user_id WHERE s.team_id = ?', team.id).map((u) => u.name);
+    const groups = teamInfo(team.id).groups;
+    return (groups.length ? groups : [null]).map((group) => {
+      const players = all_.filter((p) => inGroup(p, team.id, group));
+      const list = occs.filter((o) => !group || !eventGroup(o.e) || eventGroup(o.e) === group);
+      const past = list.filter((o) => o.t.start < now());
+      const onTime = past.filter((o) => o.row?.published_at && o.row.published_at <= o.t.deadline).length;
+      const upcoming = list.filter((o) => o.t.start >= now()).slice(0, 3).map((o) => snapshot(o, all_));
+      return {
+        team: { id: team.id, category: group ?? team.category, color: team.color },
+        group,
+        staff,
+        players: players.length,
+        past: past.length,
+        onTime,
+        equity: teamStats(team.id, null, group).equity,
+        upcoming,
+      };
+    });
   }));
 });
 

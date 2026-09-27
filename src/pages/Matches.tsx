@@ -12,6 +12,8 @@ import { useLive } from '../lib/live';
 import { playerName, useApp } from '../lib/store';
 import type { ClubTeamOverview, ConvSnapshot, TeamStats, Ticket } from '../lib/types';
 import { Gauge } from './Convocation';
+import { MatchShowcase } from '../components/MatchShowcase';
+import { groupsOf } from '../lib/groups';
 
 export function Matches() {
   const { isStaff } = useApp();
@@ -33,11 +35,14 @@ function ParentMatches() {
   const upcoming = (q.data ?? []).filter((t) => !isPast(t));
   const past = (q.data ?? []).filter(isPast).reverse();
   const multi = new Set((q.data ?? []).map((t) => t.child.id)).size > 1;
+  // Un match par diapositive, même si plusieurs enfants y sont attendus.
+  const showcase = [...new Map(upcoming.map((t) => [`${t.eventId}:${t.date}`, t])).values()].slice(0, 5);
   return (
     <div className="page narrow">
       <div className="page-head">
         <h1>Matchs</h1>
       </div>
+      <MatchShowcase matches={showcase} onChanged={q.reload} />
       <div style={{ marginBottom: 18 }}>
         <PushCard compact />
       </div>
@@ -74,9 +79,27 @@ function ParentMatches() {
 
 type Tab = 'matchs' | 'equite' | 'club';
 
+/** Équipe U8/U9 : la catégorie affichée (dans l'adresse, ?cat=U9). */
+function useGroup() {
+  const { team } = useApp();
+  const [params, setParams] = useSearchParams();
+  const groups = groupsOf(team?.category);
+  const group = groups.length ? (groups.includes(params.get('cat') ?? '') ? params.get('cat')! : groups[0]) : null;
+  const setGroup = (g: string) =>
+    setParams((p) => {
+      const n = new URLSearchParams(p);
+      n.set('cat', g);
+      return n;
+    });
+  return { groups, group, setGroup };
+}
+
+const withGroup = (url: string, group: string | null) => (group ? `${url}${url.includes('?') ? '&' : '?'}group=${group}` : url);
+
 function StaffMatches() {
   const { team, can } = useApp();
   const [params, setParams] = useSearchParams();
+  const { groups, group, setGroup } = useGroup();
   const tabs: { value: Tab; label: string }[] = [
     { value: 'matchs', label: 'Convocations' },
     { value: 'equite', label: 'Temps de jeu' },
@@ -88,12 +111,26 @@ function StaffMatches() {
       <div className="page-head">
         <div>
           <h1>Matchs</h1>
-          <div className="sub">{team?.category}</div>
+          <div className="sub">{groups.length && tab !== 'club' ? `${team?.category} · matchs, convocations et statistiques séparés par catégorie` : team?.category}</div>
         </div>
-        <Seg value={tab} onChange={(v) => setParams(v === 'matchs' ? {} : { vue: v })} options={tabs} />
+        <div className="actions">
+          {groups.length > 0 && tab !== 'club' && (
+            <Seg value={group!} onChange={setGroup} options={groups.map((g) => ({ value: g, label: g }))} />
+          )}
+          <Seg
+            value={tab}
+            onChange={(v) => setParams(() => {
+              const n = new URLSearchParams();
+              if (v !== 'matchs') n.set('vue', v);
+              if (group) n.set('cat', group);
+              return n;
+            })}
+            options={tabs}
+          />
+        </div>
       </div>
-      {tab === 'matchs' && <ConvList />}
-      {tab === 'equite' && <Equity />}
+      {tab === 'matchs' && <ConvList key={group ?? ''} group={group} />}
+      {tab === 'equite' && <Equity key={group ?? ''} group={group} />}
       {tab === 'club' && <ClubBoard />}
     </div>
   );
@@ -111,7 +148,7 @@ function DateTile({ date }: { date: string }) {
 }
 
 /** Ce qu'il reste à faire, en une phrase. */
-function nextStep(c: ConvSnapshot) {
+export function nextStep(c: ConvSnapshot) {
   const now = Date.now();
   switch (c.phase) {
     case 'upcoming':
@@ -176,22 +213,23 @@ export function ConvCard({ c, showTeam }: { c: ConvSnapshot; showTeam?: boolean 
   );
 }
 
-function ConvList() {
+function ConvList({ group }: { group: string | null }) {
   const { team } = useApp();
-  const q = useAsync(() => (team ? api.get<ConvSnapshot[]>(`/teams/${team.id}/convocations`) : Promise.resolve([])), [team?.id]);
+  const q = useAsync(() => (team ? api.get<ConvSnapshot[]>(withGroup(`/teams/${team.id}/convocations`, group)) : Promise.resolve([])), [team?.id, group]);
   useLive((m) => m.t === 'conv' && q.reload());
   const now = Date.now();
   const list = q.data ?? [];
   const todo = list.filter((c) => c.timeline.start > now && ['collecting', 'late', 'upcoming'].includes(c.phase));
   const ready = list.filter((c) => c.timeline.start > now && c.phase === 'published');
   const past = list.filter((c) => c.timeline.start <= now || c.phase === 'played').reverse();
+  const coming = list.filter((c) => c.timeline.start > now && c.phase !== 'played').slice(0, 5);
   if (q.loading && !q.data) return <Spinner fill />;
   if (!list.length)
     return (
       <div className="card">
         <Empty
           icon={<Megaphone />}
-          title="Aucun match programmé"
+          title={group ? `Aucun match ${group} programmé` : 'Aucun match programmé'}
           text="Ajoutez un match, un plateau ou un tournoi dans le calendrier : la convocation se prépare toute seule (disponibilités, relances, date limite)."
           action={
             <Link className="btn primary" to="/">
@@ -203,6 +241,7 @@ function ConvList() {
     );
   return (
     <div className="stack" style={{ gap: 28 }}>
+      <MatchShowcase matches={coming} onChanged={q.reload} />
       {todo.length > 0 && (
         <section>
           <div className="section-title">À préparer</div>
@@ -241,9 +280,9 @@ function ConvList() {
 
 type SortKey = 'played' | 'minutes' | 'notSelected' | 'name';
 
-function Equity() {
+function Equity({ group }: { group: string | null }) {
   const { team } = useApp();
-  const q = useAsync(() => (team ? api.get<TeamStats>(`/teams/${team.id}/stats`) : Promise.resolve(null)), [team?.id]);
+  const q = useAsync(() => (team ? api.get<TeamStats>(withGroup(`/teams/${team.id}/stats`, group)) : Promise.resolve(null)), [team?.id, group]);
   const [sort, setSort] = useState<SortKey>('played');
   const rows = useMemo(() => {
     const list = [...(q.data?.players ?? [])];
@@ -396,7 +435,7 @@ function ClubBoard() {
           const next = t.upcoming[0];
           const st = status(next);
           return (
-            <div key={t.team.id} className="card club-card">
+            <div key={`${t.team.id}:${t.group ?? ''}`} className="card club-card">
               <div className="row" style={{ gap: 10 }}>
                 <TeamBadge team={{ ...t.team, name: t.team.category, season: '', staff: [], playerCount: t.players }} size={38} />
                 <div className="grow">

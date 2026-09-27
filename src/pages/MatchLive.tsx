@@ -271,7 +271,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
 
   /* ---- rendu */
 
-  if (m.finished) return <MatchSheet d={d} m={m} summary={summary} team={team?.category ?? ''} onBack={() => nav(`/matchs/${d.eventId}/${d.date}`)} />;
+  if (m.finished) return <MatchSheet d={d} m={m} summary={summary} team={d.group ?? team?.category ?? ''} onBack={() => nav(`/matchs/${d.eventId}/${d.date}`)} />;
 
   const Token = ({ pid, idx }: { pid: string | null; idx: number }) => {
     const p = pid ? players[pid] : null;
@@ -298,7 +298,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
           <ArrowLeft />
         </button>
         <div className="scoreboard">
-          <span className="sb-team">{team?.category ?? 'Nous'}</span>
+          <span className="sb-team">{d.group ?? team?.category ?? 'Nous'}</span>
           <span className="sb-score">
             {m.score.us}
             <i>–</i>

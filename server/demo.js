@@ -1,12 +1,13 @@
 /**
- * Données de démarrage : une bibliothèque d'exercices animés validés (toujours installée)
- * et, en option, une équipe U8/U9 d'exemple avec effectif, séance, remarques et défi.
+ * Données de démarrage (en option) : une équipe U8/U9 d'exemple avec ses exercices animés,
+ * son effectif, une séance, des remarques et des matchs (séparés entre U8 et U9).
  *
  * Modèle d'exercice (voir src/lib/types.ts) : coordonnées en mètres, origine en haut à gauche.
  * frames[0] = position de départ ; chaque frame suivante ne contient que ce qui change.
  */
 import { run } from './db.js';
 import { newId } from './auth.js';
+import { inGroup, teamInfo } from './groups.js';
 
 const now = () => Date.now();
 
@@ -220,16 +221,6 @@ export const STARTER_EXERCISES = [
   }),
 ];
 
-/** Bibliothèque du club : sans auteur (« Club »), modifiable par l'administrateur uniquement. */
-export function seedStarterLibrary() {
-  for (const e of STARTER_EXERCISES) {
-    run(
-      `INSERT INTO exercises (id, owner_id, visibility, validated, data, created_at, updated_at) VALUES (?, NULL, 'club', 1, ?, ?, ?)`,
-      newId(), JSON.stringify(e), now(), now(),
-    );
-  }
-}
-
 const NAMES = [
   ['Léo', 2018, 3], ['Inès', 2018, 2], ['Nolan', 2018, 2], ['Jade', 2019, 1], ['Adam', 2018, 3], ['Mila', 2019, 2],
   ['Sacha', 2019, 1], ['Rayan', 2018, 2], ['Louise', 2018, 3], ['Tom', 2019, 2], ['Yanis', 2018, 1], ['Lina', 2019, 2],
@@ -342,7 +333,11 @@ export function seedDemoTeam(adminId) {
   };
   ev({ type: 'training', title: 'Entraînement', start: wed, time: '14:00', endTime: '15:30', location: 'Stade municipal',
     recurrence: { freq: 'weekly', interval: 1, days: [3], until: null, count: null } });
-  const matchId = ev({ type: 'match', start: localYMD(sat), time: '10:00', meetTime: '09:15', opponent: 'Teyran', venue: 'away', location: 'Stade de Teyran' });
+  // Équipe U8/U9 : chaque match est joué par une seule catégorie.
+  const groups = teamInfo(teamId).groups;
+  const groupAt = (k) => (groups.length ? groups[k % groups.length] : undefined);
+  const groupIds = (g) => (g ? ids.filter((id, i) => inGroup({ birthYear: NAMES[i][1] }, teamId, g)) : ids);
+  const matchId = ev({ type: 'match', start: localYMD(sat), time: '10:00', meetTime: '09:15', opponent: 'Teyran', venue: 'away', location: 'Stade de Teyran', group: groupAt(1) });
 
   // Vie d'équipe : discussion, sondage, « qui apporte quoi », covoiturage pour le prochain match.
   const thread = newId();
@@ -365,13 +360,15 @@ export function seedDemoTeam(adminId) {
   past.forEach((m, k) => {
     const eid = newId();
     const date = day(m.d);
+    const group = groupAt(k);
+    const squad = groupIds(group);
     run('INSERT INTO events VALUES (?, ?, ?, ?, ?)', eid, teamId, JSON.stringify({
       type: 'match', title: '', start: date, allDay: false, time: '10:00', endTime: '11:30', meetTime: '09:15', location: m.venue === 'home' ? 'Stade municipal' : `Stade de ${m.opponent}`,
-      opponent: m.opponent, venue: m.venue, notes: '', color: '', parents: true, exdates: [], recurrence: { freq: 'none', interval: 1, days: [], until: null, count: null },
+      opponent: m.opponent, venue: m.venue, notes: '', color: '', parents: true, exdates: [], recurrence: { freq: 'none', interval: 1, days: [], until: null, count: null }, group,
     }), now(), now());
     // Rotation imparfaite : certains jouent plus que d'autres.
-    const sel = ids.filter((_, i) => (i + k) % 9 !== 0 && (i + k * 2) % 7 !== 1).slice(0, 10);
-    const unavailable = ids.find((id) => !sel.includes(id));
+    const sel = squad.filter((_, i) => (i + k) % 9 !== 0 && (i + k * 2) % 7 !== 1).slice(0, 10);
+    const unavailable = squad.find((id) => !sel.includes(id));
     const seconds = Object.fromEntries(sel.map((id, i) => [id, (i < 8 ? 38 : 16) * 60 + ((i * 97) % 300)]));
     const events = [];
     for (let g = 0; g < m.score[0]; g++) events.push({ id: newId(6), t: 'goal', pid: sel[(g * 3 + k) % 6], period: 1 + (g % 2), sec: 300 + g * 200 });
@@ -384,7 +381,7 @@ export function seedDemoTeam(adminId) {
     };
     const published = new Date(`${day(m.d - 3)}T19:30`).getTime();
     run('INSERT INTO convocations VALUES (?, ?, ?, ?, ?, ?)', eid, date, teamId, JSON.stringify({
-      selection: sel, message: '', notified: Object.fromEntries(ids.map((id) => [id, sel.includes(id) ? 'in' : 'out'])), match,
+      selection: sel, message: '', notified: Object.fromEntries(squad.map((id) => [id, sel.includes(id) ? 'in' : 'out'])), match,
       summary: { text: k === 2 ? 'Match plein d’envie, bravo à tous pour les efforts défensifs !' : '', at: now() },
     }), published, now());
     for (const id of sel) run('INSERT INTO availability VALUES (?, ?, ?, ?, ?, NULL, ?)', eid, date, id, 'yes', '', published - 864e5);

@@ -1,21 +1,20 @@
-import { ArrowDownUp, Check, ChevronRight, Eye, Play, Plus } from 'lucide-react';
+import { ArrowDownUp, Car, Check, ChevronRight, Eye, Megaphone, Play, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LivePitch, SceneThumb, coverToExercise } from '../components/Pitch';
 import { Calendar, hasConv } from '../components/Calendar';
-import { matchPath } from '../lib/convocations';
-import { CarpoolSpotlight } from '../components/Carpool';
+import { PHASE, matchPath } from '../lib/convocations';
+import { GlassArt, HeroSlide, Showcase, type ShowcaseSlide } from '../components/Showcase';
 import { PlayerAvatar } from '../components/PlayerAvatar';
 import { PushCard } from '../components/Notifications';
 import { TicketRail } from '../components/Tickets';
 import { Spinner, useAsync, useToast } from '../components/ui';
-import { ConvCard, useTickets } from './Matches';
-import { AnnouncementCard } from './Announcements';
+import { nextStep, useTickets } from './Matches';
 import { api } from '../lib/api';
 import { useLive } from '../lib/live';
-import { MONTHS_LONG, agenda, formatTime, relativeDay, toYMD } from '../lib/events';
-import { dateTile, todayISO, useApp } from '../lib/store';
-import type { Announcement, ConvSnapshot, ExerciseData, TeamEvent, Ticket, Training } from '../lib/types';
+import { MONTHS_LONG, MONTHS_TILE, agenda, formatTime, fromYMD, relativeDay, toYMD } from '../lib/events';
+import { dateTile, relative, todayISO, useApp } from '../lib/store';
+import type { Announcement, Carpool, ConvSnapshot, ExerciseData, TeamEvent, Ticket, Training } from '../lib/types';
 import { HERO_PALETTE } from '../pitch/render';
 import { createTraining, totalMinutes } from './Trainings';
 
@@ -51,26 +50,28 @@ function pickHero(list: Training[]) {
   return { hero: upcoming[0] ?? past[0] ?? null, upcoming, past };
 }
 
-function Hero({ training, action }: { training: Training | null; action: React.ReactNode }) {
-  const nav = useNavigate();
+/** Aperçu de la séance : le terrain animé en perspective. */
+function SessionVisual({ training }: { training: Training | null }) {
   const ex = useMemo(() => (training?.cover ? coverToExercise(training.cover) : DEMO), [training?.cover]);
   const long = Math.max(ex.field.w, ex.field.h);
   const short = Math.min(ex.field.w, ex.field.h);
   const pad = long * 0.08 + 1.2;
   return (
-    <section className="hero2">
-      <div className="hero2-text">
-        <h1 onClick={() => training && nav(`/seances/${training.id}`)} style={{ cursor: training ? 'pointer' : undefined }}>
-          {training?.title ?? 'Votre première séance vous attend'}
-        </h1>
-        {action}
-      </div>
-      <div className="hero2-visual" onClick={() => training && nav(`/seances/${training.id}`)}>
-        <div className="hero2-frame" style={{ aspectRatio: `${long + pad} / ${short + pad}` }}>
-          <LivePitch ex={ex} palette={HERO_PALETTE} />
-        </div>
-      </div>
-    </section>
+    <div className="hero2-frame" style={{ aspectRatio: `${long + pad} / ${short + pad}` }}>
+      <LivePitch ex={ex} palette={HERO_PALETTE} />
+    </div>
+  );
+}
+
+const WD_TILE = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
+function GlassDate({ date }: { date: string }) {
+  const d = fromYMD(date);
+  return (
+    <span className="ga-date">
+      <small>{WD_TILE[d.getDay()]}</small>
+      <b>{d.getDate()}</b>
+      <small>{MONTHS_TILE[d.getMonth()]}</small>
+    </span>
   );
 }
 
@@ -177,11 +178,14 @@ export function Dashboard() {
   }, [team?.id]);
   const tickets = useTickets();
   const anns = useAsync(() => api.get<Announcement[]>('/announcements'), []);
+  const carpools = useAsync(() => api.get<Carpool[]>('/carpool-upcoming').catch(() => [] as Carpool[]), []);
   const freshAnns = (anns.data ?? []).filter((a) => a.target && (!a.read || (a.important && Date.now() - a.createdAt < 3 * 864e5))).slice(0, 3);
   // Séances créées ou modifiées par les autres éducateurs, et exercices de couverture.
   useLive((m) => {
     if ((m.t === 'training' || m.t === 'exercise') && m.teamId === team?.id) q.reload();
     if (m.t === 'conv' && isStaff) q.reload();
+    if (m.t === 'carpool') carpools.reload();
+    if (m.t === 'announcement') anns.reload();
   });
 
   const newTraining = async () => {
@@ -225,6 +229,150 @@ export function Dashboard() {
     </button>
   ) : null;
 
+  // Diapositives : les actualités passent avant l'aperçu de la séance.
+  const slides: ShowcaseSlide[] = [];
+  for (const a of freshAnns) {
+    slides.push({
+      key: `ann:${a.id}`,
+      node: (
+        <HeroSlide
+          eyebrow={<><Megaphone size={14} /> {a.important ? 'Annonce importante' : 'Annonce du club'} · {relative(a.createdAt)}</>}
+          warn={a.important}
+          title={a.title}
+          text={a.body}
+          onOpen={() => nav(`/annonces/${a.id}`)}
+          actions={
+            <button className="btn lime" onClick={() => nav(`/annonces/${a.id}`)}>
+              Lire l’annonce
+            </button>
+          }
+          visual={<GlassArt glow={a.important ? 'rgba(255, 150, 120, 0.4)' : undefined}><div className="ga-emoji">{a.emoji}</div></GlassArt>}
+        />
+      ),
+    });
+  }
+  for (const c of todo.slice(0, 3)) {
+    const answered = c.counts.yes + c.counts.maybe + c.counts.no;
+    const urgent = c.phase === 'late' || (c.phase === 'collecting' && c.timeline.deadline - now < 24 * 3600e3);
+    const open = () => nav(matchPath(c.eventId, c.date));
+    slides.push({
+      key: `conv:${c.eventId}:${c.date}`,
+      node: (
+        <HeroSlide
+          eyebrow={<>Convocation à préparer · {PHASE[c.phase].label}</>}
+          warn={urgent}
+          title={c.group ? `${c.group} · ${c.title}` : c.title}
+          text={
+            <>
+              {relativeDay(c.date)}
+              {c.time ? ` · ${formatTime(c.time)}` : ''}
+              {c.location ? ` · ${c.location}` : ''}
+              <br />
+              {nextStep(c)}
+            </>
+          }
+          onOpen={open}
+          actions={
+            <button className="btn lime" onClick={open}>
+              Préparer la convocation
+            </button>
+          }
+          visual={
+            <GlassArt glow={urgent ? 'rgba(255, 170, 90, 0.4)' : undefined}>
+              <GlassDate date={c.date} />
+              <div className="ga-big">
+                {answered}
+                <small>/ {c.total} réponses</small>
+              </div>
+              <div className="ga-bar" aria-hidden>
+                <i className="yes" style={{ flex: c.counts.yes }} />
+                <i className="maybe" style={{ flex: c.counts.maybe }} />
+                <i className="no" style={{ flex: c.counts.no }} />
+                <i className="none" style={{ flex: c.counts.none }} />
+              </div>
+            </GlassArt>
+          }
+        />
+      ),
+    });
+  }
+  for (const t of myTickets.filter((t) => t.status === 'to_answer').slice(0, 2)) {
+    const open = () => nav(matchPath(t.eventId, t.date));
+    slides.push({
+      key: `ticket:${t.key}`,
+      node: (
+        <HeroSlide
+          eyebrow="Réponse attendue"
+          warn
+          title={`${t.child.firstName} sera là ?`}
+          text={`${t.title} · ${relativeDay(t.date)}${t.time ? ` à ${formatTime(t.time)}` : ''}${t.location ? ` · ${t.location}` : ''}`}
+          onOpen={open}
+          actions={
+            <button className="btn lime" onClick={open}>
+              Répondre
+            </button>
+          }
+          visual={
+            <GlassArt>
+              <GlassDate date={t.date} />
+              <div className="ga-emoji" style={{ fontSize: 84 }}>⚽</div>
+            </GlassArt>
+          }
+        />
+      ),
+    });
+  }
+  for (const c of (carpools.data ?? []).slice(0, 3)) {
+    const need = c.needs > 0 && c.free < c.needs;
+    const open = () => nav(`${matchPath(c.eventId, c.date)}?covoiturage=1`);
+    slides.push({
+      key: `car:${c.eventId}:${c.date}`,
+      node: (
+        <HeroSlide
+          eyebrow={<><Car size={14} /> Covoiturage · {relativeDay(c.date)}</>}
+          warn={need}
+          title={c.title}
+          text={
+            <>
+              {c.offers.length} voiture{c.offers.length > 1 ? 's' : ''}
+              {c.needs ? ` · ${c.needs} enfant${c.needs > 1 ? 's' : ''} cherche${c.needs > 1 ? 'nt' : ''} une place` : ''}
+              {c.iDrive ? ' · vous conduisez' : ''}
+            </>
+          }
+          onOpen={open}
+          actions={
+            <button className="btn lime" onClick={open}>
+              {need ? 'Proposer une place' : c.offers.length ? 'Voir les trajets' : 'Proposer mes places'}
+            </button>
+          }
+          visual={
+            <GlassArt glow={need ? 'rgba(255, 170, 90, 0.4)' : undefined}>
+              <GlassDate date={c.date} />
+              <div className="ga-big">
+                {c.free}
+                <small>place{c.free > 1 ? 's' : ''} libre{c.free > 1 ? 's' : ''}</small>
+              </div>
+              <span className="ga-car" aria-hidden>
+                🚗
+              </span>
+            </GlassArt>
+          }
+        />
+      ),
+    });
+  }
+  slides.push({
+    key: 'session',
+    node: (
+      <HeroSlide
+        title={hero?.title ?? 'Votre première séance vous attend'}
+        onOpen={hero ? () => nav(`/seances/${hero.id}`) : undefined}
+        actions={action}
+        visual={<SessionVisual training={hero} />}
+      />
+    ),
+  });
+
   return (
     <div className="page home">
       <div className="home-head">
@@ -245,13 +393,7 @@ export function Dashboard() {
         <Spinner fill />
       ) : (
         <>
-          {freshAnns.length > 0 && (
-            <div className="home-ann">
-              {freshAnns.map((a) => (
-                <AnnouncementCard key={a.id} a={a} onOpen={() => nav(`/annonces/${a.id}`)} />
-              ))}
-            </div>
-          )}
+          <Showcase slides={slides} />
           {!isStaff && me.children.length > 1 && (
             <div className="family-strip">
               {me.children.map((c) => {
@@ -284,25 +426,6 @@ export function Dashboard() {
               )}
             </section>
           )}
-          {isStaff && todo.length > 0 && (
-            <section className="home-matches">
-              <div className="sec-head">
-                <h2>Convocations à préparer</h2>
-                <button className="plain-toggle" onClick={() => nav('/matchs')}>
-                  Tout voir
-                </button>
-              </div>
-              <div className="stack" style={{ gap: 10 }}>
-                {todo.slice(0, 3).map((c) => (
-                  <ConvCard key={`${c.eventId}:${c.date}`} c={c} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          <CarpoolSpotlight onOpen={(c) => nav(`${matchPath(c.eventId, c.date)}?covoiturage=1`)} />
-
-          <Hero training={hero} action={action} />
 
           {team && d && (
             <section>

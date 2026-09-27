@@ -1,7 +1,7 @@
 import type { ExerciseData, Item, ItemKind, Path, PathKind } from '../lib/types';
 import type { Positions } from './anim';
-import { dist, distToSegment, itemUnit, polyLength, simplify, smooth, type Vec } from './geometry';
-import { layerOf, selectionRadius } from './render';
+import { dist, distToSegment, itemUnit, polyLength, simplify, smooth, type Vec, type View } from './geometry';
+import { hitsItem, layerOf, selectionRadius } from './render';
 
 let seq = 0;
 export const shortId = (p: string) => `${p}${Date.now().toString(36).slice(-4)}${(seq++).toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -50,40 +50,36 @@ export function attachTarget(ex: ExerciseData, pos: Positions, p: Vec): string |
   return best;
 }
 
-export function itemAt(ex: ExerciseData, pos: Positions, p: Vec, pxPerM: number): Item | null {
+/**
+ * Élément sous le pointeur, au pixel près : seule la forme dessinée (à `tolPx` pixels près) est cliquable.
+ * Parmi plusieurs éléments touchés, celui dessiné au-dessus gagne.
+ */
+export function itemAt(ex: ExerciseData, pos: Positions, p: Vec, v: View, tolPx = 3): Item | null {
   const u = itemUnit(ex.field);
-  const minR = 16 / pxPerM;
-  // Score = distance relative au rayon : on attrape l'élément dont on vise le mieux le centre
-  // (un joueur porteur plutôt que le ballon collé à lui). À score égal, le calque supérieur gagne.
-  let best: { it: Item; score: number; z: number } | null = null;
+  const tol = tolPx / v.s;
+  let best: { it: Item; z: number } | null = null;
   for (const it of ex.items) {
     const q = pos.get(it.id) ?? [it.x, it.y];
-    let score: number;
+    const z = layerOf(it);
+    if (best && z < best.z) continue;
     if (it.kind === 'zone') {
       // Une zone ne s'attrape que par son bord : on peut toujours poser des éléments dedans.
-      const w = it.w ?? 6;
-      const h = it.h ?? 6;
       const dx = Math.abs(p[0] - q[0]);
       const dy = Math.abs(p[1] - q[1]);
-      if (dx > w / 2 + 0.3 * u || dy > h / 2 + 0.3 * u) continue;
-      const edge = Math.min(Math.abs(dx - w / 2), Math.abs(dy - h / 2));
-      const tol = Math.max(0.6 * u, 14 / pxPerM);
-      if (edge > tol) continue;
-      score = 1 + edge / tol;
+      const hw = (it.w ?? 6) / 2;
+      const hh = (it.h ?? 6) / 2;
+      const t = Math.max(tol, 5 / v.s);
+      const onEdge = (Math.abs(dx - hw) <= t && dy <= hh + t) || (Math.abs(dy - hh) <= t && dx <= hw + t);
+      if (!onEdge) continue;
     } else if (it.kind === 'measure') {
       const [a, b] = measureEnds(it, q);
-      const tol = Math.max(0.5 * u, 12 / pxPerM);
-      const d = distToSegment(p, a, b);
-      if (d > tol) continue;
-      score = 0.5 + d / tol;
+      if (distToSegment(p, a, b) > Math.max(tol, 5 / v.s) && !hitsItem(it, q, p, v, u, tolPx)) continue;
     } else {
-      const r = Math.max(selectionRadius(it, u), minR);
-      const d = dist(q, p);
-      if (d > r) continue;
-      score = d / r;
+      // Préfiltre grossier avant le test au pixel.
+      if (dist(q, p) > selectionRadius(it, u) * 1.6 + tol) continue;
+      if (!hitsItem(it, q, p, v, u, tolPx)) continue;
     }
-    const z = layerOf(it);
-    if (!best || score < best.score - 0.05 || (Math.abs(score - best.score) <= 0.05 && z > best.z)) best = { it, score, z };
+    best = { it, z };
   }
   return best?.it ?? null;
 }
@@ -102,9 +98,8 @@ export function pathPoints(path: Path): Vec[] {
   return path.kind === 'pass' || path.kind === 'shot' ? [path.pts[0], path.pts[path.pts.length - 1]] : smooth(path.pts, 8);
 }
 
-export function pathAt(ex: ExerciseData, p: Vec, pxPerM: number): Path | null {
-  const u = itemUnit(ex.field);
-  const tol = Math.max(0.4 * u, 12 / pxPerM);
+export function pathAt(ex: ExerciseData, p: Vec, pxPerM: number, tolPx = 7): Path | null {
+  const tol = tolPx / pxPerM;
   let best: Path | null = null;
   let bestD = tol;
   for (const path of ex.paths) {

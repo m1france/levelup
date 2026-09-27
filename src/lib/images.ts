@@ -46,3 +46,16 @@ export async function preparePortrait(file: File, size = 640) {
   ctx.drawImage(src, (src.width - side) / 2, sy, side, side, 0, 0, size, size);
   return c.toDataURL('image/jpeg', 0.86);
 }
+
+/** Logo de club : PNG (transparence conservée), 512 px au plus. */
+export async function prepareLogo(file: File, max = 512) {
+  const src = await decode(file);
+  const scale = Math.min(1, max / Math.max(src.width, src.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(src.width * scale);
+  c.height = Math.round(src.height * scale);
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  return c.toDataURL('image/png');
+}
