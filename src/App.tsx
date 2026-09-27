@@ -7,6 +7,7 @@ import { AppProvider, useApp } from './lib/store';
 import type { Me } from './lib/types';
 import { Album } from './pages/Album';
 import { AnnouncementPage, Announcements } from './pages/Announcements';
+import { CalendarPage } from './pages/CalendarPage';
 import { Club } from './pages/Club';
 import { BulletinPage } from './pages/BulletinPage';
 import { Answer } from './pages/Answer';
@@ -100,6 +101,7 @@ function AppRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="seances" element={<Navigate to="/" replace />} />
         <Route path="album" element={<Album />} />
+        <Route path="calendrier" element={<CalendarPage />} />
         <Route path="seances/:id" element={<TrainingPage />} />
         <Route path="parametres" element={<Settings />} />
         <Route path="compte" element={<Navigate to="/parametres" replace />} />

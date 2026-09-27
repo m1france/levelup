@@ -37,9 +37,20 @@ export function NetworkPill() {
   );
 }
 
-/** Pastille d'équipe : sa couleur et sa catégorie. */
-export function TeamBadge({ team, size = 36 }: { team: Team | null; size?: number }) {
+/**
+ * Pastille d'équipe : le logo du club s'il en a un (`brand`), sinon sa couleur et sa catégorie.
+ * Les listes qui doivent distinguer les équipes entre elles gardent la catégorie (`brand={false}`).
+ */
+export function TeamBadge({ team, size = 36, brand = true }: { team: Team | null; size?: number; brand?: boolean }) {
+  const { me } = useApp();
+  const logo = brand ? me.club?.logo : null;
   const label = team ? team.category.replace(/\s+/g, '') : '·';
+  if (logo)
+    return (
+      <span className="team-badge logo" style={{ width: size, height: size }}>
+        <img src={logo} alt={me.club?.name ?? ''} draggable={false} />
+      </span>
+    );
   return (
     <span
       className="team-badge"
@@ -77,7 +88,7 @@ function TeamMenu({ onClose }: { onClose: () => void }) {
               onClose();
             }}
           >
-            <TeamBadge team={t} size={28} />
+            <TeamBadge team={t} size={28} brand={me.teams.length < 2} />
             <span className="grow ellipsis">{t.category}</span>
             {t.id === team?.id && <Check size={16} color="var(--accent)" />}
           </button>

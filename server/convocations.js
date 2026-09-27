@@ -157,6 +157,7 @@ const TYPE_LABEL = { match: 'Match', plateau: 'Plateau', tournament: 'Tournoi', 
 export function evTitle(e) {
   if (e.title) return e.title;
   if (e.type === 'match' && e.opponent) return `Match ${e.venue === 'away' ? 'à' : 'contre'} ${e.opponent}`;
+  if (e.type === 'plateau' && gamesOf(e)) return e.organizer ? `Plateau à ${e.organizer}` : e.venue === 'home' ? 'Plateau à domicile' : 'Plateau';
   return TYPE_LABEL[e.type] || 'Événement';
 }
 
@@ -164,7 +165,37 @@ export function evTitle(e) {
 export function organizerOf(e) {
   if (e.organizer) return e.organizer;
   if (e.venue === 'home') return get('SELECT name FROM club WHERE id = 1')?.name ?? '';
-  return e.opponent || '';
+  // Plateau : l'adversaire est la liste des équipes invitées, pas l'organisateur.
+  return gamesOf(e) ? '' : e.opponent || '';
+}
+
+/** Plateau : les matchs prévus (adversaire, heure, durée), s'il y en a. */
+export const gamesOf = (e) => (Array.isArray(e?.games) && e.games.length ? e.games : null);
+
+/**
+ * Résultat de chaque match d'un plateau : les matchs terminés (m.results), puis celui en cours.
+ * null pour un match simple.
+ */
+export function gameResults(e, m) {
+  const games = gamesOf(e);
+  if (!games) return null;
+  const results = m?.results || [];
+  const current = m && !m.finished && m.started ? (m.period || 1) - 1 : -1;
+  return games.map((g, i) => {
+    const r = results[i] ?? (i === current ? m.score : null);
+    return { id: g.id, opponent: g.opponent, time: g.time || '', us: r ? r.us ?? 0 : null, them: r ? r.them ?? 0 : null, live: i === current && !results[i] };
+  });
+}
+
+/** « 2 victoires · 1 nul · 1 défaite » pour un plateau terminé. */
+export function plateauRecord(games) {
+  const played = (games || []).filter((g) => g.us !== null);
+  const n = (f) => played.filter(f).length;
+  const w = n((g) => g.us > g.them);
+  const d = n((g) => g.us === g.them);
+  const l = n((g) => g.us < g.them);
+  const part = (k, one, many) => (k ? `${k} ${k > 1 ? many : one}` : null);
+  return [part(w, 'victoire', 'victoires'), part(d, 'nul', 'nuls'), part(l, 'défaite', 'défaites')].filter(Boolean).join(' · ') || `${played.length} matchs`;
 }
 
 export function loadEvent(id) {
@@ -458,6 +489,7 @@ function eventInfo(o) {
     eventId: e.id, date: o.date, teamId: e.teamId, type: e.type, title: evTitle(e), group: eventGroup(e),
     organizer: organizerOf(e), logo: e.logo ? `/api/events/${e.id}/logo?v=${e.logo}` : null, time: e.allDay ? '' : e.time, endTime: e.endTime,
     meetTime: meetOf(o), location: e.location, opponent: e.opponent, venue: e.venue, color: e.color, bring: bringOf(o), message: o.data.message || '',
+    games: gamesOf(e),
   };
 }
 
@@ -492,7 +524,7 @@ function snapshot(o, all_ = teamPlayers(o.e.teamId)) {
     publishedLate: o.row?.published_at ? o.row.published_at > o.t.deadline : null,
     reads,
     readers: parentIds.size,
-    score: m && (m.started || m.finished) ? { us: m.score?.us ?? 0, them: m.score?.them ?? 0, finished: !!m.finished } : null,
+    score: m && (m.started || m.finished) ? { us: m.score?.us ?? 0, them: m.score?.them ?? 0, finished: !!m.finished, games: gameResults(o.e, m) } : null,
     presetName: o.presetName,
   };
 }
@@ -565,6 +597,7 @@ function ticket(o, child, user) {
           minutes: sel.has(child.id) && !(m.absent || []).includes(child.id) ? Math.round((m.seconds?.[child.id] || 0) / 60) : null,
           goals: o.settings.stats ? goals : null,
           summary: o.data.summary?.text ?? '',
+          games: gameResults(o.e, m),
         }
       : null,
   };
@@ -862,7 +895,8 @@ convApi.post('/convocations/:eventId/:date/finish', (req, res) => {
     const us = m.score?.us ?? 0;
     const them = m.score?.them ?? 0;
     const team = eventGroup(o.e) ?? get('SELECT category FROM teams WHERE id = ?', o.e.teamId)?.category ?? 'Nous';
-    const title = `Fin du match : ${team} ${us} – ${them} ${o.e.opponent || 'adversaire'}`;
+    const games = gameResults(o.e, m);
+    const title = games ? `Fin du plateau ${team} : ${plateauRecord(games)}` : `Fin du match : ${team} ${us} – ${them} ${o.e.opponent || 'adversaire'}`;
     const sel = new Set(o.data.selection || []);
     const absent = new Set(m.absent || []);
     for (const p of occPlayers(o)) {

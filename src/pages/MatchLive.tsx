@@ -5,16 +5,30 @@ import { Empty, Field, Sheet, Spinner, useAsync, useConfirm, useToast } from '..
 import { api, uid } from '../lib/api';
 import { useApp } from '../lib/store';
 import type { ConvDetail, ConvPlayer, MatchEvent, MatchState } from '../lib/types';
+import { GamesResults } from '../components/Plateau';
+import { formatTime } from '../lib/events';
 import { useWakeLock } from '../lib/wakelock';
 import { whistle, unlockAudio } from '../lib/sound';
 import { AWARDS, autoAwards, slotPosition } from '../lib/awards';
 
 /* ------------------------------------------------------------------ formations */
 
-const FORMATIONS: Record<number, string[]> = {
-  1: ['1'], 2: ['1-1'], 3: ['2-1', '1-1-1'], 4: ['2-2', '1-2-1'], 5: ['2-2', '1-2-1'], 6: ['2-2-1', '3-2'],
-  7: ['2-3-1', '3-2-1', '3-3'], 8: ['3-3-1', '2-3-2', '3-2-2'], 9: ['3-3-2', '3-4-1'], 10: ['4-3-2', '3-4-2'], 11: ['4-4-2', '4-3-3', '3-5-2'],
+/** Formations proposées selon le nombre de joueurs sur le terrain (la première est celle par défaut). Gardien en plus dès 5. */
+export const FORMATIONS: Record<number, string[]> = {
+  1: ['1'],
+  2: ['1-1', '2'],
+  3: ['2-1', '1-2', '1-1-1', '3'],
+  4: ['1-2-1', '2-2', '3-1', '1-3', '2-1-1', '1-1-2'],
+  5: ['1-2-1', '2-2', '2-1-1', '1-1-2', '3-1', '1-3'],
+  6: ['2-2-1', '1-2-2', '2-1-2', '3-2', '2-3', '1-3-1'],
+  7: ['2-3-1', '3-2-1', '3-3', '2-1-2-1', '3-1-2', '2-2-2'],
+  8: ['3-3-1', '2-3-2', '3-2-2', '3-1-2-1', '2-4-1', '3-4'],
+  9: ['3-3-2', '3-4-1', '3-2-3', '4-3-1', '2-4-2', '3-1-3-1'],
+  10: ['4-3-2', '3-4-2', '3-3-3', '4-4-1', '3-5-1', '4-2-3'],
+  11: ['4-4-2', '4-3-3', '4-2-3-1', '3-5-2', '3-4-3', '4-1-4-1', '5-3-2', '4-5-1'],
 };
+
+const formationLabel = (f: string, onField: number) => (onField >= 5 ? `G-${f}` : f);
 
 interface Slot { x: number; y: number; gk: boolean }
 
@@ -25,12 +39,35 @@ export function slotsFor(formation: string, onField: number): Slot[] {
   let rows = formation.split('-').map(Number).filter((n) => n > 0);
   if (rows.reduce((a, b) => a + b, 0) !== outfield) rows = (FORMATIONS[onField]?.[0] ?? String(outfield)).split('-').map(Number);
   const slots: Slot[] = [];
-  if (gk) slots.push({ x: 50, y: 90, gk: true });
+  // Marges : le nom et le temps de jeu sous chaque pastille restent dans le terrain.
+  if (gk) slots.push({ x: 50, y: 86, gk: true });
   rows.forEach((k, i) => {
-    const y = rows.length === 1 ? 45 : 72 - (i * 54) / (rows.length - 1);
-    for (let j = 0; j < k; j++) slots.push({ x: ((j + 1) / (k + 1)) * 100, y, gk: false });
+    const y = rows.length === 1 ? 45 : 68 - (i * 50) / (rows.length - 1);
+    for (let j = 0; j < k; j++) slots.push({ x: 12 + ((j + 1) / (k + 1)) * 76, y, gk: false });
   });
   return slots;
+}
+
+/** Choix de la composition : un mini-terrain par formation. */
+function FormationPicker({ onField, value, onChange }: { onField: number; value: string; onChange: (f: string) => void }) {
+  const list = FORMATIONS[onField] ?? [value];
+  if (list.length < 2) return null;
+  return (
+    <div className="formation-picker" role="radiogroup" aria-label="Composition">
+      {list.map((f) => (
+        <button key={f} type="button" role="radio" aria-checked={f === value} className={f === value ? 'on' : ''} onClick={() => onChange(f)}>
+          <svg viewBox="0 0 68 92" aria-hidden>
+            <rect x="3" y="3" width="62" height="86" rx="5" />
+            <line x1="3" y1="46" x2="65" y2="46" />
+            {slotsFor(f, onField).map((p, i) => (
+              <circle key={i} cx={(p.x / 100) * 68} cy={(p.y / 100) * 92} r="5.2" className={p.gk ? 'gk' : ''} />
+            ))}
+          </svg>
+          <span>{formationLabel(f, onField)}</span>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 const fmt = (sec: number) => {
@@ -152,15 +189,21 @@ function MatchBoard({ d }: { d: ConvDetail }) {
     });
 
   const live = (x: MatchState) => (x.running && x.since ? (Date.now() - x.since) / 1000 : 0);
-  const periodSec = s.periodMinutes * 60;
+  // Plateau : chaque « période » est un petit match contre un adversaire, avec sa propre durée.
+  const games = d.games?.length ? d.games : null;
+  const periods = games ? games.length : s.periods;
+  const lengthOf = (p: number) => (games ? (games[p - 1]?.minutes ?? s.periodMinutes) : s.periodMinutes) * 60;
+  const periodSec = lengthOf(m.period);
   const elapsed = m.elapsed + live(m);
-  const totalSec = s.periods * periodSec;
-  const played = (m.period - 1) * periodSec + Math.min(elapsed, periodSec);
+  const totalSec = Array.from({ length: periods }, (_, i) => lengthOf(i + 1)).reduce((a, b) => a + b, 0);
+  const played = Array.from({ length: m.period - 1 }, (_, i) => lengthOf(i + 1)).reduce((a, b) => a + b, 0) + Math.min(elapsed, periodSec);
   const remaining = Math.max(0, totalSec - played);
+  const game = games?.[m.period - 1] ?? null;
+  const results = m.results ?? [];
   const secOf = (pid: string) => (m.seconds[pid] ?? 0) + (m.running && m.field.includes(pid) ? live(m) : 0);
   const present = squad.filter((p) => !m.absent.includes(p.id));
   const target = present.length ? (totalSec * Math.min(s.onField, present.length)) / present.length : 0;
-  const periodLabel = s.periods === 2 ? (m.period === 1 ? '1re mi-temps' : '2e mi-temps') : `Période ${m.period}/${s.periods}`;
+  const periodLabel = games ? `Match ${m.period}/${periods}` : s.periods === 2 ? (m.period === 1 ? '1re mi-temps' : '2e mi-temps') : `Période ${m.period}/${s.periods}`;
   const overtime = elapsed > periodSec;
 
   // Remplaçants qui n'atteindront plus leur part de temps de jeu s'ils n'entrent pas dans les 5 prochaines minutes.
@@ -183,13 +226,21 @@ function MatchBoard({ d }: { d: ConvDetail }) {
 
   const endPeriod = async () => {
     whistle();
-    const last = m.period >= s.periods;
+    const last = m.period >= periods;
     update((x) => {
       const c = commit(x);
       const ev: MatchEvent = { id: uid(8), t: 'period', period: x.period, sec: c.elapsed };
-      return last ? { ...c, running: false, since: null, events: [...c.events, ev] } : { ...c, running: false, since: null, period: x.period + 1, elapsed: 0, events: [...c.events, ev] };
+      const base = { ...c, running: false, since: null, events: [...c.events, ev] };
+      if (games) {
+        // Le score du match qui se termine est rangé ; le suivant repart de 0 – 0.
+        const res = [...(c.results ?? [])];
+        res[x.period - 1] = { ...c.score };
+        return last ? { ...base, results: res } : { ...base, results: res, period: x.period + 1, elapsed: 0, score: { us: 0, them: 0 } };
+      }
+      return last ? base : { ...base, period: x.period + 1, elapsed: 0 };
     }, true);
     if (last) setFinish(true);
+    else if (games) toast(`Coup de sifflet · prochain match contre ${games[m.period]?.opponent ?? 'l’adversaire suivant'}`);
   };
 
   const tap = (target: Pick) => {
@@ -229,10 +280,14 @@ function MatchBoard({ d }: { d: ConvDetail }) {
   const setFormation = (f: string) => {
     const nextSlots = slotsFor(f, s.onField);
     update((x) => {
-      const onPitch = x.field.filter(Boolean) as string[];
-      const field = nextSlots.map((_, i) => onPitch[i] ?? null);
-      return { ...x, formation: f, field };
-    });
+      const c = commit(x);
+      // Le gardien reste dans les buts, les autres gardent leur ordre.
+      const keeper = slots.findIndex((sl) => sl.gk);
+      const gk = keeper >= 0 ? c.field[keeper] : null;
+      const others = c.field.filter((pid, i) => pid && i !== keeper) as string[];
+      const field = nextSlots.map((sl) => (sl.gk ? gk ?? others.shift() ?? null : others.shift() ?? null));
+      return { ...c, formation: f, field };
+    }, true);
   };
 
   const markAbsent = (pid: string) => {
@@ -253,7 +308,8 @@ function MatchBoard({ d }: { d: ConvDetail }) {
     update((x) => ({ ...x, score: { ...x.score, them: x.score.them + 1 }, events: [...x.events, { id: uid(8), t: 'against', period: x.period, sec: x.elapsed + live(x) }] }), true);
   const undoScore = () =>
     update((x) => {
-      const i = [...x.events].reverse().findIndex((e) => e.t === 'goal' || e.t === 'against');
+      // Plateau : seulement dans le match en cours (les scores des matchs terminés sont rangés).
+      const i = [...x.events].reverse().findIndex((e) => (e.t === 'goal' || e.t === 'against') && (!games || e.period === x.period));
       if (i < 0) return x;
       const idx = x.events.length - 1 - i;
       const e = x.events[idx];
@@ -274,6 +330,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
   /* ---- rendu */
 
   if (m.finished) return <MatchSheet d={d} m={m} summary={summary} team={d.group ?? team?.category ?? ''} onBack={() => nav(`/matchs/${d.eventId}/${d.date}`)} />;
+  const canUndo = m.events.some((e) => (e.t === 'goal' || e.t === 'against') && (!games || e.period === m.period));
 
   const Token = ({ pid, idx }: { pid: string | null; idx: number }) => {
     const p = pid ? players[pid] : null;
@@ -306,7 +363,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
             <i>–</i>
             {m.score.them}
           </span>
-          <span className="sb-team">{d.opponent || 'Adv.'}</span>
+          <span className="sb-team">{game ? game.opponent : d.opponent || 'Adv.'}</span>
         </div>
         <div className={`sb-clock${m.running ? ' run' : ''}${overtime ? ' over' : ''}`}>
           <b>{fmt(elapsed)}</b>
@@ -316,6 +373,22 @@ function MatchBoard({ d }: { d: ConvDetail }) {
 
       <div className="match-body">
         <section className="match-main">
+          {games && (
+            <div className="plateau-strip" aria-label="Matchs du plateau">
+              {games.map((g, i) => {
+                const r = results[i];
+                const current = i === m.period - 1;
+                const tone = r ? (r.us > r.them ? 'win' : r.us === r.them ? 'draw' : 'loss') : current ? 'current' : '';
+                return (
+                  <span key={g.id} className={`ps-game ${tone}`}>
+                    <small>{g.time ? formatTime(g.time) : `Match ${i + 1}`}</small>
+                    <b className="ellipsis">{g.opponent}</b>
+                    <em>{r ? `${r.us} – ${r.them}` : current && m.started ? `${m.score.us} – ${m.score.them}` : `${g.minutes} min`}</em>
+                  </span>
+                );
+              })}
+            </div>
+          )}
           {alerts[0] && (
             <button className="equity-alert" onClick={() => setPick({ where: 'bench', pid: alerts[0].p.id })}>
               <AlertTriangle />
@@ -364,24 +437,28 @@ function MatchBoard({ d }: { d: ConvDetail }) {
             </button>
           </div>
           <div className="row wrap" style={{ justifyContent: 'center', gap: 6 }}>
-            {m.started && (
+            {m.started && (m.running || elapsed > 0 || !games) && (
               <button className="btn sm" onClick={endPeriod}>
-                <Flag /> {m.period >= s.periods ? 'Fin du match' : `Fin de la ${periodLabel.toLowerCase()}`}
+                <Flag />{' '}
+                {games
+                  ? m.period >= periods
+                    ? 'Fin du plateau'
+                    : `Fin du match contre ${game?.opponent ?? ''}`
+                  : m.period >= s.periods
+                    ? 'Fin du match'
+                    : `Fin de la ${periodLabel.toLowerCase()}`}
               </button>
             )}
-            {m.events.some((e) => e.t === 'goal' || e.t === 'against') && (
+            {games && !m.running && elapsed === 0 && game && (
+              <span className="next-game">
+                Prochain : <b>{game.opponent}</b>
+                {game.time ? ` à ${formatTime(game.time)}` : ''} · {game.minutes} min
+              </span>
+            )}
+            {canUndo && (
               <button className="btn sm ghost" onClick={undoScore}>
                 <RotateCcw /> Annuler le dernier but
               </button>
-            )}
-            {!m.started && (
-              <select className="select" style={{ width: 'auto', minHeight: 32, height: 32, fontSize: 13 }} value={m.formation} onChange={(e) => setFormation(e.target.value)}>
-                {(FORMATIONS[s.onField] ?? [m.formation]).map((f) => (
-                  <option key={f} value={f}>
-                    Formation {s.onField >= 5 ? `G-${f}` : f}
-                  </option>
-                ))}
-              </select>
             )}
             {m.started && (
               <button className="btn sm ghost" onClick={reset}>
@@ -389,6 +466,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
               </button>
             )}
           </div>
+          <FormationPicker onField={s.onField} value={m.formation} onChange={setFormation} />
         </section>
 
         <aside className="match-side">
@@ -449,7 +527,10 @@ function MatchBoard({ d }: { d: ConvDetail }) {
           m={m}
           onClose={() => setFinish(false)}
           onDone={async (text, publish, awards) => {
-            const next = { ...commit(m), running: false, since: null, finished: true };
+            const c = commit(m);
+            // Plateau : le score global est la somme des buts de tous les matchs.
+            const total = c.results?.length ? c.results.reduce((a, r) => ({ us: a.us + r.us, them: a.them + r.them }), { us: 0, them: 0 }) : c.score;
+            const next = { ...c, score: total, running: false, since: null, finished: true };
             try {
               const r = await api.post<{ sent: number }>(`/convocations/${d.eventId}/${d.date}/finish`, { match: next, text, publish, awards });
               localStorage.removeItem(storeKey(d.eventId, d.date));
@@ -467,6 +548,10 @@ function MatchBoard({ d }: { d: ConvDetail }) {
     </div>
   );
 }
+
+/** Durée totale de jeu : toutes les périodes, ou tous les matchs d'un plateau. */
+const matchSeconds = (d: ConvDetail) =>
+  Math.max(1, d.games?.length ? d.games.reduce((a, g) => a + g.minutes * 60, 0) : d.settings.periods * d.settings.periodMinutes * 60);
 
 function GoalSheet({ field, onClose, onGoal }: { field: ConvPlayer[]; onClose: () => void; onGoal: (pid?: string, assist?: string) => void }) {
   const [scorer, setScorer] = useState<string | null>(null);
@@ -556,10 +641,14 @@ function FinishSheet({ d, m, onClose, onDone }: { d: ConvDetail; m: MatchState; 
     >
       {step === 1 ? (
         <div className="stack">
-          <div className="final-score">
-            {m.score.us} – {m.score.them}
-            <small>contre {d.opponent || 'l’adversaire'}</small>
-          </div>
+          {d.games?.length ? (
+            <GamesResults games={d.games} results={m.results ?? []} />
+          ) : (
+            <div className="final-score">
+              {m.score.us} – {m.score.them}
+              <small>contre {d.opponent || 'l’adversaire'}</small>
+            </div>
+          )}
           <Field label="Le mot du coach" hint="envoyé avec le score et le temps de jeu de chaque enfant">
             <textarea className="textarea" autoFocus rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Bravo à tous pour l’état d’esprit, on a vu de super passes !" />
           </Field>
@@ -603,14 +692,21 @@ function MatchSheet({ d, m, team, summary, onBack }: { d: ConvDetail; m: MatchSt
       <button className="back" onClick={onBack} style={{ border: 0, background: 'none', cursor: 'pointer' }}>
         <ArrowLeft size={15} /> Convocation
       </button>
-      <div className="cv-score" style={{ marginTop: 8 }}>
-        <b>{team}</b>
-        <span>
-          {m.score.us} – {m.score.them}
-        </span>
-        <b>{d.opponent || 'Adversaire'}</b>
-        {summary && <p>« {summary} »</p>}
-      </div>
+      {d.games?.length ? (
+        <div className="card pad" style={{ marginTop: 8 }}>
+          <GamesResults games={d.games} results={m.results ?? []} />
+          {summary && <p className="muted" style={{ marginTop: 10, textAlign: 'center' }}>« {summary} »</p>}
+        </div>
+      ) : (
+        <div className="cv-score" style={{ marginTop: 8 }}>
+          <b>{team}</b>
+          <span>
+            {m.score.us} – {m.score.them}
+          </span>
+          <b>{d.opponent || 'Adversaire'}</b>
+          {summary && <p>« {summary} »</p>}
+        </div>
+      )}
       <div className="reveal-cta">
         <button className="btn lime" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/cartes`)}>
           🃏 Voir les cartes des joueurs
@@ -672,7 +768,7 @@ function MatchSheet({ d, m, team, summary, onBack }: { d: ConvDetail; m: MatchSt
                   {m.starters.includes(p.id) ? ' ·' : ''}
                 </span>
                 <span className="min-bar">
-                  <i style={{ width: `${Math.min(100, ((m.seconds[p.id] ?? 0) / (d.settings.periods * d.settings.periodMinutes * 60)) * 100)}%` }} />
+                  <i style={{ width: `${Math.min(100, ((m.seconds[p.id] ?? 0) / matchSeconds(d)) * 100)}%` }} />
                 </span>
                 <b>{m.absent.includes(p.id) ? 'abs.' : `${Math.round((m.seconds[p.id] ?? 0) / 60)}′`}</b>
               </div>

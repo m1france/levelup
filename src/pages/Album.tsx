@@ -366,6 +366,8 @@ function Lightbox({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      // Une fenêtre (confirmation, identification) est ouverte par-dessus : elle garde le clavier.
+      if (document.querySelector('.overlay')) return;
       if (e.key === 'Escape') onClose();
       if (e.key === 'ArrowRight' && index < photos.length - 1) onIndex(index + 1);
       if (e.key === 'ArrowLeft' && index > 0) onIndex(index - 1);

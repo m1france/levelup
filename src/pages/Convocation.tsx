@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CarpoolPanel } from '../components/Carpool';
 import { MatchTicket } from '../components/Tickets';
+import { GamesResults } from '../components/Plateau';
 import { Empty, Field, Menu, Sheet, Spinner, useAsync, useToast } from '../components/ui';
 import { api } from '../lib/api';
 import { renderConvCard, shareCard } from '../lib/convCard';
@@ -426,7 +427,16 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
         </div>
       </div>
 
-      {d.score && (
+      {d.score?.games && (
+        <div className="card pad" style={{ marginBottom: 16 }}>
+          <GamesResults
+            games={d.score.games.map((g) => ({ id: g.id, opponent: g.opponent, time: g.time, minutes: 0 }))}
+            results={d.score.games.map((g) => (g.us === null || g.live ? undefined : { us: g.us, them: g.them! })) as { us: number; them: number }[]}
+          />
+          {d.summary?.text && <p className="muted" style={{ marginTop: 10, textAlign: 'center' }}>« {d.summary.text} »</p>}
+        </div>
+      )}
+      {d.score && !d.score.games && (
         <div className="cv-score">
           <b>{d.group ?? team?.category}</b>
           <span>

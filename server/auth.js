@@ -15,7 +15,7 @@ export const PERMISSIONS = [
   { key: 'trainings.manage', label: 'Préparer et animer les séances', group: 'Séances', defaults: ['coach'] },
   { key: 'trainings.publish', label: 'Publier une séance aux parents / lien public', group: 'Séances', defaults: ['coach'] },
   { key: 'convocations.manage', label: 'Convoquer les joueurs et animer le mode match', group: 'Matchs', defaults: ['dirigeant', 'coach'] },
-  { key: 'announcements.send', label: 'Envoyer des annonces avec accusé de lecture', group: 'Club', defaults: ['dirigeant', 'coach'] },
+  { key: 'announcements.send', label: 'Publier dans le salon Annonces du club', group: 'Club', defaults: ['dirigeant', 'coach'] },
   { key: 'club.dashboard', label: 'Voir le tableau de bord des convocations du club', group: 'Club', defaults: ['dirigeant'] },
   { key: 'events.manage', label: 'Gérer le calendrier (matchs, plateaux, événements)', group: 'Séances', defaults: ['dirigeant', 'coach'] },
   { key: 'album.manage', label: 'Ajouter et retirer des photos de l’album', group: 'Séances', defaults: ['dirigeant', 'coach'] },

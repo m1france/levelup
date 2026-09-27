@@ -679,7 +679,7 @@ function Permissions() {
 
 /* ------------------------------------------------------------------ club */
 
-/** Logo du club : affiché sur les matchs à domicile. */
+/** Logo du club : remplace l'écusson de l'équipe dans toute l'app (barre d'outils, cartes, discussions, matchs à domicile). */
 function ClubLogo() {
   const { me, reload } = useApp();
   const toast = useToast();
@@ -706,12 +706,29 @@ function ClubLogo() {
       </div>
       <div className="grow">
         <b className="small">Logo du club</b>
-        <p className="small muted">Affiché sur les matchs à domicile. PNG transparent de préférence.</p>
+        <p className="small muted">
+          Remplace l’écusson « {me.teams[0]?.category ?? 'U8/U9'} » partout : barre d’outils, cartes des joueurs, cartes de match, discussions et matchs à domicile. PNG transparent de préférence.
+        </p>
       </div>
       <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => void upload(e.target.files?.[0])} />
-      <button className="btn" disabled={busy} onClick={() => ref.current?.click()}>
-        {me.club?.logo ? 'Changer' : 'Ajouter'}
-      </button>
+      <div className="row" style={{ gap: 6 }}>
+        {me.club?.logo && (
+          <button
+            className="btn ghost"
+            disabled={busy}
+            onClick={async () => {
+              await api.del('/club/logo');
+              await reload();
+              toast('Logo retiré');
+            }}
+          >
+            Retirer
+          </button>
+        )}
+        <button className="btn" disabled={busy} onClick={() => ref.current?.click()}>
+          {me.club?.logo ? 'Changer' : 'Ajouter'}
+        </button>
+      </div>
     </div>
   );
 }

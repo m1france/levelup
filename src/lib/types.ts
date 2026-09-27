@@ -335,8 +335,24 @@ export interface TeamEvent {
   organizer?: string;
   /** Version du logo du club organisateur. */
   logo?: number;
+  /** Plateau (jusqu'en U9) : les petits matchs de la journée, un par adversaire. */
+  games?: PlateauGame[];
+  createdAt?: number;
   updatedAt?: number;
 }
+
+export interface PlateauGame {
+  id: string;
+  opponent: string;
+  /** Heure du coup d'envoi (HH:MM). */
+  time: string;
+  minutes: number;
+  /** Terrain (« Terrain 2 »), facultatif. */
+  pitch?: string;
+}
+
+/** Score d'un match de plateau (null tant qu'il n'est pas joué). */
+export interface GameResult { id: string; opponent: string; time: string; us: number | null; them: number | null; live: boolean }
 
 /* ------------------------------------------------------------------ convocations */
 
@@ -403,6 +419,8 @@ export interface ConvEventInfo {
   /** Club organisateur et son logo. */
   organizer: string;
   logo: string | null;
+  /** Plateau : les matchs prévus. */
+  games: PlateauGame[] | null;
 }
 
 export interface ConvSnapshot extends ConvEventInfo {
@@ -416,7 +434,7 @@ export interface ConvSnapshot extends ConvEventInfo {
   publishedLate: boolean | null;
   reads: number;
   readers: number;
-  score: { us: number; them: number; finished: boolean } | null;
+  score: { us: number; them: number; finished: boolean; games?: GameResult[] | null } | null;
   presetName: string | null;
 }
 
@@ -459,6 +477,8 @@ export interface ConvPlayer {
 
 export interface MatchEvent { id: string; t: 'goal' | 'against' | 'sub' | 'period'; pid?: string; assist?: string; out?: string; period: number; sec: number }
 
+/* Plateau : chaque « période » est un match contre un adversaire ; son score part dans `results` au coup de sifflet. */
+
 export interface MatchState {
   formation: string;
   /** Joueur par poste de la formation (null = poste vide). */
@@ -476,7 +496,10 @@ export interface MatchState {
   /** Secondes par poste et par joueur (poste le plus joué sur la carte). */
   roles?: Record<string, Record<string, number>>;
   events: MatchEvent[];
+  /** Score du match en cours (plateau : du petit match en cours ; à la fin, total des buts). */
   score: { us: number; them: number };
+  /** Plateau : score de chaque match terminé. */
+  results?: { us: number; them: number }[];
   started: boolean;
   finished: boolean;
 }
@@ -507,7 +530,7 @@ export interface Ticket extends ConvEventInfo {
   publishedAt: number | null;
   read: boolean;
   squad: { id: string; firstName: string; number?: number }[];
-  result: { us: number; them: number; minutes: number | null; goals: number | null; summary: string } | null;
+  result: { us: number; them: number; minutes: number | null; goals: number | null; summary: string; games?: GameResult[] | null } | null;
 }
 
 export interface TeamStats {
@@ -554,10 +577,13 @@ export interface PlayerCard {
 export interface Reveal {
   eventId: string;
   date: string;
+  type: EventType;
+  /** Plateau : le score de chaque match. */
+  games: GameResult[] | null;
   title: string;
   opponent: string;
   venue: TeamEvent['venue'];
-  team: { category: string; color: string };
+  team: { category: string; color: string; logo?: string | null };
   club: string;
   score: { us: number; them: number };
   summary: string;
@@ -641,9 +667,19 @@ export interface Carpool {
 
 /* ------------------------------------------------------------------ messagerie */
 
+export type ChannelPerm = 'view' | 'send' | 'media' | 'react' | 'manage';
+
 export interface ChatThread {
   id: string;
-  kind: 'team' | 'staff' | 'direct';
+  /** team : équipe · staff : éducateurs · announce : annonces du club · group : groupe créé par un membre · direct : privé. */
+  kind: 'team' | 'staff' | 'direct' | 'group' | 'announce';
+  icon: { emoji: string | null; image: string | null } | null;
+  /** Mes permissions dans ce salon. */
+  perms: Record<ChannelPerm, boolean>;
+  canConfigure: boolean;
+  canDelete: boolean;
+  /** Groupe : je l'ai créé (ou je suis administrateur). */
+  owner: boolean;
   teamId: string | null;
   title: string;
   color: string | null;
@@ -670,6 +706,13 @@ export interface ChatMessage {
 }
 
 export interface ChatContact { id: string; name: string; kids: string[]; team: string; coach?: boolean }
+
+export interface ChannelSettings {
+  kind: ChatThread['kind'];
+  catalog: { key: ChannelPerm; label: string; hint?: string }[];
+  roles: { role: Exclude<Role, 'admin'>; defaults: Record<ChannelPerm, boolean>; overrides: Partial<Record<ChannelPerm, boolean>> }[];
+  members: { id: string; name: string; role: Role; owner: boolean }[] | null;
+}
 
 /* ------------------------------------------------------------------ club */
 

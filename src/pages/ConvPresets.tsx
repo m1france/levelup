@@ -60,7 +60,7 @@ export function ConvPresets() {
           <section key={sc.id ?? 'club'}>
             <div className="row between" style={{ marginBottom: 10 }}>
               <div className="row" style={{ gap: 10 }}>
-                {sc.team && <TeamBadge team={sc.team} size={30} />}
+                {sc.team && <TeamBadge team={sc.team} size={30} brand={false} />}
                 <h3>{sc.label}</h3>
               </div>
               {sc.editable && (

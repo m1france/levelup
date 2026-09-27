@@ -112,7 +112,9 @@ export function MatchTicket({ t, onChanged, showChild = true, carpool: carpoolOp
     default:
       head = { title: 'Match passé', sub: '' };
   }
-  if (t.result) head = { title: `${t.result.us} – ${t.result.them}`, sub: t.result.minutes !== null ? `${name} a joué ${t.result.minutes} min${t.result.goals ? ` · ⚽ ${t.result.goals}` : ''}` : head.title };
+  const plateau = t.result?.games?.filter((g) => g.us !== null);
+  const record = plateau ? `${plateau.filter((g) => g.us! > g.them!).length} V · ${plateau.filter((g) => g.us === g.them).length} N · ${plateau.filter((g) => g.us! < g.them!).length} D` : '';
+  if (t.result) head = { title: plateau ? record : `${t.result.us} – ${t.result.them}`, sub: t.result.minutes !== null ? `${name} a joué ${t.result.minutes} min${t.result.goals ? ` · ⚽ ${t.result.goals}` : ''}` : head.title };
 
   const canAnswer = !t.publishedAt && Date.now() < t.timeline.start;
 

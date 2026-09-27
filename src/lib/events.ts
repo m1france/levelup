@@ -78,9 +78,10 @@ export function occurrences(e: TeamEvent, from: string, to: string): string[] {
   return out;
 }
 
-export function eventTitle(e: Pick<TeamEvent, 'type' | 'title' | 'opponent' | 'venue'>) {
+export function eventTitle(e: Pick<TeamEvent, 'type' | 'title' | 'opponent' | 'venue'> & Partial<Pick<TeamEvent, 'games' | 'organizer'>>) {
   if (e.title) return e.title;
   if (e.type === 'match' && e.opponent) return `Match ${e.venue === 'away' ? 'à' : 'contre'} ${e.opponent}`;
+  if (e.type === 'plateau' && e.games?.length) return e.organizer ? `Plateau à ${e.organizer}` : e.venue === 'home' ? 'Plateau à domicile' : 'Plateau';
   return EVENT_TYPES[e.type].label;
 }
 
@@ -97,14 +98,23 @@ export interface Agenda {
 
 export function agenda(events: TeamEvent[], trainings: Training[], from: string, to: string): Agenda[] {
   const items: Agenda[] = [];
+  // Un entraînement programmé et la séance préparée pour ce jour-là ne font qu'un.
+  const byDay = new Map<string, Training[]>();
+  for (const t of trainings) byDay.set(t.date.slice(0, 10), [...(byDay.get(t.date.slice(0, 10)) ?? []), t]);
+  const used = new Set<string>();
   for (const e of events) {
     for (const d of occurrences(e, from, to)) {
-      items.push({ key: `${e.id}:${d}`, date: d, time: e.allDay ? '' : e.time, title: e.group ? `${e.group} · ${eventTitle(e)}` : eventTitle(e), color: e.color || EVENT_TYPES[e.type].color, event: e });
+      const training = e.type === 'training' ? byDay.get(d)?.find((t) => !used.has(t.id)) : undefined;
+      if (training) used.add(training.id);
+      items.push({
+        key: `${e.id}:${d}`, date: d, time: e.allDay ? '' : e.time, title: e.group ? `${e.group} · ${eventTitle(e)}` : training && !e.title ? training.title : eventTitle(e),
+        color: e.color || EVENT_TYPES[e.type].color, event: e, training,
+      });
     }
   }
   for (const t of trainings) {
     const d = t.date.slice(0, 10);
-    if (d < from || d > to) continue;
+    if (d < from || d > to || used.has(t.id)) continue;
     items.push({ key: t.id, date: d, time: t.date.slice(11, 16), title: t.title, color: EVENT_TYPES.training.color, training: t });
   }
   return items.sort((a, b) => (a.date + (a.time || '00:00')).localeCompare(b.date + (b.time || '00:00')));
@@ -125,3 +135,22 @@ export function relativeDay(ymd: string) {
 }
 
 export const formatTime = (t: string) => (t ? t.replace(':', 'h') : '');
+
+/** Âge d'une catégorie (« U9 » → 9), null si ce n'est pas une catégorie de jeunes. */
+const ages = (s: string | null | undefined) => [...(s ?? '').matchAll(/U\s?(\d{1,2})/gi)].map((m) => Number(m[1]));
+
+/**
+ * Jusqu'en U9, les rencontres se jouent en plateau (plusieurs adversaires, plusieurs petits matchs).
+ * `group` : catégorie du match dans une équipe U8/U9.
+ */
+export function playsPlateaux(category: string | null | undefined, group?: string | null) {
+  const a = ages(group || category);
+  return a.length > 0 && Math.max(...a) < 10;
+}
+
+/** Minutes → « 10h40 » à partir d'une heure « HH:MM ». */
+export function addMinutes(hhmm: string, minutes: number) {
+  const [h, m] = (hhmm || '10:00').split(':').map(Number);
+  const t = (((h * 60 + m + minutes) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+}

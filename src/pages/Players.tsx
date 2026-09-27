@@ -104,7 +104,7 @@ function rosterCard(p: Player): PlayerCard {
 }
 
 export function Players() {
-  const { team, can } = useApp();
+  const { me, team, can } = useApp();
   const nav = useNavigate();
   const groups = groupsOf(team?.category);
   const q = useAsync(() => (team ? api.get<Player[]>(`/teams/${team.id}/players?followUp=1`) : Promise.resolve([])), [team?.id]);
@@ -138,7 +138,7 @@ export function Players() {
       <button key={p.id} className="fut-tile" onClick={() => nav(`/joueurs/${p.id}`)} aria-label={playerName(p)}>
         <FutCard
           card={rosterCard(p)}
-          team={{ category: playerGroup(p, team) ?? team.category, color: team.color }}
+          team={{ category: playerGroup(p, team) ?? team.category, color: team.color, logo: me.club?.logo }}
           size={180}
           foot={
             <>

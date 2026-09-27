@@ -44,7 +44,7 @@ export function autoAwards(m: MatchState, present: string[]) {
 /** Poste d'un emplacement de la formation, d'après sa place sur le terrain (notre but en bas). */
 export function slotPosition(s: { x: number; y: number; gk: boolean }) {
   if (s.gk) return 'GB';
-  const side = s.x < 34 ? 'G' : s.x > 66 ? 'D' : 'C';
+  const side = s.x < 42 ? 'G' : s.x > 58 ? 'D' : 'C';
   if (s.y > 60) return side === 'C' ? 'DC' : `D${side}`;
   if (s.y > 30) return side === 'C' ? 'MC' : `M${side}`;
   return side === 'C' ? 'BU' : `A${side}`;
