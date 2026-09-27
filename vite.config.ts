@@ -9,9 +9,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg'],
       manifest: {
-        name: 'Atelier — séances de foot',
-        short_name: 'Atelier',
-        description: 'Exercices animés, séances live et pages joueurs pour les éducateurs.',
+        name: 'LevelUp — le club dans la poche',
+        short_name: 'LevelUp',
+        description: 'Convocations, matchs, séances et suivi des joueurs du club.',
         lang: 'fr',
         theme_color: '#f7f6f2',
         background_color: '#f7f6f2',
@@ -25,6 +25,8 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/index.html',
+        // Notifications push (convocations, rappels) et réponse « Présent / Absent » depuis la notification.
+        importScripts: ['push-sw.js'],
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {

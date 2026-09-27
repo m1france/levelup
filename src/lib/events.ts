@@ -9,6 +9,9 @@ export const EVENT_TYPES: Record<EventType, { label: string; color: string }> = 
   other: { label: 'Autre', color: '#868e96' },
 };
 
+/** Mois abrégés pour les pavés de date (« SEPT », « OCT »). */
+export const MONTHS_TILE = ['JANV', 'FÉVR', 'MARS', 'AVR', 'MAI', 'JUIN', 'JUIL', 'AOÛT', 'SEPT', 'OCT', 'NOV', 'DÉC'];
+
 export const WEEKDAYS_SHORT = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
 export const MONTHS_LONG = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 

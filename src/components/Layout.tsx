@@ -1,9 +1,11 @@
-import { Check, CalendarDays, CloudOff, Images, LayoutGrid, LogOut, Settings, UserRound, Users } from 'lucide-react';
+import { Building2, Check, CalendarDays, CloudOff, Images, LayoutGrid, LogOut, Megaphone, MessageCircle, Settings, Trophy, UserRound, Users } from 'lucide-react';
+import { useChatUnread } from '../pages/Messages';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { api, onOutboxChange } from '../lib/api';
 import { ROLE_LABELS, useApp } from '../lib/store';
 import type { Team } from '../lib/types';
+import { NotificationBell } from './Notifications';
 import { Avatar } from './ui';
 
 function useNetwork() {
@@ -49,8 +51,10 @@ export function TeamBadge({ team, size = 36 }: { team: Team | null; size?: numbe
 }
 
 function TeamMenu({ onClose }: { onClose: () => void }) {
-  const { me, team, setTeamId } = useApp();
+  const { me, team, setTeamId, can, isStaff, isAdmin } = useApp();
   const links: { to: string; label: string; icon: ReactNode }[] = [
+    ...(isStaff && (isAdmin || can('club.dashboard') || can('members.manage') || can('players.manage')) ? [{ to: '/club', label: 'Club', icon: <Building2 /> }] : []),
+    { to: '/annonces', label: 'Annonces', icon: <Megaphone /> },
     { to: '/parametres', label: 'Paramètres', icon: <Settings /> },
   ];
   return (
@@ -100,10 +104,11 @@ function TeamMenu({ onClose }: { onClose: () => void }) {
   );
 }
 
-function DockLink({ to, tip, icon, active }: { to: string; tip: string; icon: ReactNode; active?: boolean }) {
+function DockLink({ to, tip, icon, active, badge }: { to: string; tip: string; icon: ReactNode; active?: boolean; badge?: number }) {
   return (
-    <NavLink to={to} end className={({ isActive }) => `dock-btn${isActive || active ? ' active' : ''}`} data-tip={tip} aria-label={tip}>
+    <NavLink to={to} end className={({ isActive }) => `dock-btn${isActive || active ? ' active' : ''}`} data-tip={tip} aria-label={badge ? `${tip} (${badge} non lus)` : tip}>
       {icon}
+      {!!badge && <span className="dock-badge">{badge > 9 ? '9+' : badge}</span>}
     </NavLink>
   );
 }
@@ -128,6 +133,8 @@ function Dock() {
   }, [open]);
 
   const onSessions = loc.pathname === '/' || loc.pathname.startsWith('/seances');
+  const unread = useChatUnread();
+  const messages = <DockLink to="/messages" tip="Messages" icon={<MessageCircle />} active={loc.pathname.startsWith('/messages') || loc.pathname.startsWith('/annonces')} badge={unread} />;
   const child = me.children.find((c) => c.teamId === team?.id) ?? me.children[0];
 
   return (
@@ -143,12 +150,16 @@ function Dock() {
         {isStaff ? (
           <>
             <DockLink to="/exercices" tip="Exercices" icon={<LayoutGrid />} active={loc.pathname.startsWith('/exercices')} />
+            <DockLink to="/matchs" tip="Matchs" icon={<Trophy />} active={loc.pathname.startsWith('/matchs')} />
             <DockLink to="/joueurs" tip="Joueurs" icon={<Users />} active={loc.pathname.startsWith('/joueurs')} />
+            {messages}
           </>
         ) : (
           <>
+            <DockLink to="/matchs" tip="Matchs" icon={<Trophy />} active={loc.pathname.startsWith('/matchs')} />
             <DockLink to="/exercices" tip="Exercices" icon={<LayoutGrid />} active={loc.pathname.startsWith('/exercices')} />
             {child && <DockLink to={`/joueurs/${child.id}`} tip={child.firstName} icon={<UserRound />} />}
+            {messages}
           </>
         )}
       </div>
@@ -167,6 +178,7 @@ export function Layout() {
         <Outlet />
       </main>
       <NetworkPill />
+      <NotificationBell />
     </div>
   );
 }

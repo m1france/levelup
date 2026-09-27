@@ -49,7 +49,7 @@ export function AppProvider({ initial, children }: { initial: Me; children: Reac
   const team = me.teams.find((t) => t.id === teamId) ?? me.teams[0] ?? null;
 
   useEffect(() => {
-    document.title = me.club?.name ? `Atelier · ${me.club.name}` : 'Atelier';
+    document.title = me.club?.name ? `LevelUp · ${me.club.name}` : 'LevelUp';
   }, [me.club?.name]);
 
   const value = useMemo<AppState>(

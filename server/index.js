@@ -1,10 +1,16 @@
+// Horaires des convocations (« mercredi 20h ») : heure française par défaut.
+process.env.TZ ||= 'Europe/Paris';
+
 import express from 'express';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadUser, seedPermissions } from './auth.js';
 import { api } from './api.js';
+import { seedPresets, startScheduler } from './convocations.js';
 
 seedPermissions();
+seedPresets();
+startScheduler();
 
 const app = express();
 app.disable('x-powered-by');

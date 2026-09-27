@@ -66,17 +66,29 @@ CREATE TABLE IF NOT EXISTS player_parents (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   PRIMARY KEY (player_id, user_id)
 );
-CREATE TABLE IF NOT EXISTS player_notes (
+CREATE TABLE IF NOT EXISTS player_observations (
   id TEXT PRIMARY KEY,
   player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-  kind TEXT NOT NULL,
+  skill TEXT NOT NULL DEFAULT '',
+  trend TEXT NOT NULL DEFAULT 'flat',
   text TEXT NOT NULL,
   visibility TEXT NOT NULL DEFAULT 'staff',
   training_id TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_obs_player ON player_observations(player_id, created_at);
+CREATE TABLE IF NOT EXISTS player_objectives (
+  id TEXT PRIMARY KEY,
+  player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  data TEXT NOT NULL,
+  visibility TEXT NOT NULL DEFAULT 'staff',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_goals_player ON player_objectives(player_id);
 CREATE TABLE IF NOT EXISTS exercises (
   id TEXT PRIMARY KEY,
   owner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
@@ -99,7 +111,6 @@ CREATE TABLE IF NOT EXISTS trainings (
 DROP TABLE IF EXISTS challenge_done;
 DROP TABLE IF EXISTS challenges;
 CREATE INDEX IF NOT EXISTS idx_players_team ON players(team_id);
-CREATE INDEX IF NOT EXISTS idx_notes_player ON player_notes(player_id);
 CREATE INDEX IF NOT EXISTS idx_trainings_team ON trainings(team_id, date);
 CREATE TABLE IF NOT EXISTS photos (
   id TEXT PRIMARY KEY,
@@ -160,6 +171,211 @@ if (!db.prepare('PRAGMA table_info(exercises)').all().some((c) => c.name === 'te
     if (team) db.prepare('UPDATE exercises SET team_id = ? WHERE id = ?').run(team, e.id);
   }
 }
+
+/* Convocations : réglages prédéfinis, disponibilités, lectures, tâches planifiées, notifications. */
+db.exec(`
+CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS conv_presets (
+  id TEXT PRIMARY KEY,
+  team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  data TEXT NOT NULL,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS convocations (
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  data TEXT NOT NULL DEFAULT '{}',
+  published_at INTEGER,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (event_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_conv_team ON convocations(team_id, date);
+CREATE TABLE IF NOT EXISTS availability (
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  by_user TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (event_id, date, player_id)
+);
+CREATE TABLE IF NOT EXISTS conv_reads (
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  read_at INTEGER NOT NULL,
+  PRIMARY KEY (event_id, date, user_id)
+);
+CREATE TABLE IF NOT EXISTS conv_jobs (
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  job TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (event_id, date, job)
+);
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  read_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, created_at);
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+`);
+
+/* Anciennes remarques libres → observations (point fort / à travailler / remarque) et objectifs. */
+if (db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_notes'`).get()) {
+  const trend = { force: 'up', faiblesse: 'down', remarque: 'flat' };
+  db.exec('BEGIN');
+  try {
+    for (const n of db.prepare('SELECT * FROM player_notes').all()) {
+      if (n.kind === 'objectif') {
+        const data = { title: n.text.slice(0, 160), domain: '', skill: '', due: null, status: 'active', progress: 0, checkins: [] };
+        db.prepare('INSERT OR IGNORE INTO player_objectives VALUES (?, ?, ?, ?, ?, ?, ?)').run(n.id, n.player_id, n.author_id, JSON.stringify(data), n.visibility, n.created_at, n.updated_at);
+      } else {
+        db.prepare('INSERT OR IGNORE INTO player_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+          n.id, n.player_id, n.author_id, '', trend[n.kind] ?? 'flat', n.text, n.visibility, n.training_id, n.created_at, n.updated_at,
+        );
+      }
+    }
+    db.exec('DROP TABLE player_notes');
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
+
+/* V4 : cartes de fin de match, album enrichi, bulletins, covoiturage, agenda, annonces, messagerie. */
+db.exec(`
+CREATE TABLE IF NOT EXISTS photo_tags (
+  photo_id TEXT NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  PRIMARY KEY (photo_id, player_id)
+);
+CREATE TABLE IF NOT EXISTS photo_reactions (
+  photo_id TEXT NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (photo_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS bulletins (
+  id TEXT PRIMARY KEY,
+  player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  data TEXT NOT NULL,
+  published_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bulletins_player ON bulletins(player_id);
+CREATE TABLE IF NOT EXISTS carpool (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  direction TEXT NOT NULL DEFAULT 'both',
+  seats INTEGER NOT NULL DEFAULT 0,
+  place TEXT NOT NULL DEFAULT '',
+  time TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  player_id TEXT REFERENCES players(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_carpool_occ ON carpool(event_id, date);
+CREATE TABLE IF NOT EXISTS carpool_bookings (
+  offer_id TEXT NOT NULL REFERENCES carpool(id) ON DELETE CASCADE,
+  player_id TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (offer_id, player_id)
+);
+CREATE TABLE IF NOT EXISTS ics_tokens (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS announcements (
+  id TEXT PRIMARY KEY,
+  author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  data TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS announcement_targets (
+  ann_id TEXT NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  read_at INTEGER,
+  PRIMARY KEY (ann_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS chat_threads (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '',
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_members (
+  thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_read_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (thread_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL DEFAULT 'text',
+  body TEXT NOT NULL DEFAULT '',
+  data TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_chat_msg ON chat_messages(thread_id, created_at);
+CREATE TABLE IF NOT EXISTS chat_reactions (
+  msg_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  PRIMARY KEY (msg_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS chat_votes (
+  msg_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  option_id TEXT NOT NULL,
+  PRIMARY KEY (msg_id, user_id, option_id)
+);
+CREATE TABLE IF NOT EXISTS chat_claims (
+  msg_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (msg_id, item_id)
+);
+`);
+const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+if (!cols('photos').includes('event_id')) db.exec('ALTER TABLE photos ADD COLUMN event_id TEXT; ALTER TABLE photos ADD COLUMN event_date TEXT;');
+if (!cols('users').includes('phone')) db.exec(`ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''`);
+
+export const kvGet = (key) => db.prepare('SELECT value FROM kv WHERE key = ?').get(key)?.value ?? null;
+export const kvSet = (key, value) => db.prepare('INSERT INTO kv VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 
 export const all = (sql, ...p) => db.prepare(sql).all(...p);
 export const get = (sql, ...p) => db.prepare(sql).get(...p);

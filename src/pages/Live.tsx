@@ -8,10 +8,11 @@ import { Empty, Seg, Sheet, Spinner, useAsync, useToast } from '../components/ui
 import { api, uid } from '../lib/api';
 import { unlockAudio, whistle } from '../lib/sound';
 import { playerName, useApp } from '../lib/store';
-import type { Block, Exercise, Group, NoteKind, Player, Training, TrainingPayload } from '../lib/types';
+import type { Block, Exercise, Group, Objective, Player, Training, TrainingPayload } from '../lib/types';
 import { useWakeLock } from '../lib/wakelock';
 import { COLORS } from '../pitch/geometry';
-import { NOTE_KINDS } from './PlayerPage';
+import { ProgressSteps } from '../components/PlayerProfile';
+import { ObservationComposer } from './PlayerPage';
 import { BLOCK_LABELS, blockMinutes } from './Trainings';
 
 const GROUP_COLORS = ['blue', 'red', 'yellow', 'green', 'orange', 'purple'];
@@ -589,55 +590,52 @@ function Run({
   );
 }
 
-/* ------------------------------------------------------------------ remarque rapide */
+/* ------------------------------------------------------------------ observation rapide */
 
+/** Pendant la séance : une observation structurée, ou un point d'étape sur un objectif du joueur. */
 export function QuickNote({ players, initial, trainingId, onClose }: { players: Player[]; initial?: string; trainingId?: string; onClose: () => void }) {
   const toast = useToast();
   const [pid, setPid] = useState<string | undefined>(initial);
-  const [kind, setKind] = useState<NoteKind>('remarque');
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const save = async () => {
-    if (!pid || !text.trim()) return;
-    setBusy(true);
+  const player = players.find((p) => p.id === pid);
+  const goals = useAsync(
+    async () => (pid ? (await api.get<{ objectives: Objective[] }>(`/players/${pid}`)).objectives.filter((g) => g.status === 'active') : []),
+    [pid],
+  );
+  const checkin = async (g: Objective, progress: number) => {
     try {
-      await api.put(`/notes/${uid()}`, { playerId: pid, kind, text, visibility: 'staff', trainingId });
-      toast('Remarque ajoutée');
-      setText('');
-      setPid(undefined);
-      onClose();
+      await api.post(`/objectives/${g.id}/checkin`, { progress, note: 'Observé en séance', trainingId });
+      toast(progress === 100 ? `🏆 Objectif atteint pour ${player?.firstName}` : 'Point d’étape enregistré');
+      goals.reload();
     } catch (e) {
       toast((e as Error).message, true);
-    } finally {
-      setBusy(false);
     }
   };
   return (
-    <Sheet
-      title="Remarque rapide"
-      onClose={onClose}
-      footer={
-        <button className="btn primary" disabled={!pid || !text.trim() || busy} onClick={save}>
-          Enregistrer
-        </button>
-      }
-    >
+    <Sheet title="Observation rapide" onClose={onClose}>
       <div className="stack">
-        <div className="chips" style={{ maxHeight: 160, overflowY: 'auto' }}>
+        <div className="chips" style={{ maxHeight: 132, overflowY: 'auto' }}>
           {players.map((p) => (
             <button key={p.id} className={`chip${pid === p.id ? ' on' : ''}`} onClick={() => setPid(p.id)}>
               {playerName(p)}
             </button>
           ))}
         </div>
-        <div className="chips">
-          {NOTE_KINDS.map((k) => (
-            <button key={k.value} className={`chip${kind === k.value ? ' on' : ''}`} onClick={() => setKind(k.value)}>
-              {k.icon} {k.label}
-            </button>
-          ))}
-        </div>
-        <textarea className="textarea" autoFocus placeholder="Ce que vous avez observé…" value={text} onChange={(e) => setText(e.target.value)} />
+        {player && (
+          <>
+            {!!goals.data?.length && (
+              <div className="stack" style={{ gap: 8 }}>
+                <span className="small muted">Ses objectifs : touchez le cran atteint</span>
+                {goals.data.map((g) => (
+                  <div key={g.id} className="quick-goal">
+                    <b className="small">{g.title}</b>
+                    <ProgressSteps value={g.progress} onChange={(v) => checkin(g, v)} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <ObservationComposer key={player.id} player={player} trainingId={trainingId} compact onSaved={onClose} />
+          </>
+        )}
       </div>
     </Sheet>
   );

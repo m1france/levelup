@@ -31,3 +31,18 @@ export async function preparePhoto(file: File) {
   const thumb = render(src, 560, 0.78);
   return { image: full.data, thumb: thumb.data, width: full.w, height: full.h, takenAt: file.lastModified || Date.now() };
 }
+
+/** Portrait carré (photo de joueur), recadré au centre. */
+export async function preparePortrait(file: File, size = 640) {
+  const src = await decode(file);
+  const side = Math.min(src.width, src.height);
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingQuality = 'high';
+  // Légèrement décalé vers le haut : le visage est rarement au centre exact.
+  const sy = Math.max(0, (src.height - side) * 0.3);
+  ctx.drawImage(src, (src.width - side) / 2, sy, side, side, 0, 0, size, size);
+  return c.toDataURL('image/jpeg', 0.86);
+}
