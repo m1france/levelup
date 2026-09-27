@@ -175,25 +175,110 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 }
 
 /** Menu contextuel simple, positionné sous le bouton déclencheur. */
-export function Menu({ trigger, children }: { trigger: (open: () => void) => ReactNode; children: (close: () => void) => ReactNode }) {
-  const [open, setOpen] = useState(false);
+/**
+ * Menu flottant rendu au-dessus de la page (portail en position fixe) : jamais coupé par un
+ * conteneur `overflow: hidden`. Il s'ouvre sous le point d'ancrage, ou au-dessus s'il manque de place.
+ */
+function Popover({
+  at, align = 'right', anchor, onClose, children,
+}: { at: { x: number; y: number; top: number }; align?: 'left' | 'right'; anchor?: React.RefObject<HTMLElement | null>; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
-    window.addEventListener('pointerdown', onDown);
-    return () => window.removeEventListener('pointerdown', onDown);
-  }, [open]);
+    const el = ref.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let left = align === 'right' ? at.x - w : at.x;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    let top = at.y + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, at.top - 6 - h);
+    setPos({ left, top });
+  }, [at, align]);
+  useEffect(() => {
+    // Un appui sur le déclencheur est laissé au déclencheur (il referme le menu lui-même).
+    const onDown = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && !anchor?.current?.contains(e.target as Node) && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    // Le menu suit son ancre : on le ferme plutôt que de le laisser flotter au défilement.
+    const onScroll = (e: Event) => !ref.current?.contains(e.target as Node) && onClose();
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onClose);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onClose);
+    };
+  }, [onClose, anchor]);
+  return createPortal(
+    <div ref={ref} className="menu" style={{ position: 'fixed', left: pos?.left ?? -9999, top: pos?.top ?? -9999 }} onContextMenu={(e) => e.preventDefault()}>
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
+export function Menu({ trigger, children }: { trigger: (open: () => void) => ReactNode; children: (close: () => void) => ReactNode }) {
+  const [at, setAt] = useState<{ x: number; y: number; top: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setAt(null), []);
+  const toggle = () => {
+    if (at) return setAt(null);
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setAt({ x: r.right, y: r.bottom, top: r.top });
+  };
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-flex' }}>
-      {trigger(() => setOpen((o) => !o))}
-      {open && (
-        <div className="menu" style={{ right: 0, top: 'calc(100% + 6px)' }}>
-          {children(() => setOpen(false))}
-        </div>
+      {trigger(toggle)}
+      {at && (
+        <Popover at={at} anchor={ref} onClose={close}>
+          {children(close)}
+        </Popover>
       )}
     </div>
   );
+}
+
+/** Menu contextuel (clic droit, ou appui long au doigt) : `bind` s'étale sur l'élément ciblé. */
+export function useContextMenu() {
+  const [at, setAt] = useState<{ x: number; y: number; top: number } | null>(null);
+  const close = useCallback(() => setAt(null), []);
+  const timer = useRef<number | undefined>(undefined);
+  const opened = useRef(false);
+  const bind = {
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault();
+      setAt({ x: e.clientX, y: e.clientY, top: e.clientY });
+    },
+    onPointerDown: (e: React.PointerEvent) => {
+      opened.current = false;
+      if (e.pointerType === 'mouse') return;
+      const { clientX: x, clientY: y } = e;
+      timer.current = window.setTimeout(() => {
+        opened.current = true;
+        setAt({ x, y, top: y });
+      }, 520);
+    },
+    onPointerUp: () => window.clearTimeout(timer.current),
+    onPointerMove: () => window.clearTimeout(timer.current),
+    /** Après un appui long, le clic qui suit ne doit pas ouvrir le match. */
+    onClickCapture: (e: React.MouseEvent) => {
+      if (opened.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        opened.current = false;
+      }
+    },
+  };
+  const menu = (children: (close: () => void) => ReactNode) =>
+    at ? (
+      <Popover at={at} align="left" onClose={close}>
+        {children(close)}
+      </Popover>
+    ) : null;
+  return { bind, menu };
 }
 
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {

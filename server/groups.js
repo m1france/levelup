@@ -27,15 +27,26 @@ export function teamInfo(teamId) {
   return teamCache.get(key);
 }
 
-/** Catégorie d'un joueur dans son équipe (null : équipe à catégorie unique ou année de naissance inconnue). */
-export function playerGroup(p, teamId) {
+/** Catégorie déduite de l'année de naissance (proposée à la création d'un joueur). */
+export function guessGroup(birthYear, teamId) {
   const { groups, end } = teamInfo(teamId);
-  if (!groups.length || !p.birthYear) return null;
-  const age = end - Number(p.birthYear);
+  if (!groups.length || !birthYear) return null;
+  const age = end - Number(birthYear);
   const ages = groups.map((g) => Number(g.slice(1)));
   // Un joueur surclassé ou sous-classé rejoint la catégorie la plus proche.
   const clamped = Math.max(ages[0], Math.min(ages[ages.length - 1], age));
   return `U${clamped}`;
+}
+
+/**
+ * Catégorie d'un joueur dans son équipe : celle choisie sur sa fiche, sinon celle de son année de naissance
+ * (null : équipe à catégorie unique ou catégorie inconnue).
+ */
+export function playerGroup(p, teamId) {
+  const { groups } = teamInfo(teamId);
+  if (!groups.length) return null;
+  if (groups.includes(p.category)) return p.category;
+  return guessGroup(p.birthYear, teamId);
 }
 
 /** Catégorie d'un événement, si elle existe dans l'équipe. */

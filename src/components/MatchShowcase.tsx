@@ -1,14 +1,11 @@
-import { Camera, MapPin } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { MapPin } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../lib/api';
 import { matchPath } from '../lib/convocations';
 import { MONTHS_LONG, formatTime, fromYMD, relativeDay } from '../lib/events';
-import { prepareLogo } from '../lib/images';
 import { useApp } from '../lib/store';
 import type { ConvEventInfo } from '../lib/types';
+import { useMatchMenu } from './MatchActions';
 import { Showcase } from './Showcase';
-import { useToast } from './ui';
 
 const WD = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 
@@ -54,36 +51,20 @@ export function Crest({ name, color }: { name: string; color?: string }) {
 type MatchInfo = Pick<ConvEventInfo, 'eventId' | 'date' | 'teamId' | 'title' | 'time' | 'location' | 'group' | 'organizer' | 'logo' | 'venue' | 'opponent'>;
 
 /** Diapositive d'un match : titre et lieu à gauche, logo du club organisateur à droite, fondus l'un dans l'autre. */
-function MatchSlide({ m, onLogo }: { m: MatchInfo; onLogo: () => void }) {
+function MatchSlide({ m }: { m: MatchInfo }) {
   const nav = useNavigate();
-  const toast = useToast();
-  const { me, can, isStaff } = useApp();
+  const { me } = useApp();
   const team = me.teams.find((t) => t.id === m.teamId);
   const home = m.venue === 'home';
   const organizer = m.organizer || (home ? me.club?.name ?? '' : m.opponent) || '';
   const logo = m.logo ?? (home ? me.club?.logo ?? null : null);
   const crestColor = home ? team?.color : undefined;
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
   const open = () => nav(matchPath(m.eventId, m.date));
-
-  const upload = async (file?: File) => {
-    if (!file) return;
-    setBusy(true);
-    try {
-      await api.post(`/events/${m.eventId}/logo`, { image: await prepareLogo(file) });
-      toast('Logo enregistré');
-      onLogo();
-    } catch (e) {
-      toast((e as Error).message, true);
-    } finally {
-      setBusy(false);
-      if (fileRef.current) fileRef.current.value = '';
-    }
-  };
+  const { bind, menu } = useMatchMenu(m);
 
   return (
-    <div className="hs match-slide">
+    <div className="hs match-slide" onContextMenu={'onContextMenu' in bind ? bind.onContextMenu : undefined}>
+      {menu}
       <div className="hero2-text">
         <div className="hs-eyebrow">
           {m.group && <b className="ms-group">{m.group}</b>}
@@ -111,36 +92,18 @@ function MatchSlide({ m, onLogo }: { m: MatchInfo; onLogo: () => void }) {
           style={logo ? { backgroundImage: `url(${logo})` } : { background: `radial-gradient(closest-side, ${crestColor ?? `hsl(${hue(organizer || 'Club')} 55% 42%)`}, transparent)` }}
         />
         <div className="ms-logo">{logo ? <img src={logo} alt={organizer} /> : <Crest name={organizer || team?.category || 'Club'} color={crestColor} />}</div>
-        {organizer && <span className="ms-org">{home ? 'À domicile' : 'Organisé par'} · {organizer}</span>}
-        {isStaff && can('events.manage') && (
-          <>
-            <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => void upload(e.target.files?.[0])} />
-            <button
-              className="ms-upload"
-              disabled={busy}
-              onClick={(e) => {
-                e.stopPropagation();
-                fileRef.current?.click();
-              }}
-              title="Changer le logo du club organisateur"
-              aria-label="Changer le logo du club organisateur"
-            >
-              <Camera size={16} /> <span>{logo ? 'Changer le logo' : 'Ajouter le logo'}</span>
-            </button>
-          </>
-        )}
       </div>
     </div>
   );
 }
 
 /** Prochains matchs en diapositives. */
-export function MatchShowcase({ matches, onChanged }: { matches: MatchInfo[]; onChanged: () => void }) {
+export function MatchShowcase({ matches }: { matches: MatchInfo[] }) {
   if (!matches.length) return null;
   return (
     <Showcase
       className="match-showcase"
-      slides={matches.map((m) => ({ key: `${m.eventId}:${m.date}`, node: <MatchSlide m={m} onLogo={onChanged} /> }))}
+      slides={matches.map((m) => ({ key: `${m.eventId}:${m.date}`, node: <MatchSlide m={m} /> }))}
     />
   );
 }

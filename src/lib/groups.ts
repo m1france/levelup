@@ -16,11 +16,18 @@ function seasonEnd(season: string | undefined) {
   return d.getMonth() >= 6 ? d.getFullYear() + 1 : d.getFullYear();
 }
 
-/** Catégorie d'un joueur (null : équipe à catégorie unique ou année de naissance inconnue). */
-export function playerGroup(p: Pick<Player, 'birthYear'>, team: Pick<Team, 'category' | 'season'> | null | undefined): string | null {
+/** Catégorie proposée d'après l'année de naissance. */
+export function guessGroup(birthYear: number | undefined, team: Pick<Team, 'category' | 'season'> | null | undefined): string | null {
   const groups = groupsOf(team?.category);
-  if (!groups.length || !p.birthYear) return null;
+  if (!groups.length || !birthYear) return null;
   const ages = groups.map((g) => Number(g.slice(1)));
-  const age = seasonEnd(team?.season) - p.birthYear;
+  const age = seasonEnd(team?.season) - birthYear;
   return `U${Math.max(ages[0], Math.min(ages[ages.length - 1], age))}`;
+}
+
+/** Catégorie d'un joueur : celle de sa fiche, sinon celle de son année de naissance. */
+export function playerGroup(p: Pick<Player, 'birthYear' | 'category'>, team: Pick<Team, 'category' | 'season'> | null | undefined): string | null {
+  const groups = groupsOf(team?.category);
+  if (!groups.length) return null;
+  return p.category && groups.includes(p.category) ? p.category : guessGroup(p.birthYear, team);
 }

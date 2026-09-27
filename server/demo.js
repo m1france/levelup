@@ -7,7 +7,7 @@
  */
 import { run } from './db.js';
 import { newId } from './auth.js';
-import { inGroup, teamInfo } from './groups.js';
+import { guessGroup, inGroup, teamInfo } from './groups.js';
 
 const now = () => Date.now();
 
@@ -241,7 +241,7 @@ export function seedDemoTeam(adminId) {
   run('INSERT INTO team_staff VALUES (?, ?)', teamId, adminId);
   const ids = NAMES.map(([firstName, birthYear, level], i) => {
     const id = newId();
-    run('INSERT INTO players VALUES (?, ?, ?, ?, ?)', id, teamId, JSON.stringify({ firstName, birthYear, level, number: i + 1 }), now(), now());
+    run('INSERT INTO players VALUES (?, ?, ?, ?, ?)', id, teamId, JSON.stringify({ firstName, birthYear, level, category: guessGroup(birthYear, teamId) ?? undefined }), now(), now());
     return id;
   });
 
@@ -302,7 +302,7 @@ export function seedDemoTeam(adminId) {
       ratings, foot: i % 5 === 2 ? 'gauche' : i % 7 === 3 ? 'deux' : 'droit', weakFoot: 1 + (i % 3), positions: positions[i % positions.length],
       history: [{ at: day(-40), d: domains(before) }, { at: day(-3), d: domains(ratings) }],
     };
-    const data = { firstName: NAMES[i][0], birthYear: NAMES[i][1], level, number: i + 1, profile };
+    const data = { firstName: NAMES[i][0], birthYear: NAMES[i][1], level, category: guessGroup(NAMES[i][1], teamId) ?? undefined, profile };
     run('UPDATE players SET data = ?, created_at = ? WHERE id = ?', JSON.stringify(data), now() - 60 * 864e5, id);
   });
   const obs = (i, trend, skill, text, visibility = 'staff', daysAgo = 3) =>

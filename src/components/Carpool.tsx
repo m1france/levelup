@@ -112,6 +112,7 @@ export function CarpoolPanel({ eventId, date, compact }: { eventId: string; date
   const cp = q.data;
   if (!cp) return <div className="carpool loading" />;
   const open = cp.requests.filter((r) => !r.solved);
+  if (compact) return <CarpoolVisual cp={cp} needs={open} />;
   return (
     <div className={`carpool${compact ? ' compact' : ''}`}>
       <div className="carpool-head">
@@ -158,6 +159,74 @@ export function CarpoolPanel({ eventId, date, compact }: { eventId: string; date
         )}
       </div>
       {form && <CarpoolForm kind={form} cp={cp} onClose={() => setForm(null)} onDone={(c) => (q.setData(c), setForm(null))} />}
+    </div>
+  );
+}
+
+/**
+ * Covoiturage en un coup d'œil (page du match côté éducateur) : les sièges d'abord.
+ * Chaque voiture est une rangée de sièges, occupés (initiale de l'enfant) ou libres.
+ */
+function CarpoolVisual({ cp, needs }: { cp: Carpool; needs: Carpool['requests'] }) {
+  const seats = cp.offers.reduce((a, o) => a + o.seats, 0);
+  return (
+    <div className="cpv">
+      <div className="cpv-hero">
+        <span className="carpool-ic">
+          <Car />
+        </span>
+        <b>Covoiturage</b>
+        {seats > 0 && (
+          <span className="cpv-big">
+            <strong>{cp.free}</strong>
+            <small>/ {seats} place{seats > 1 ? 's' : ''} libre{cp.free > 1 ? 's' : ''}</small>
+          </span>
+        )}
+      </div>
+      {cp.offers.length ? (
+        <div className="cpv-cars">
+          {cp.offers.map((o) => (
+            <div key={o.id} className={`cpv-car${o.free ? '' : ' full'}`}>
+              <div className="cpv-seats" aria-label={`${o.free} place${o.free > 1 ? 's' : ''} libre${o.free > 1 ? 's' : ''} sur ${o.seats}`}>
+                {Array.from({ length: o.seats }, (_, i) => {
+                  const b = o.bookings[i];
+                  return (
+                    <i key={i} className={b ? 'taken' : ''} title={b ? b.firstName : 'Place libre'}>
+                      {b ? b.firstName[0] : ''}
+                    </i>
+                  );
+                })}
+              </div>
+              <span className="cpv-driver">
+                <b>{o.mine ? 'Votre voiture' : o.driver.name.split(' ')[0]}</b>
+                <small>
+                  {DIRECTION[o.direction].short}
+                  {o.time ? ` · ${o.time.replace(':', 'h')}` : ''}
+                </small>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="cpv-empty">
+          <div className="cpv-seats ghost" aria-hidden>
+            <i />
+            <i />
+            <i />
+          </div>
+          <small>Aucune voiture proposée pour l’instant</small>
+        </div>
+      )}
+      {needs.length > 0 && (
+        <div className="cpv-needs">
+          <small>Sans place :</small>
+          {needs.map((r) => (
+            <span key={r.id} className="cpv-need" title={r.note || undefined}>
+              <i /> {r.firstName}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

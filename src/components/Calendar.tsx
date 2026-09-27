@@ -1,5 +1,5 @@
-import { ChevronLeft, ChevronRight, Clock, MapPin, Megaphone, Pencil, Plus, Repeat, Trash2, Users } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Clock, ImagePlus, MapPin, Megaphone, Pencil, Plus, Repeat, Trash2, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, uid } from '../lib/api';
 import {
@@ -11,6 +11,7 @@ import { ConvSettingsEditor, TimelinePreview } from './ConvSettings';
 import { createTraining } from '../pages/Trainings';
 import { Field, Seg, Sheet, useConfirm, useToast } from './ui';
 import { groupsOf } from '../lib/groups';
+import { prepareLogo } from '../lib/images';
 import { useApp } from '../lib/store';
 
 /** L'événement a-t-il une convocation (matchs, plateaux, tournois par défaut) ? */
@@ -180,9 +181,14 @@ const presetOf = (r: Recurrence): RepeatPreset => {
 
 const SWATCHES = ['#3f8f63', '#e03131', '#f08c00', '#7048e8', '#1c7ed6', '#d6336c', '#0ca678', '#868e96'];
 
-function EventForm({
-  teamId, date, event, occurrence, onClose, onSaved,
-}: { teamId: string; date: string; event?: TeamEvent; occurrence?: string; onClose: () => void; onSaved: () => void }) {
+export function EventForm({
+  teamId, date, event, occurrence, initialType = 'training', initialGroup, onClose, onSaved,
+}: {
+  teamId: string; date: string; event?: TeamEvent; occurrence?: string;
+  /** Nouvel événement : type et catégorie proposés (ex. « Nouveau match » depuis la page Matchs). */
+  initialType?: EventType; initialGroup?: string | null;
+  onClose: () => void; onSaved: () => void;
+}) {
   const toast = useToast();
   const confirm = useConfirm();
   const nav = useNavigate();
@@ -191,8 +197,8 @@ function EventForm({
   const weekday = fromYMD(date).getDay();
   const [e, setE] = useState<Omit<TeamEvent, 'id' | 'teamId'>>(
     event ?? {
-      type: 'training', title: '', start: date, allDay: false, time: '14:00', endTime: '15:30', meetTime: '', location: '',
-      opponent: '', venue: '', notes: '', color: '', parents: true, exdates: [],
+      type: initialType, title: '', start: date, allDay: false, time: initialType === 'training' ? '14:00' : '10:00', endTime: initialType === 'training' ? '15:30' : '11:30', meetTime: '', location: '',
+      opponent: '', venue: '', notes: '', color: '', parents: true, exdates: [], group: initialGroup ?? undefined,
       recurrence: { freq: 'none', interval: 1, days: [weekday], until: null, count: null },
     },
   );
@@ -203,6 +209,18 @@ function EventForm({
     api.get<{ presets: ConvPreset[] }>('/conv-presets').then((r) => setPresets(r.presets.filter((p) => !p.teamId || p.teamId === teamId))).catch(() => setPresets([]));
   }, [teamId]);
   const [busy, setBusy] = useState(false);
+  /** Logo du club organisateur choisi dans le formulaire, envoyé après l'enregistrement du match. */
+  const [logo, setLogo] = useState<string | null>(null);
+  const logoRef = useRef<HTMLInputElement>(null);
+  const pickLogo = async (file?: File) => {
+    if (!file) return;
+    try {
+      setLogo(await prepareLogo(file));
+    } catch {
+      toast('Image illisible', true);
+    }
+    if (logoRef.current) logoRef.current.value = '';
+  };
   const r = e.recurrence;
   const preset = presetOf(r);
   const setR = (patch: Partial<Recurrence>) => setE({ ...e, recurrence: { ...r, ...patch } });
@@ -226,7 +244,9 @@ function EventForm({
         teamId,
         recurrence: { ...r, until: ends === 'until' ? r.until : null, count: ends === 'count' ? r.count ?? 10 : null },
       };
-      await api.put(`/events/${event?.id ?? uid()}`, body);
+      const id = event?.id ?? uid();
+      await api.put(`/events/${id}`, body);
+      if (logo && isMatch) await api.post(`/events/${id}/logo`, { image: logo });
       if (prepare && !event) {
         const t = await createTraining(teamId, `${e.start}T${e.time || '14:00'}`, e.title || 'Entraînement');
         nav(`/seances/${t.id}`);
@@ -332,6 +352,21 @@ function EventForm({
               </Field>
             )}
           </div>
+        )}
+
+        {isMatch && (
+          <Field label="Logo du club organisateur">
+            <div className="row" style={{ gap: 12 }}>
+              <span className="ev-logo">
+                {logo || e.logo ? <img src={logo ?? `/api/events/${event?.id}/logo?v=${e.logo}`} alt="" /> : <ImagePlus size={20} />}
+              </span>
+              <input ref={logoRef} type="file" accept="image/*" hidden onChange={(x) => void pickLogo(x.target.files?.[0])} />
+              <button type="button" className="btn sm" onClick={() => logoRef.current?.click()}>
+                {logo || e.logo ? 'Changer le logo' : 'Ajouter le logo'}
+              </button>
+              {!logo && !e.logo && e.venue === 'home' && <small className="muted">Sinon, le logo de votre club</small>}
+            </div>
+          </Field>
         )}
 
         <div className="ev-grid">

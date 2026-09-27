@@ -408,6 +408,27 @@ if (!db.prepare(`SELECT 1 FROM kv WHERE key = 'migr.noClubLibrary'`).get()) {
     COMMIT;`);
 }
 
+// Équipes U8/U9 : la catégorie de chaque joueur est enregistrée sur sa fiche (déduite de son année de naissance).
+if (!db.prepare(`SELECT 1 FROM kv WHERE key = 'migr.playerCategory'`).get()) {
+  const upd = db.prepare('UPDATE players SET data = ? WHERE id = ?');
+  db.exec('BEGIN');
+  for (const t of db.prepare('SELECT id, category, season FROM teams').all()) {
+    const groups = [...new Set((t.category.match(/U\s?\d{1,2}/gi) || []).map((g) => g.replace(/\s/g, '').toUpperCase()))];
+    if (groups.length < 2) continue;
+    const ages = groups.map((g) => Number(g.slice(1))).sort((a, b) => a - b);
+    const m = /(\d{4})\D+(\d{4})/.exec(t.season || '');
+    const end = m ? Number(m[2]) : new Date().getMonth() >= 6 ? new Date().getFullYear() + 1 : new Date().getFullYear();
+    for (const r of db.prepare('SELECT id, data FROM players WHERE team_id = ?').all(t.id)) {
+      const d = JSON.parse(r.data);
+      if (d.category || !d.birthYear) continue;
+      d.category = `U${Math.max(ages[0], Math.min(ages[ages.length - 1], end - d.birthYear))}`;
+      upd.run(JSON.stringify(d), r.id);
+    }
+  }
+  db.prepare(`INSERT INTO kv VALUES ('migr.playerCategory', '1')`).run();
+  db.exec('COMMIT');
+}
+
 export const kvGet = (key) => db.prepare('SELECT value FROM kv WHERE key = ?').get(key)?.value ?? null;
 export const kvSet = (key, value) => db.prepare('INSERT INTO kv VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 

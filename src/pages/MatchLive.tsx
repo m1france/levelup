@@ -84,7 +84,9 @@ export function MatchLive() {
         <Empty title="Match introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/matchs">Retour</Link>} />
       </div>
     );
-  return <MatchBoard d={q.data} />;
+  // Sans convocation publiée (test avant l'heure), tous les joueurs disponibles sont dans le groupe.
+  const d = q.data.selection.length ? q.data : { ...q.data, selection: q.data.players.filter((p) => p.availability?.status !== 'no').map((p) => p.id) };
+  return <MatchBoard d={d} />;
 }
 
 type Pick = { where: 'field'; idx: number } | { where: 'bench'; pid: string } | null;
