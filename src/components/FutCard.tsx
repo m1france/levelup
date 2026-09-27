@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { PlayerCard } from '../lib/types';
 
 /** Silhouette de la carte (façon Ultimate Team) : couronne en haut, pointe en bas. */
@@ -12,6 +12,7 @@ export const TIERS: Record<string, { from: string; mid: string; to: string; ink:
   green: { from: '#b4f5c8', mid: '#23a35c', to: '#0b4f2c', ink: '#f1fff5', line: 'rgba(210,255,225,.45)', glow: '#4ee08b' },
   totw: { from: '#4a4a4a', mid: '#1c1c1c', to: '#050505', ink: '#f6d77a', line: 'rgba(246,215,122,.55)', glow: '#f6d77a' },
   pink: { from: '#ffc2dd', mid: '#e8488f', to: '#8d1450', ink: '#fff2f8', line: 'rgba(255,220,238,.45)', glow: '#ff7ab6' },
+  bronze: { from: '#f6d9bd', mid: '#c98c56', to: '#7c4a22', ink: '#2e1807', line: 'rgba(70,35,5,.32)', glow: '#e7a86e' },
 };
 
 function Silhouette({ color }: { color: string }) {
@@ -23,8 +24,11 @@ function Silhouette({ color }: { color: string }) {
   );
 }
 
-/** Carte de joueur, face visible. `size` = largeur en px (tout le reste est proportionnel). */
-export function FutCard({ card, team, size = 240 }: { card: PlayerCard; team: { category: string; color: string }; size?: number }) {
+/**
+ * Carte de joueur, face visible. `size` = largeur en px (tout le reste est proportionnel).
+ * `foot` remplace la ligne du bas (minutes, buts) : l'effectif y met l'année de naissance.
+ */
+export function FutCard({ card, team, size = 240, foot }: { card: PlayerCard; team: { category: string; color: string }; size?: number; foot?: ReactNode }) {
   const uid = useId().replace(/:/g, '');
   const t = TIERS[card.award.tier] ?? TIERS.gold;
   return (
@@ -64,7 +68,7 @@ export function FutCard({ card, team, size = 240 }: { card: PlayerCard; team: { 
         <span className="fut-club" style={{ background: team.color }}>
           {team.category.replace(/\s+/g, '').slice(0, 5)}
         </span>
-        <span className="fut-emoji">{card.award.emoji}</span>
+        {card.award.emoji && <span className="fut-emoji">{card.award.emoji}</span>}
       </div>
       <div className="fut-name">{card.firstName}</div>
       <div className="fut-stats">
@@ -75,10 +79,14 @@ export function FutCard({ card, team, size = 240 }: { card: PlayerCard; team: { 
         ))}
       </div>
       <div className="fut-foot">
-        {card.number !== undefined && <span>#{card.number}</span>}
-        <span>{card.minutes}′</span>
-        {card.goals > 0 && <span>⚽ {card.goals}</span>}
-        {card.assists > 0 && <span>🎯 {card.assists}</span>}
+        {foot ?? (
+          <>
+            {card.number !== undefined && <span>#{card.number}</span>}
+            <span>{card.minutes}′</span>
+            {card.goals > 0 && <span>⚽ {card.goals}</span>}
+            {card.assists > 0 && <span>🎯 {card.assists}</span>}
+          </>
+        )}
       </div>
     </div>
   );

@@ -1,21 +1,29 @@
-import { AlertCircle, FileWarning, ListPlus, Plus, Search, Target, Users } from 'lucide-react';
+import { AlertCircle, FileWarning, Plus, Search, Target, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Radar } from '../components/PlayerProfile';
+import { FutCard } from '../components/FutCard';
+import { photoUrl } from '../components/PlayerAvatar';
 import { Avatar, Empty, Field, Seg, Sheet, Spinner, useAsync, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
+import { groupsOf, guessGroup, playerGroup } from '../lib/groups';
 import { playerName, useApp } from '../lib/store';
-import type { Player } from '../lib/types';
+import type { DomainKey, Player, PlayerCard } from '../lib/types';
 
 export function PlayerForm({ player, teamId, onClose, onSaved }: { player?: Player; teamId: string; onClose: () => void; onSaved: (p: Player) => void }) {
   const toast = useToast();
+  const { me } = useApp();
+  const team = me.teams.find((t) => t.id === (player?.teamId ?? teamId));
+  const groups = groupsOf(team?.category);
   const [f, setF] = useState<Partial<Player>>(player ?? {});
+  // Catégorie choisie explicitement ; tant qu'elle ne l'est pas, on propose celle de l'année de naissance.
+  const [picked, setPicked] = useState<string | null>(player && groups.includes(player.category ?? '') ? player.category! : null);
+  const category = groups.length ? (picked ?? guessGroup(f.birthYear, team)) : null;
   const [busy, setBusy] = useState(false);
   const save = async () => {
-    if (!f.firstName?.trim()) return;
+    if (!f.firstName?.trim() || (groups.length && !category)) return;
     setBusy(true);
     try {
-      const p = await api.put<Player>(`/players/${player?.id ?? uid()}`, { ...f, teamId: f.teamId ?? teamId });
+      const p = await api.put<Player>(`/players/${player?.id ?? uid()}`, { ...f, category: category ?? undefined, teamId: f.teamId ?? teamId });
       onSaved(p);
       onClose();
     } catch (e) {
@@ -34,7 +42,7 @@ export function PlayerForm({ player, teamId, onClose, onSaved }: { player?: Play
           <button className="btn ghost" onClick={onClose}>
             Annuler
           </button>
-          <button className="btn primary" disabled={!f.firstName?.trim() || busy} onClick={save}>
+          <button className="btn primary" disabled={!f.firstName?.trim() || (groups.length > 0 && !category) || busy} onClick={save}>
             Enregistrer
           </button>
         </>
@@ -53,73 +61,59 @@ export function PlayerForm({ player, teamId, onClose, onSaved }: { player?: Play
           <Field label="Année de naissance">
             <input className="input" type="number" inputMode="numeric" min={1950} max={2030} value={f.birthYear ?? ''} onChange={(e) => setF({ ...f, birthYear: num(e.target.value) })} />
           </Field>
-          <Field label="Numéro">
-            <input className="input" type="number" inputMode="numeric" min={0} max={99} value={f.number ?? ''} onChange={(e) => setF({ ...f, number: num(e.target.value) })} />
-          </Field>
         </div>
+        {groups.length > 0 && (
+          <Field label="Catégorie">
+            <Seg<string> value={category ?? ''} onChange={setPicked} options={groups.map((g) => ({ value: g, label: g }))} />
+          </Field>
+        )}
         {!player && <p className="small muted">Postes, pied fort, évaluations et objectifs se remplissent ensuite sur sa fiche.</p>}
       </div>
     </Sheet>
   );
 }
 
-function BulkImport({ teamId, onClose, onDone }: { teamId: string; onClose: () => void; onDone: () => void }) {
-  const toast = useToast();
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const rows = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => {
-      const year = l.match(/\b(19|20)\d{2}\b/)?.[0];
-      const name = l.replace(/[,;\t]/g, ' ').replace(/\b(19|20)\d{2}\b/, '').trim().split(/\s+/);
-      return { firstName: name[0] ?? '', lastName: name.slice(1).join(' '), birthYear: year ? Number(year) : undefined };
-    })
-    .filter((r) => r.firstName);
-  const go = async () => {
-    setBusy(true);
-    try {
-      for (const r of rows) await api.put(`/players/${uid()}`, { ...r, teamId });
-      toast(`${rows.length} joueurs ajoutés`);
-      onDone();
-      onClose();
-    } catch (e) {
-      toast((e as Error).message, true);
-    } finally {
-      setBusy(false);
-    }
+/** Note de 1 à 5 → note façon Ultimate Team (40 à 95). */
+const toOvr = (v: number) => Math.round(40 + ((Math.min(5, Math.max(1, v)) - 1) / 4) * 55);
+const STAT_LABELS: [DomainKey, string][] = [['tech', 'TEC'], ['phys', 'PHY'], ['tact', 'TAC'], ['mental', 'MEN'], ['behav', 'COM']];
+
+/** Carte Ultimate Team d'un joueur de l'effectif, calculée à partir de ses évaluations. */
+function rosterCard(p: Player): PlayerCard {
+  const d = p.profile?.domains ?? {};
+  const rated = STAT_LABELS.map(([k]) => d[k]).filter((v): v is number => typeof v === 'number');
+  // Sans évaluation : une note neutre d'après l'aisance (1 à 3).
+  const fallback = 2 + ((p.level ?? 2) - 1) * 0.75;
+  const ovr = toOvr(rated.length ? rated.reduce((a, b) => a + b, 0) / rated.length : fallback);
+  const stats: [string, number][] = STAT_LABELS.map(([k, label]) => [label, typeof d[k] === 'number' ? toOvr(d[k]!) : toOvr(fallback)]);
+  const weak = p.profile?.weakFoot;
+  stats.push(['PIE', p.profile?.foot === 'deux' ? 95 : weak ? toOvr(weak) : toOvr(fallback)]);
+  return {
+    id: p.id,
+    firstName: p.firstName,
+    photo: photoUrl(p),
+    position: p.profile?.positions?.[0] ?? '—',
+    ovr,
+    stats,
+    // La couleur de la carte suit la note : or, argent, bronze.
+    award: { key: 'roster', label: '', emoji: '', tier: ovr >= 75 ? 'gold' : ovr >= 60 ? 'silver' : 'bronze' },
+    minutes: 0,
+    goals: 0,
+    assists: 0,
+    mine: false,
   };
-  return (
-    <Sheet
-      title="Import rapide"
-      onClose={onClose}
-      footer={
-        <button className="btn primary" disabled={!rows.length || busy} onClick={go}>
-          Ajouter {rows.length || ''} joueur{rows.length > 1 ? 's' : ''}
-        </button>
-      }
-    >
-      <p className="muted small" style={{ marginBottom: 10 }}>
-        Un joueur par ligne : « Prénom Nom 2018 ». Vous pouvez copier la liste depuis SportEasy ou un tableur.
-      </p>
-      <textarea className="textarea" rows={10} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder={'Léo Martin 2018\nInès Dubois 2019\nNolan'} />
-    </Sheet>
-  );
 }
 
 export function Players() {
   const { team, can } = useApp();
   const nav = useNavigate();
+  const groups = groupsOf(team?.category);
   const q = useAsync(() => (team ? api.get<Player[]>(`/teams/${team.id}/players?followUp=1`) : Promise.resolve([])), [team?.id]);
-  const [sort, setSort] = useState<'name' | 'number' | 'follow'>('name');
+  const [sort, setSort] = useState<'name' | 'follow'>('name');
   const [search, setSearch] = useState('');
   const [form, setForm] = useState(false);
-  const [bulk, setBulk] = useState(false);
   const list = useMemo(() => {
     const n = search.trim().toLowerCase();
     const out = (q.data ?? []).filter((p) => !n || playerName(p).toLowerCase().includes(n));
-    if (sort === 'number') out.sort((a, b) => (a.number ?? 999) - (b.number ?? 999));
     if (sort === 'follow') out.sort((a, b) => (b.followUp?.quietDays ?? 0) - (a.followUp?.quietDays ?? 0));
     return out;
   }, [q.data, search, sort]);
@@ -138,6 +132,30 @@ export function Players() {
 
   if (!team) return <div className="page"><Empty icon={<Users />} title="Aucune équipe" /></div>;
 
+  const tile = (p: Player) => {
+    const alert = p.followUp && (p.followUp.quietDays >= 28 || p.followUp.overdueGoals > 0);
+    return (
+      <button key={p.id} className="fut-tile" onClick={() => nav(`/joueurs/${p.id}`)} aria-label={playerName(p)}>
+        <FutCard
+          card={rosterCard(p)}
+          team={{ category: playerGroup(p, team) ?? team.category, color: team.color }}
+          size={180}
+          foot={
+            <>
+              {p.birthYear && <span>{p.birthYear}</span>}
+              {!!p.followUp?.activeGoals && <span>🎯 {p.followUp.activeGoals}</span>}
+            </>
+          }
+        />
+        {alert && <span className="fut-alert" title="À suivre" />}
+      </button>
+    );
+  };
+  // Équipe U8/U9 : une section par catégorie.
+  const sections = groups.length
+    ? [...groups, null].map((g) => ({ g, players: list.filter((p) => playerGroup(p, team) === g) })).filter((x) => x.players.length)
+    : [{ g: null, players: list }];
+
   return (
     <div className="page">
       <div className="page-head">
@@ -146,9 +164,6 @@ export function Players() {
         </div>
         {can('players.manage') && (
           <div className="actions">
-            <button className="btn" onClick={() => setBulk(true)}>
-              <ListPlus /> <span className="hide-mobile">Import rapide</span>
-            </button>
             <button className="btn primary" onClick={() => setForm(true)}>
               <Plus /> Ajouter
             </button>
@@ -183,7 +198,6 @@ export function Players() {
         onChange={setSort}
         options={[
           { value: 'name', label: 'A–Z' },
-          { value: 'number', label: 'N°' },
           { value: 'follow', label: 'À suivre' },
         ]}
       />
@@ -191,30 +205,19 @@ export function Players() {
       {q.loading && !q.data ? (
         <Spinner fill />
       ) : list.length ? (
-        <div className="p-grid">
-          {list.map((p) => (
-            <button key={p.id} className="p-tile" onClick={() => nav(`/joueurs/${p.id}`)}>
-              {p.number !== undefined && <span className="p-num">{p.number}</span>}
-              {p.followUp && (p.followUp.quietDays >= 28 || p.followUp.overdueGoals > 0) && <span className="p-alert" title="À suivre" />}
-              {p.profile?.domains && Object.keys(p.profile.domains).length ? (
-                <span className="p-radar">
-                  <Radar values={p.profile.domains} size={76} labels={false} />
-                  <span className="p-initials">{p.firstName.slice(0, 1)}</span>
-                </span>
-              ) : (
-                <Avatar name={playerName(p)} size="lg" />
-              )}
-              <b className="ellipsis">{p.firstName}</b>
-              <span className="p-meta">
-                {p.profile?.positions?.[0] && <span className="p-pos">{p.profile.positions[0]}</span>}
-                {p.birthYear && <span>{p.birthYear}</span>}
-                {!!p.followUp?.activeGoals && (
-                  <span title={`${p.followUp.activeGoals} objectif(s) en cours`}>
-                    <Target size={12} /> {p.followUp.activeGoals}
+        <div className="stack" style={{ gap: 26 }}>
+          {sections.map(({ g, players }) => (
+            <section key={g ?? 'none'}>
+              {groups.length > 0 && (
+                <div className="p-section">
+                  <h2>{g ?? 'Sans catégorie'}</h2>
+                  <span>
+                    {players.length} joueur{players.length > 1 ? 's' : ''}
                   </span>
-                )}
-              </span>
-            </button>
+                </div>
+              )}
+              <div className="fut-grid">{players.map(tile)}</div>
+            </section>
           ))}
         </div>
       ) : (
@@ -222,12 +225,11 @@ export function Players() {
           <Empty
             icon={<Users />}
             title="Aucun joueur"
-            text="Ajoutez vos joueurs un par un ou collez la liste complète avec l’import rapide."
+            text="Ajoutez vos joueurs un par un avec le bouton « Ajouter »."
           />
         </div>
       )}
       {form && <PlayerForm teamId={team.id} onClose={() => setForm(false)} onSaved={() => q.reload()} />}
-      {bulk && <BulkImport teamId={team.id} onClose={() => setBulk(false)} onDone={q.reload} />}
     </div>
   );
 }

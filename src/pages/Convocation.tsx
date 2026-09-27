@@ -1,6 +1,6 @@
 import {
-  ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Home, Image as ImageIcon, Link2, MapPin, Megaphone, MessageCircle,
-  Minus, Plane, Play, Send, Sparkles, TrendingDown, TrendingUp, Trophy, X,
+  ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Link2, MapPin, Megaphone, MessageCircle,
+  Minus, Play, Send, Sparkles, TrendingDown, TrendingUp, Trophy, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -172,7 +172,6 @@ function PlayerRow({
       </button>
       <div className="cv-who">
         <div className="row" style={{ gap: 8 }}>
-          {p.number !== undefined && <span className="cv-num">{p.number}</span>}
           <Link to={`/joueurs/${p.id}`} className="cv-name ellipsis">
             {playerName(p)}
           </Link>
@@ -383,14 +382,6 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
       message ? `💬 ${message}` : null,
     ].filter((l) => l !== null).join('\n');
 
-  const requestMessage = () =>
-    [
-      `⚽ ${d.title} · ${longDate(d.date)}`,
-      `Merci d’indiquer la disponibilité de votre enfant${d.timeline.answerBy ? ` avant ${momentLabel(d.timeline.answerBy)}` : ''} (un clic, sans compte) :`,
-      '',
-      ...d.players.filter((p) => !p.availability).map((p) => `• ${p.firstName} : ${answerUrl(p.answerToken)}`),
-    ].join('\n');
-
   const phase = PHASE[d.phase];
   const over = sel.size > d.squad;
   const played = d.phase === 'played' || !!d.match?.finished;
@@ -411,22 +402,12 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
             {d.group && <span className="badge green">{d.group}</span>}
             <span className={`badge ${phase.tone}`}>{phase.label}</span>
             {d.publishedLate && <span className="badge warn">Publiée après la date limite</span>}
-            {d.presetName && <span className="badge">{d.presetName}</span>}
           </div>
           <h1>{d.title}</h1>
           <div className="plan-meta">
             {d.time && (
               <span className="meta-pill">
                 <Clock /> {formatTime(d.time)}
-              </span>
-            )}
-            <label className="meta-pill on" title="Heure de rendez-vous">
-              RDV
-              <input type="time" value={meet} disabled={!canEdit} onChange={(e) => edit<string>(setMeet)(e.target.value)} />
-            </label>
-            {d.venue && (
-              <span className="meta-pill">
-                {d.venue === 'away' ? <Plane /> : <Home />} {d.venue === 'away' ? 'Extérieur' : d.venue === 'home' ? 'Domicile' : 'Terrain neutre'}
               </span>
             )}
             {d.location && (
@@ -438,7 +419,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
           {canEdit && (
-            <button className="btn lg primary" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/live`)} disabled={!sel.size}>
+            <button className="btn lg primary" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/live`)}>
               {played ? <Trophy /> : <Play fill="currentColor" />} {played ? 'Feuille de match' : 'Mode match'}
             </button>
           )}
@@ -562,11 +543,6 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
                 <MessageCircle /> Texte
               </button>
             </div>
-            {!published && d.counts.none > 0 && canEdit && (
-              <button className="btn ghost sm block" onClick={async () => toast((await copy(requestMessage())) ? 'Liens de réponse copiés' : 'Copie impossible')}>
-                <Link2 /> Copier les liens de réponse ({d.counts.none})
-              </button>
-            )}
           </div>
           {Date.now() < d.timeline.start && (
             <div className="card cv-box">

@@ -1,18 +1,21 @@
-import { Bell, CalendarPlus, Check, ChevronRight, Clock, Eye, Megaphone, Shield, Trophy } from 'lucide-react';
+import { CalendarPlus, ChevronRight, Megaphone, Plus, Trophy } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { PushCard } from '../components/Notifications';
 import { MatchTicket } from '../components/Tickets';
-import { Empty, Seg, Spinner, useAsync } from '../components/ui';
+import { Empty, Seg, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
 import { TeamBadge } from '../components/Layout';
 import { api } from '../lib/api';
 import { PHASE, countdown, matchPath, momentLabel } from '../lib/convocations';
-import { MONTHS_TILE, formatTime, fromYMD } from '../lib/events';
+import { EventForm } from '../components/Calendar';
+import { MatchActions, useMatchMenu, type MatchRef } from '../components/MatchActions';
+import { MONTHS_TILE, formatTime, fromYMD, toYMD } from '../lib/events';
 import { useLive } from '../lib/live';
 import { playerName, useApp } from '../lib/store';
-import type { ClubTeamOverview, ConvSnapshot, TeamStats, Ticket } from '../lib/types';
+import type { ConvSnapshot, TeamEvent, TeamStats, Ticket } from '../lib/types';
 import { Gauge } from './Convocation';
 import { MatchShowcase } from '../components/MatchShowcase';
+import { WeekTimeline } from '../components/WeekTimeline';
 import { groupsOf } from '../lib/groups';
 
 export function Matches() {
@@ -42,7 +45,7 @@ function ParentMatches() {
       <div className="page-head">
         <h1>Matchs</h1>
       </div>
-      <MatchShowcase matches={showcase} onChanged={q.reload} />
+      <MatchShowcase matches={showcase} />
       <div style={{ marginBottom: 18 }}>
         <PushCard compact />
       </div>
@@ -77,7 +80,7 @@ function ParentMatches() {
 
 /* ------------------------------------------------------------------ éducateurs */
 
-type Tab = 'matchs' | 'equite' | 'club';
+type Tab = 'matchs' | 'equite';
 
 /** Équipe U8/U9 : la catégorie affichée (dans l'adresse, ?cat=U9). */
 function useGroup() {
@@ -98,41 +101,99 @@ const withGroup = (url: string, group: string | null) => (group ? `${url}${url.i
 
 function StaffMatches() {
   const { team, can } = useApp();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [params, setParams] = useSearchParams();
   const { groups, group, setGroup } = useGroup();
   const tabs: { value: Tab; label: string }[] = [
     { value: 'matchs', label: 'Convocations' },
     { value: 'equite', label: 'Temps de jeu' },
-    ...(can('club.dashboard') ? [{ value: 'club' as Tab, label: 'Club' }] : []),
   ];
   const tab = tabs.find((t) => t.value === params.get('vue'))?.value ?? 'matchs';
+  const canEdit = can('events.manage');
+  // Formulaire ouvert : nouveau match, ou match existant (clic droit › Modifier).
+  const [form, setForm] = useState<{ event?: TeamEvent; date: string } | null>(null);
+  // Recharge les listes après une création, une modification ou une suppression.
+  const [version, setVersion] = useState(0);
+  const refresh = () => setVersion((v) => v + 1);
+
+  const eventOf = async (m: MatchRef) => {
+    const list = await api.get<TeamEvent[]>(`/teams/${team!.id}/events`);
+    const e = list.find((x) => x.id === m.eventId);
+    if (!e) throw new Error('Match introuvable');
+    return e;
+  };
+  const actions = {
+    edit: async (m: MatchRef) => {
+      try {
+        setForm({ event: await eventOf(m), date: m.date });
+      } catch (e) {
+        toast((e as Error).message, true);
+      }
+    },
+    remove: async (m: MatchRef) => {
+      try {
+        const e = await eventOf(m);
+        if (e.recurrence.freq !== 'none') {
+          const onlyThis = await confirm({ title: 'Match récurrent', text: 'Supprimer uniquement cette date, ou toute la série ?', confirm: 'Cette date seulement' });
+          if (onlyThis) await api.put(`/events/${e.id}`, { ...e, exdates: [...e.exdates, m.date] });
+          else if (await confirm({ title: 'Supprimer toute la série ?', confirm: 'Supprimer la série', danger: true })) await api.del(`/events/${e.id}`);
+          else return;
+        } else {
+          if (!(await confirm({ title: 'Supprimer ce match ?', text: 'La convocation et les réponses des parents seront effacées.', confirm: 'Supprimer', danger: true }))) return;
+          await api.del(`/events/${e.id}`);
+        }
+        toast('Match supprimé');
+        refresh();
+      } catch (e) {
+        toast((e as Error).message, true);
+      }
+    },
+  };
+
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <h1>Matchs</h1>
-          <div className="sub">{groups.length && tab !== 'club' ? `${team?.category} · matchs, convocations et statistiques séparés par catégorie` : team?.category}</div>
+    <MatchActions.Provider value={canEdit && team ? actions : null}>
+      <div className="page">
+        <div className="page-head">
+          <div>
+            <h1>Matchs</h1>
+            <div className="sub">{groups.length ? `${team?.category} · matchs, convocations et statistiques séparés par catégorie` : team?.category}</div>
+          </div>
+          <div className="actions">
+            {groups.length > 0 && <Seg value={group!} onChange={setGroup} options={groups.map((g) => ({ value: g, label: g }))} />}
+            <Seg
+              value={tab}
+              onChange={(v) => setParams(() => {
+                const n = new URLSearchParams();
+                if (v !== 'matchs') n.set('vue', v);
+                if (group) n.set('cat', group);
+                return n;
+              })}
+              options={tabs}
+            />
+            {canEdit && team && (
+              <button className="btn primary" onClick={() => setForm({ date: toYMD(new Date()) })}>
+                <Plus /> Nouveau match
+              </button>
+            )}
+          </div>
         </div>
-        <div className="actions">
-          {groups.length > 0 && tab !== 'club' && (
-            <Seg value={group!} onChange={setGroup} options={groups.map((g) => ({ value: g, label: g }))} />
-          )}
-          <Seg
-            value={tab}
-            onChange={(v) => setParams(() => {
-              const n = new URLSearchParams();
-              if (v !== 'matchs') n.set('vue', v);
-              if (group) n.set('cat', group);
-              return n;
-            })}
-            options={tabs}
-          />
-        </div>
+        {tab === 'matchs' && <ConvList key={`${group ?? ''}:${version}`} group={group} />}
+        {tab === 'equite' && <Equity key={`${group ?? ''}:${version}`} group={group} />}
       </div>
-      {tab === 'matchs' && <ConvList key={group ?? ''} group={group} />}
-      {tab === 'equite' && <Equity key={group ?? ''} group={group} />}
-      {tab === 'club' && <ClubBoard />}
-    </div>
+      {form && team && (
+        <EventForm
+          teamId={team.id}
+          date={form.date}
+          event={form.event}
+          occurrence={form.event ? form.date : undefined}
+          initialType="match"
+          initialGroup={group}
+          onClose={() => setForm(null)}
+          onSaved={() => (setForm(null), refresh())}
+        />
+      )}
+    </MatchActions.Provider>
   );
 }
 
@@ -171,8 +232,11 @@ export function ConvCard({ c, showTeam }: { c: ConvSnapshot; showTeam?: boolean 
   const answered = c.counts.yes + c.counts.maybe + c.counts.no;
   const phase = PHASE[c.phase];
   const urgent = c.phase === 'collecting' && c.timeline.deadline - Date.now() < 24 * 3600e3;
+  const { bind, menu } = useMatchMenu(c);
   return (
-    <button className={`conv-card phase-${c.phase}${urgent ? ' urgent' : ''}`} onClick={() => nav(matchPath(c.eventId, c.date))}>
+    <>
+    {menu}
+    <button className={`conv-card phase-${c.phase}${urgent ? ' urgent' : ''}`} onClick={() => nav(matchPath(c.eventId, c.date))} {...bind}>
       <DateTile date={c.date} />
       <div className="grow">
         <div className="row wrap" style={{ gap: 6 }}>
@@ -210,13 +274,16 @@ export function ConvCard({ c, showTeam }: { c: ConvSnapshot; showTeam?: boolean 
       </div>
       <ChevronRight className="hide-mobile" color="var(--ink-3)" />
     </button>
+    </>
   );
 }
 
 function ConvList({ group }: { group: string | null }) {
   const { team } = useApp();
   const q = useAsync(() => (team ? api.get<ConvSnapshot[]>(withGroup(`/teams/${team.id}/convocations`, group)) : Promise.resolve([])), [team?.id, group]);
-  useLive((m) => m.t === 'conv' && q.reload());
+  // La frise remonte au début de la saison pour retrouver le dernier match joué.
+  const season = useAsync(() => (team ? api.get<ConvSnapshot[]>(withGroup(`/teams/${team.id}/convocations?past=1`, group)) : Promise.resolve([])), [team?.id, group]);
+  useLive((m) => m.t === 'conv' && (q.reload(), season.reload()));
   const now = Date.now();
   const list = q.data ?? [];
   const todo = list.filter((c) => c.timeline.start > now && ['collecting', 'late', 'upcoming'].includes(c.phase));
@@ -241,7 +308,8 @@ function ConvList({ group }: { group: string | null }) {
     );
   return (
     <div className="stack" style={{ gap: 28 }}>
-      <MatchShowcase matches={coming} onChanged={q.reload} />
+      <MatchShowcase matches={coming} />
+      <WeekTimeline list={season.data ?? list} />
       {todo.length > 0 && (
         <section>
           <div className="section-title">À préparer</div>
@@ -353,7 +421,6 @@ function Equity({ group }: { group: string | null }) {
                 <tr key={p.id} className={p.matches && p.delta <= -1 ? 'low' : ''}>
                   <td>
                     <Link to={`/joueurs/${p.id}`} className="row" style={{ gap: 8 }}>
-                      {p.number !== undefined && <span className="cv-num">{p.number}</span>}
                       <b>{playerName(p)}</b>
                     </Link>
                   </td>
@@ -390,99 +457,6 @@ function Equity({ group }: { group: string | null }) {
         <p className="small muted" style={{ padding: '10px 20px 16px' }}>
           Le trait vertical marque la moyenne de l’équipe. En orange : au moins un match de moins que la moyenne, ils sont proposés en priorité à la prochaine convocation.
         </p>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ club */
-
-function ClubBoard() {
-  const q = useAsync(() => api.get<ClubTeamOverview[]>('/club/overview'), []);
-  if (q.loading && !q.data) return <Spinner fill />;
-  const teams = q.data ?? [];
-  const now = Date.now();
-  const status = (c: ConvSnapshot | undefined) => {
-    if (!c) return { tone: 'gray', label: 'Rien de prévu' };
-    if (c.phase === 'published' || c.phase === 'played') return c.publishedLate ? { tone: 'orange', label: 'Publiée en retard' } : { tone: 'green', label: 'Convoqué à l’heure' };
-    if (c.phase === 'late' || c.phase === 'missed') return { tone: 'red', label: 'En retard' };
-    if (c.timeline.deadline - now < 24 * 3600e3) return { tone: 'orange', label: `Échéance ${momentLabel(c.timeline.deadline)}` };
-    return { tone: 'gray', label: `À publier avant ${momentLabel(c.timeline.deadline)}` };
-  };
-  const totalPast = teams.reduce((a, t) => a + t.past, 0);
-  const totalOnTime = teams.reduce((a, t) => a + t.onTime, 0);
-  const late = teams.filter((t) => ['red'].includes(status(t.upcoming[0]).tone)).length;
-  return (
-    <div className="stack" style={{ gap: 20 }}>
-      <div className="grid cols-3">
-        <div className="card stat">
-          <div className="v">{totalPast ? `${Math.round((totalOnTime / totalPast) * 100)} %` : '—'}</div>
-          <div className="l">des convocations publiées dans les délais cette saison</div>
-        </div>
-        <div className="card stat">
-          <div className="v" style={{ color: late ? 'var(--danger)' : undefined }}>{late}</div>
-          <div className="l">équipe{late > 1 ? 's' : ''} en retard en ce moment</div>
-        </div>
-        <div className="card stat">
-          <div className="v">{teams.reduce((a, t) => a + t.players, 0)}</div>
-          <div className="l">
-            joueurs · {teams.length} équipe{teams.length > 1 ? 's' : ''}
-          </div>
-        </div>
-      </div>
-      <div className="club-grid">
-        {teams.map((t) => {
-          const next = t.upcoming[0];
-          const st = status(next);
-          return (
-            <div key={`${t.team.id}:${t.group ?? ''}`} className="card club-card">
-              <div className="row" style={{ gap: 10 }}>
-                <TeamBadge team={{ ...t.team, name: t.team.category, season: '', staff: [], playerCount: t.players }} size={38} />
-                <div className="grow">
-                  <b>{t.team.category}</b>
-                  <small className="muted ellipsis" style={{ display: 'block' }}>
-                    {t.staff.join(', ') || 'Pas d’éducateur'}
-                  </small>
-                </div>
-                <span className={`pastille ${st.tone}`} title={st.label} />
-              </div>
-              {next ? (
-                <Link to={matchPath(next.eventId, next.date)} className="club-next">
-                  <span className="grow">
-                    <b>{next.title}</b>
-                    <small>
-                      {momentLabel(next.timeline.start)} · {st.label}
-                    </small>
-                  </span>
-                  <span className="small muted">
-                    {next.publishedAt ? (
-                      <>
-                        <Eye size={12} /> {next.reads}/{next.readers}
-                      </>
-                    ) : (
-                      <>
-                        <Bell size={12} /> {next.counts.yes + next.counts.maybe + next.counts.no}/{next.total}
-                      </>
-                    )}
-                  </span>
-                </Link>
-              ) : (
-                <p className="small muted">Aucun match dans les 3 semaines.</p>
-              )}
-              <div className="club-foot">
-                <span>
-                  <Clock size={13} /> {t.past ? `${t.onTime}/${t.past} à l’heure` : 'Pas encore de match'}
-                </span>
-                <span>
-                  <Shield size={13} /> Équité {t.equity ?? '—'}
-                </span>
-                <span>
-                  <Check size={13} /> {t.players} joueurs
-                </span>
-              </div>
-            </div>
-          );
-        })}
       </div>
     </div>
   );

@@ -15,6 +15,7 @@ import { evTitle, parentsOf } from './convocations.js';
 import { todayYMD, seasonStart } from './occurrences.js';
 import { AWARDS, autoAwards, sendPlayerPhoto } from './reveal.js';
 import { notify } from './notify.js';
+import { guessGroup, teamInfo } from './groups.js';
 
 export const playersApi = Router();
 
@@ -232,6 +233,11 @@ playersApi.put('/players/:id', (req, res) => {
     else data[f] = str(v, 80);
   }
   if (!data.firstName) throw new HttpError(400, 'Prénom requis');
+  // Équipe à plusieurs catégories (U8/U9) : la catégorie est enregistrée sur la fiche du joueur.
+  const groups = teamInfo(teamId).groups;
+  if (!groups.length) delete data.category;
+  else if (groups.includes(req.body.category)) data.category = req.body.category;
+  else if (!groups.includes(data.category)) data.category = guessGroup(data.birthYear, teamId) ?? undefined;
   if (existing) run('UPDATE players SET team_id = ?, data = ?, updated_at = ? WHERE id = ?', teamId, JSON.stringify(data), now(), id);
   else run('INSERT INTO players VALUES (?, ?, ?, ?, ?)', id, teamId, JSON.stringify(data), now(), now());
   res.json(playerOut(get('SELECT * FROM players WHERE id = ?', id), req.user));

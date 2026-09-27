@@ -15,6 +15,7 @@ import { DOMAIN, DOMAINS, FOOT_LABEL, GOAL_IDEAS, POSITION, SKILL, TEST, TRENDS 
 import { formatDate, playerName, relative, useApp } from '../lib/store';
 import type { DomainKey, Objective, Observation, Player, PlayerMatch, Trend } from '../lib/types';
 import { PlayerForm } from './Players';
+import { playerGroup } from '../lib/groups';
 
 interface PlayerPayload {
   player: Player;
@@ -90,12 +91,11 @@ export function PlayerPage() {
       <div className="pp-head">
         <div className="pp-avatar">
           <PlayerAvatar player={p} editable={!isStaff || can('players.manage')} onChange={(np) => q.setData({ ...data, player: { ...p, ...np } })} />
-          {p.number !== undefined && <span className="pp-num">{p.number}</span>}
         </div>
         <div className="grow">
           <h1>{playerName(p)}</h1>
           <div className="pp-tags">
-            {team && <span className="badge">{team.category}</span>}
+            {team && <span className="badge">{playerGroup(p, team) ?? team.category}</span>}
             {age !== null && <span className="badge">{age} ans · {p.birthYear}</span>}
             {positions[0] && <span className="badge green">{POSITION[positions[0]]?.label}</span>}
             {p.profile?.foot && <span className="badge">{FOOT_LABEL[p.profile.foot]}</span>}
@@ -177,8 +177,16 @@ export function PlayerPage() {
 function ProfileTab({ p, canEdit, onSaved }: { p: Player; canEdit: boolean; onSaved: (p: Player) => void }) {
   const toast = useToast();
   const [prof, setProf] = useState(p.profile ?? {});
-  const [open, setOpen] = useState<DomainKey | null>(null);
   const ratings = prof.ratings ?? {};
+  // Chaque domaine s'ouvre et se ferme indépendamment ; au départ, ceux qui ne sont pas encore évalués sont ouverts.
+  const [open, setOpen] = useState<Set<DomainKey>>(() => new Set(DOMAINS.filter((d) => !p.profile?.domains?.[d.key]).map((d) => d.key)));
+  const toggle = (k: DomainKey) =>
+    setOpen((o) => {
+      const n = new Set(o);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
   const history = prof.history ?? [];
 
   const save = async (patch: Record<string, unknown>) => {
@@ -248,10 +256,10 @@ function ProfileTab({ p, canEdit, onSaved }: { p: Player; canEdit: boolean; onSa
           const Icon = d.icon;
           const avg = domains[d.key];
           const series = history.map((h) => h.d[d.key]).filter((v): v is number => typeof v === 'number');
-          const isOpen = open === d.key || !avg;
+          const isOpen = open.has(d.key);
           return (
             <div key={d.key} className={`card domain${isOpen ? ' open' : ''}`} style={{ '--c': d.color } as React.CSSProperties}>
-              <button className="domain-head" onClick={() => setOpen(open === d.key ? null : d.key)} aria-expanded={isOpen}>
+              <button className="domain-head" onClick={() => toggle(d.key)} aria-expanded={isOpen}>
                 <span className="domain-ic">
                   <Icon size={20} filled />
                 </span>

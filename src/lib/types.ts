@@ -98,6 +98,8 @@ export interface Player {
   firstName: string;
   lastName?: string;
   birthYear?: number;
+  /** Équipe à plusieurs catégories (U8/U9) : catégorie du joueur. */
+  category?: string;
   number?: number;
   /** 1 = en progression, 2 = à l'aise, 3 = très à l'aise — déduit des évaluations, sert à équilibrer les groupes. */
   level?: 1 | 2 | 3;
@@ -532,7 +534,7 @@ export interface AppNotification { id: string; kind: string; title: string; body
 
 /* ------------------------------------------------------------------ cartes de fin de match */
 
-export interface Award { key: string; label: string; emoji: string; tier: 'totw' | 'red' | 'blue' | 'green' | 'silver' | 'gold' | 'pink' }
+export interface Award { key: string; label: string; emoji: string; tier: 'totw' | 'red' | 'blue' | 'green' | 'silver' | 'gold' | 'pink' | 'bronze' }
 
 export interface PlayerCard {
   id: string;
