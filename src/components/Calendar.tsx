@@ -1,13 +1,18 @@
-import { ChevronLeft, ChevronRight, Clock, MapPin, Plus, Repeat, Trash2, Users } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, Clock, MapPin, Megaphone, Pencil, Plus, Repeat, Trash2, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, uid } from '../lib/api';
 import {
   EVENT_TYPES, MONTHS_LONG, WEEKDAYS_SHORT, agenda, eventTitle, formatTime, fromYMD, toYMD, type Agenda,
 } from '../lib/events';
-import type { EventType, Recurrence, TeamEvent, Training } from '../lib/types';
+import { CONV_TYPES, DEFAULT_SETTINGS, matchPath } from '../lib/convocations';
+import type { ConvPreset, ConvSettings, EventType, Recurrence, TeamEvent, Training } from '../lib/types';
+import { ConvSettingsEditor, TimelinePreview } from './ConvSettings';
 import { createTraining } from '../pages/Trainings';
 import { Field, Seg, Sheet, useConfirm, useToast } from './ui';
+
+/** L'événement a-t-il une convocation (matchs, plateaux, tournois par défaut) ? */
+export const hasConv = (e: TeamEvent) => e.conv?.enabled ?? CONV_TYPES.includes(e.type);
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const dayTitle = (ymd: string) => {
@@ -118,10 +123,16 @@ function DaySheet({
     <Sheet title={dayTitle(date)} onClose={onClose}>
       <div className="stack" style={{ gap: 8 }}>
         {items.map((it) => (
+          <div key={it.key} className="row" style={{ gap: 6 }}>
           <button
-            key={it.key}
             className="agenda-row"
-            onClick={() => (it.training ? nav(`/seances/${it.training.id}`) : canEdit && setEdit({ event: it.event, occurrence: it.date }))}
+            onClick={() =>
+              it.training
+                ? nav(`/seances/${it.training.id}`)
+                : it.event && hasConv(it.event)
+                  ? nav(matchPath(it.event.id, it.date))
+                  : canEdit && setEdit({ event: it.event, occurrence: it.date })
+            }
           >
             <i style={{ background: it.color }} />
             <span className="grow">
@@ -134,8 +145,15 @@ function DaySheet({
                 {it.training ? ' · Séance préparée' : ''}
               </small>
             </span>
+            {it.event && hasConv(it.event) && <Megaphone size={15} color="var(--accent)" />}
             {it.event && it.event.recurrence.freq !== 'none' && <Repeat size={15} color="var(--ink-3)" />}
           </button>
+          {canEdit && it.event && hasConv(it.event) && (
+            <button className="btn icon ghost" onClick={() => setEdit({ event: it.event, occurrence: it.date })} aria-label="Modifier l’événement">
+              <Pencil />
+            </button>
+          )}
+          </div>
         ))}
         {!items.length && <p className="muted" style={{ padding: '8px 0' }}>Rien de prévu ce jour-là.</p>}
         {canEdit && (
@@ -176,6 +194,10 @@ function EventForm({
   );
   const [ends, setEnds] = useState<'never' | 'until' | 'count'>(event?.recurrence.until ? 'until' : event?.recurrence.count ? 'count' : 'never');
   const [prepare, setPrepare] = useState(false);
+  const [presets, setPresets] = useState<ConvPreset[] | null>(null);
+  useEffect(() => {
+    api.get<{ presets: ConvPreset[] }>('/conv-presets').then((r) => setPresets(r.presets.filter((p) => !p.teamId || p.teamId === teamId))).catch(() => setPresets([]));
+  }, [teamId]);
   const [busy, setBusy] = useState(false);
   const r = e.recurrence;
   const preset = presetOf(r);
@@ -229,6 +251,11 @@ function EventForm({
   };
 
   const color = e.color || EVENT_TYPES[e.type].color;
+  const convOn = e.conv?.enabled ?? CONV_TYPES.includes(e.type);
+  const teamDefault = presets?.find((p) => p.teamId === teamId && p.isDefault) ?? presets?.find((p) => !p.teamId && p.isDefault) ?? presets?.[0];
+  const chosen = e.conv?.custom ? null : presets?.find((p) => p.id === e.conv?.presetId) ?? teamDefault;
+  const convSettings: ConvSettings = e.conv?.custom ?? chosen?.settings ?? DEFAULT_SETTINGS;
+  const setConv = (patch: TeamEvent['conv']) => setE({ ...e, conv: { ...e.conv, ...patch } });
   const isMatch = e.type === 'match' || e.type === 'plateau' || e.type === 'tournament';
 
   return (
@@ -368,6 +395,46 @@ function EventForm({
                 </span>
               )}
             </div>
+          </div>
+        )}
+
+        {e.type !== 'training' && e.type !== 'meeting' && (
+          <div className="conv-box">
+            <label className="check">
+              <input type="checkbox" checked={convOn} onChange={(x) => setConv({ enabled: x.target.checked })} />
+              <span>
+                <Megaphone size={14} style={{ verticalAlign: -2 }} /> <b>Convocation</b> : demander les disponibilités, puis convoquer
+              </span>
+            </label>
+            {convOn && (
+              <>
+                <Field label="Réglage">
+                  <select
+                    className="select"
+                    value={e.conv?.custom ? 'custom' : e.conv?.presetId ?? ''}
+                    onChange={(x) => {
+                      const v = x.target.value;
+                      if (v === 'custom') setConv({ custom: { ...convSettings }, presetId: null });
+                      else setConv({ custom: null, presetId: v || null });
+                    }}
+                  >
+                    <option value="">Par défaut{teamDefault ? ` (${teamDefault.name})` : ''}</option>
+                    {presets?.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {p.teamId ? ' · équipe' : ''}
+                      </option>
+                    ))}
+                    <option value="custom">Personnalisé pour ce match…</option>
+                  </select>
+                </Field>
+                {e.conv?.custom ? (
+                  <ConvSettingsEditor value={e.conv.custom} onChange={(custom) => setConv({ custom })} date={e.start} time={e.time} />
+                ) : (
+                  <TimelinePreview settings={convSettings} date={e.start} time={e.time} />
+                )}
+              </>
+            )}
           </div>
         )}
 

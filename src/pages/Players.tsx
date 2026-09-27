@@ -1,24 +1,15 @@
-import { ListPlus, Plus, Search, Users } from 'lucide-react';
+import { AlertCircle, FileWarning, ListPlus, Plus, Search, Target, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Radar } from '../components/PlayerProfile';
 import { Avatar, Empty, Field, Seg, Sheet, Spinner, useAsync, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
 import { playerName, useApp } from '../lib/store';
 import type { Player } from '../lib/types';
 
-export function LevelDots({ level }: { level?: number }) {
-  return (
-    <span className="lvl-dots" title={['En progression', 'À l’aise', 'Très à l’aise'][(level ?? 2) - 1]}>
-      {[1, 2, 3].map((n) => (
-        <i key={n} className={n <= (level ?? 2) ? 'on' : ''} />
-      ))}
-    </span>
-  );
-}
-
 export function PlayerForm({ player, teamId, onClose, onSaved }: { player?: Player; teamId: string; onClose: () => void; onSaved: (p: Player) => void }) {
   const toast = useToast();
-  const [f, setF] = useState<Partial<Player>>(player ?? { level: 2 });
+  const [f, setF] = useState<Partial<Player>>(player ?? {});
   const [busy, setBusy] = useState(false);
   const save = async () => {
     if (!f.firstName?.trim()) return;
@@ -66,32 +57,7 @@ export function PlayerForm({ player, teamId, onClose, onSaved }: { player?: Play
             <input className="input" type="number" inputMode="numeric" min={0} max={99} value={f.number ?? ''} onChange={(e) => setF({ ...f, number: num(e.target.value) })} />
           </Field>
         </div>
-        <Field label="Aisance" hint="sert à équilibrer les groupes, jamais visible des parents">
-          <Seg
-            value={f.level ?? 2}
-            onChange={(level) => setF({ ...f, level })}
-            options={[
-              { value: 1 as const, label: 'En progression' },
-              { value: 2 as const, label: 'À l’aise' },
-              { value: 3 as const, label: 'Très à l’aise' },
-            ]}
-          />
-        </Field>
-        <Field label="Pied">
-          <Seg<string>
-            value={f.foot ?? ''}
-            onChange={(foot) => setF({ ...f, foot: (foot || undefined) as Player['foot'] })}
-            options={[
-              { value: '', label: '—' },
-              { value: 'droit', label: 'Droit' },
-              { value: 'gauche', label: 'Gauche' },
-              { value: 'deux', label: 'Les deux' },
-            ]}
-          />
-        </Field>
-        <Field label="Poste préféré">
-          <input className="input" value={f.position ?? ''} placeholder="Ex. : gardien, attaquant…" onChange={(e) => setF({ ...f, position: e.target.value })} />
-        </Field>
+        {!player && <p className="small muted">Postes, pied fort, évaluations et objectifs se remplissent ensuite sur sa fiche.</p>}
       </div>
     </Sheet>
   );
@@ -114,7 +80,7 @@ function BulkImport({ teamId, onClose, onDone }: { teamId: string; onClose: () =
   const go = async () => {
     setBusy(true);
     try {
-      for (const r of rows) await api.put(`/players/${uid()}`, { ...r, level: 2, teamId });
+      for (const r of rows) await api.put(`/players/${uid()}`, { ...r, teamId });
       toast(`${rows.length} joueurs ajoutés`);
       onDone();
       onClose();
@@ -145,14 +111,30 @@ function BulkImport({ teamId, onClose, onDone }: { teamId: string; onClose: () =
 export function Players() {
   const { team, can } = useApp();
   const nav = useNavigate();
-  const q = useAsync(() => (team ? api.get<Player[]>(`/teams/${team.id}/players`) : Promise.resolve([])), [team?.id]);
+  const q = useAsync(() => (team ? api.get<Player[]>(`/teams/${team.id}/players?followUp=1`) : Promise.resolve([])), [team?.id]);
+  const [sort, setSort] = useState<'name' | 'number' | 'follow'>('name');
   const [search, setSearch] = useState('');
   const [form, setForm] = useState(false);
   const [bulk, setBulk] = useState(false);
   const list = useMemo(() => {
     const n = search.trim().toLowerCase();
-    return (q.data ?? []).filter((p) => !n || playerName(p).toLowerCase().includes(n));
-  }, [q.data, search]);
+    const out = (q.data ?? []).filter((p) => !n || playerName(p).toLowerCase().includes(n));
+    if (sort === 'number') out.sort((a, b) => (a.number ?? 999) - (b.number ?? 999));
+    if (sort === 'follow') out.sort((a, b) => (b.followUp?.quietDays ?? 0) - (a.followUp?.quietDays ?? 0));
+    return out;
+  }, [q.data, search, sort]);
+  // Joueurs à suivre : pas d'observation depuis 4 semaines, objectif dépassé, certificat manquant ou expiré.
+  const watch = useMemo(() => {
+    const out: { p: Player; why: string; icon: React.ReactNode }[] = [];
+    for (const p of q.data ?? []) {
+      const f = p.followUp;
+      if (!f) continue;
+      if (f.overdueGoals) out.push({ p, why: `${f.overdueGoals} objectif${f.overdueGoals > 1 ? 's' : ''} à échéance dépassée`, icon: <Target size={14} /> });
+      else if (f.quietDays >= 28) out.push({ p, why: f.lastObservation ? `Pas d’observation depuis ${Math.floor(f.quietDays / 7)} semaines` : 'Aucune observation', icon: <AlertCircle size={14} /> });
+      else if (f.certificate === 'expired' || f.certificate === 'soon') out.push({ p, why: f.certificate === 'expired' ? 'Certificat expiré' : 'Certificat bientôt expiré', icon: <FileWarning size={14} /> });
+    }
+    return out;
+  }, [q.data]);
 
   if (!team) return <div className="page"><Empty icon={<Users />} title="Aucune équipe" /></div>;
 
@@ -173,9 +155,38 @@ export function Players() {
           </div>
         )}
       </div>
-      <div style={{ position: 'relative', marginBottom: 16 }}>
+      {watch.length > 0 && (
+        <div className="watch">
+          <b>À suivre cette semaine</b>
+          <div className="watch-list">
+            {watch.slice(0, 8).map(({ p, why, icon }) => (
+              <button key={p.id} onClick={() => nav(`/joueurs/${p.id}?tab=suivi`)}>
+                <Avatar name={playerName(p)} size="sm" />
+                <span>
+                  <b>{p.firstName}</b>
+                  <small>
+                    {icon} {why}
+                  </small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="row" style={{ gap: 10, marginBottom: 16 }}>
+      <div style={{ position: 'relative', flex: 1 }}>
         <Search size={17} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ink-3)' }} />
         <input className="input" style={{ paddingLeft: 38 }} placeholder="Rechercher un joueur…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+      <Seg
+        value={sort}
+        onChange={setSort}
+        options={[
+          { value: 'name', label: 'A–Z' },
+          { value: 'number', label: 'N°' },
+          { value: 'follow', label: 'À suivre' },
+        ]}
+      />
       </div>
       {q.loading && !q.data ? (
         <Spinner fill />
@@ -184,11 +195,24 @@ export function Players() {
           {list.map((p) => (
             <button key={p.id} className="p-tile" onClick={() => nav(`/joueurs/${p.id}`)}>
               {p.number !== undefined && <span className="p-num">{p.number}</span>}
-              <Avatar name={playerName(p)} size="lg" />
+              {p.followUp && (p.followUp.quietDays >= 28 || p.followUp.overdueGoals > 0) && <span className="p-alert" title="À suivre" />}
+              {p.profile?.domains && Object.keys(p.profile.domains).length ? (
+                <span className="p-radar">
+                  <Radar values={p.profile.domains} size={76} labels={false} />
+                  <span className="p-initials">{p.firstName.slice(0, 1)}</span>
+                </span>
+              ) : (
+                <Avatar name={playerName(p)} size="lg" />
+              )}
               <b className="ellipsis">{p.firstName}</b>
               <span className="p-meta">
+                {p.profile?.positions?.[0] && <span className="p-pos">{p.profile.positions[0]}</span>}
                 {p.birthYear && <span>{p.birthYear}</span>}
-                <LevelDots level={p.level} />
+                {!!p.followUp?.activeGoals && (
+                  <span title={`${p.followUp.activeGoals} objectif(s) en cours`}>
+                    <Target size={12} /> {p.followUp.activeGoals}
+                  </span>
+                )}
               </span>
             </button>
           ))}

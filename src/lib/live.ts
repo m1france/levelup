@@ -9,6 +9,12 @@ export type LiveMsg =
   | { t: 'reconnect' }
   | { t: 'exercise'; id: string; teamId: string | null; deleted: boolean; by?: string; updatedAt: number }
   | { t: 'training'; id: string; teamId: string; deleted?: boolean; by?: string }
+  | { t: 'conv'; eventId: string; date: string }
+  | { t: 'notif' }
+  | { t: 'chat'; threadId: string; messageId?: string }
+  | { t: 'chat-read'; threadId: string }
+  | { t: 'carpool'; eventId: string; date: string }
+  | { t: 'announcement'; id: string }
   | { t: 'presence'; exId: string; users: PresenceUser[] }
   | { t: 'state'; exId: string; from: string; userId: string; name: string; data: ExerciseData }
   | { t: 'cursor'; exId: string; from: string; userId: string; name: string; cursor: [number, number] | null; frame: number };

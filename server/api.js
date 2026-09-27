@@ -9,6 +9,12 @@ import {
 } from './auth.js';
 import { seedStarterLibrary, seedDemoTeam } from './demo.js';
 import { openStream, clientOf, setWatch, toRoom, toTeam, toTeamAndRoom, refreshTeams } from './live.js';
+import { convApi, convPublic, cleanConv, evTitle } from './convocations.js';
+import { occurrences, todayYMD, ymdAdd } from './occurrences.js';
+import { playersApi, playerOut } from './players.js';
+import { revealApi, revealPublic } from './reveal.js';
+import { socialApi } from './social.js';
+import { clubApi, clubPublic } from './club.js';
 
 export const api = Router();
 
@@ -155,6 +161,23 @@ api.post('/invites/:token', (req, res) => {
   res.json({ ok: true });
 });
 
+/* Fratrie : un parent déjà connecté rattache un autre enfant à son compte avec le lien d'invitation de l'équipe. */
+api.post('/invites/:token/attach', (req, res) => {
+  if (!req.user) throw new HttpError(401, 'Connexion requise');
+  if (req.user.role !== 'parent') throw new HttpError(400, 'Ce lien sert à ajouter un enfant à un compte parent');
+  const inv = findInvite(req.params.token);
+  if (inv.kind !== 'link' || inv.role !== 'parent') throw new HttpError(400, 'Ce lien ne permet pas d’ajouter un enfant');
+  const wanted = new Set(Array.isArray(req.body.playerIds) ? req.body.playerIds : []);
+  const ids = all('SELECT id FROM players WHERE team_id = ?', inv.team_id).map((r) => r.id).filter((id) => wanted.has(id));
+  if (!ids.length) throw new HttpError(400, 'Choisissez au moins un enfant');
+  tx(() => {
+    for (const id of ids) run('INSERT OR IGNORE INTO player_parents VALUES (?, ?)', id, req.user.id);
+    run('UPDATE invite_links SET uses = uses + 1 WHERE token = ?', inv.token);
+  });
+  refreshTeams([req.user.id]);
+  res.json({ ok: true, added: ids.length });
+});
+
 /* Tout ce qui suit nécessite d'être connecté, sauf le lien public de séance. */
 
 api.get('/public/trainings/:token', (req, res) => {
@@ -162,6 +185,11 @@ api.get('/public/trainings/:token', (req, res) => {
   if (!row) throw new HttpError(404, "Ce lien n'est plus actif");
   res.json(trainingPayload(row, { sanitize: true }));
 });
+
+/* Réponse aux disponibilités depuis un lien, sans compte. */
+api.use(convPublic);
+api.use(revealPublic);
+api.use(clubPublic);
 
 api.use(requireUser);
 
@@ -172,10 +200,10 @@ api.get('/me', (req, res) => {
     ? all(
         `SELECT p.id, p.team_id, p.data FROM player_parents pp JOIN players p ON p.id = pp.player_id WHERE pp.user_id = ?`,
         u.id,
-      ).map((r) => ({ ...parse(r), teamId: r.team_id, level: undefined }))
+      ).map((r) => playerOut(r, u))
     : [];
   res.json({
-    user: { id: u.id, name: u.name, email: u.email, role: u.role },
+    user: { id: u.id, name: u.name, email: u.email, role: u.role, phone: get('SELECT phone FROM users WHERE id = ?', u.id)?.phone ?? '' },
     perms: [...permsFor(u.role)],
     club,
     teams: listTeams(u),
@@ -186,6 +214,7 @@ api.get('/me', (req, res) => {
 api.patch('/me', (req, res) => {
   const name = str(req.body.name, 120);
   if (name) run('UPDATE users SET name = ? WHERE id = ?', name, req.user.id);
+  if (req.body.phone !== undefined) run('UPDATE users SET phone = ? WHERE id = ?', str(req.body.phone, 30), req.user.id);
   if (req.body.newPassword) {
     const row = get('SELECT password_hash FROM users WHERE id = ?', req.user.id);
     if (!checkPassword(String(req.body.currentPassword || ''), row.password_hash)) {
@@ -419,126 +448,13 @@ api.delete('/teams/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-/* ------------------------------------------------------------------ joueurs & pages joueurs */
+/* ------------------------------------------------------------------ joueurs, convocations */
 
-function playerOut(row, user) {
-  const p = { ...parse(row), teamId: row.team_id, updatedAt: row.updated_at };
-  if (!isStaff(user)) delete p.level;
-  return p;
-}
-
-function playerAccess(user, playerId) {
-  const row = get('SELECT * FROM players WHERE id = ?', playerId);
-  if (!row) throw new HttpError(404, 'Joueur introuvable');
-  if (isStaff(user)) needTeam(user, row.team_id);
-  else if (!childIdsFor(user).includes(playerId)) throw new HttpError(404, 'Joueur introuvable');
-  return row;
-}
-
-api.get('/teams/:teamId/players', (req, res) => {
-  needTeam(req.user, req.params.teamId);
-  let rows = all('SELECT * FROM players WHERE team_id = ?', req.params.teamId);
-  if (!isStaff(req.user)) {
-    const kids = childIdsFor(req.user);
-    rows = rows.filter((r) => kids.includes(r.id));
-  }
-  const players = rows.map((r) => playerOut(r, req.user));
-  players.sort((a, b) => (a.firstName || '').localeCompare(b.firstName || '', 'fr'));
-  res.json(players);
-});
-
-api.get('/players/:id', (req, res) => {
-  const row = playerAccess(req.user, req.params.id);
-  const u = req.user;
-  let notes = [];
-  if (isStaff(u) && can(u, 'notes.view')) {
-    notes = all(
-      `SELECT n.*, u.name author_name FROM player_notes n LEFT JOIN users u ON u.id = n.author_id WHERE player_id = ? ORDER BY created_at DESC`,
-      row.id,
-    );
-  } else if (!isStaff(u)) {
-    notes = all(
-      `SELECT n.*, u.name author_name FROM player_notes n LEFT JOIN users u ON u.id = n.author_id WHERE player_id = ? AND visibility = 'parents' ORDER BY created_at DESC`,
-      row.id,
-    );
-  }
-  const trainings = all('SELECT id, date, data FROM trainings WHERE team_id = ? ORDER BY date DESC', row.team_id)
-    .map((t) => ({ id: t.id, date: t.date, ...JSON.parse(t.data) }))
-    .filter((t) => Array.isArray(t.attendance));
-  const history = trainings.map((t) => ({ id: t.id, date: t.date, title: t.title, present: t.attendance.includes(row.id) }));
-  res.json({
-    player: playerOut(row, u),
-    notes: notes.map((n) => ({
-      id: n.id, playerId: n.player_id, authorId: n.author_id, authorName: n.author_name, kind: n.kind, text: n.text,
-      visibility: n.visibility, trainingId: n.training_id, createdAt: n.created_at, updatedAt: n.updated_at,
-    })),
-    attendance: { present: history.filter((h) => h.present).length, total: history.length, history: history.slice(0, 30) },
-    parents: isStaff(u)
-      ? all('SELECT u.id, u.name, u.email FROM player_parents pp JOIN users u ON u.id = pp.user_id WHERE pp.player_id = ?', row.id)
-      : [],
-  });
-});
-
-const PLAYER_FIELDS = ['firstName', 'lastName', 'birthYear', 'number', 'level', 'foot', 'position', 'color'];
-
-api.put('/players/:id', (req, res) => {
-  need(req.user, 'players.manage');
-  const id = checkId(req.params.id);
-  const teamId = req.body.teamId;
-  needTeam(req.user, teamId, { staff: true });
-  const existing = get('SELECT team_id FROM players WHERE id = ?', id);
-  if (existing) needTeam(req.user, existing.team_id);
-  const data = {};
-  for (const f of PLAYER_FIELDS) if (req.body[f] !== undefined) data[f] = typeof req.body[f] === 'string' ? str(req.body[f], 80) : req.body[f];
-  if (!data.firstName) throw new HttpError(400, 'Prénom requis');
-  if (existing) run('UPDATE players SET team_id = ?, data = ?, updated_at = ? WHERE id = ?', teamId, JSON.stringify(data), now(), id);
-  else run('INSERT INTO players VALUES (?, ?, ?, ?, ?)', id, teamId, JSON.stringify(data), now(), now());
-  res.json(playerOut(get('SELECT * FROM players WHERE id = ?', id), req.user));
-});
-
-api.delete('/players/:id', (req, res) => {
-  need(req.user, 'players.manage');
-  const row = playerAccess(req.user, req.params.id);
-  if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
-  run('DELETE FROM players WHERE id = ?', row.id);
-  res.json({ ok: true });
-});
-
-const NOTE_KINDS = ['force', 'faiblesse', 'objectif', 'remarque'];
-
-api.put('/notes/:id', (req, res) => {
-  need(req.user, 'notes.write');
-  const id = checkId(req.params.id);
-  const existing = get('SELECT * FROM player_notes WHERE id = ?', id);
-  const playerId = existing?.player_id ?? req.body.playerId;
-  playerAccess(req.user, playerId);
-  if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
-  if (existing && existing.author_id !== req.user.id && req.user.role !== 'admin') {
-    throw new HttpError(403, "Seul l'auteur peut modifier cette remarque");
-  }
-  const kind = NOTE_KINDS.includes(req.body.kind) ? req.body.kind : 'remarque';
-  const text = str(req.body.text, 4000);
-  if (!text) throw new HttpError(400, 'La remarque est vide');
-  const visibility = req.body.visibility === 'parents' ? 'parents' : 'staff';
-  if (existing) {
-    run('UPDATE player_notes SET kind = ?, text = ?, visibility = ?, updated_at = ? WHERE id = ?', kind, text, visibility, now(), id);
-  } else {
-    run(
-      'INSERT INTO player_notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      id, playerId, req.user.id, kind, text, visibility, str(req.body.trainingId, 64) || null, now(), now(),
-    );
-  }
-  res.json({ ok: true });
-});
-
-api.delete('/notes/:id', (req, res) => {
-  const n = get('SELECT * FROM player_notes WHERE id = ?', req.params.id);
-  if (!n) return res.json({ ok: true });
-  playerAccess(req.user, n.player_id);
-  if (n.author_id !== req.user.id && req.user.role !== 'admin') throw new HttpError(403, "Seul l'auteur peut supprimer cette remarque");
-  run('DELETE FROM player_notes WHERE id = ?', n.id);
-  res.json({ ok: true });
-});
+api.use(playersApi);
+api.use(convApi);
+api.use(revealApi);
+api.use(socialApi);
+api.use(clubApi);
 
 /* ------------------------------------------------------------------ exercices */
 
@@ -862,6 +778,7 @@ api.put('/events/:id', (req, res) => {
       count: Number(r.count) > 0 ? Math.min(200, Number(r.count)) : null,
     },
     exdates: Array.isArray(b.exdates) ? b.exdates.filter(ymd).slice(0, 400) : [],
+    conv: cleanConv(b.conv),
   };
   if (existing) run('UPDATE events SET team_id = ?, data = ?, updated_at = ? WHERE id = ?', b.teamId, JSON.stringify(data), now(), id);
   else run('INSERT INTO events VALUES (?, ?, ?, ?, ?)', id, b.teamId, JSON.stringify(data), now(), now());
@@ -879,10 +796,27 @@ api.delete('/events/:id', (req, res) => {
 
 /* ------------------------------------------------------------------ album souvenir */
 
-const photoOut = (r) => ({
-  id: r.id, teamId: r.team_id, authorId: r.author_id, authorName: r.author_name ?? null, caption: r.caption,
-  width: r.width, height: r.height, takenAt: r.taken_at, createdAt: r.created_at,
-});
+const PHOTO_REACTIONS = ['❤️', '👏', '🔥', '😍', '⚽'];
+
+function photoOut(r, user) {
+  const reactions = all('SELECT emoji, user_id FROM photo_reactions WHERE photo_id = ?', r.id);
+  const counts = {};
+  for (const x of reactions) counts[x.emoji] = (counts[x.emoji] ?? 0) + 1;
+  const ev = r.event_id ? get('SELECT data FROM events WHERE id = ?', r.event_id) : null;
+  const conv = r.event_id ? get('SELECT data FROM convocations WHERE event_id = ? AND date = ?', r.event_id, r.event_date) : null;
+  const score = conv ? JSON.parse(conv.data).match : null;
+  return {
+    id: r.id, teamId: r.team_id, authorId: r.author_id, authorName: r.author_name ?? null, caption: r.caption,
+    width: r.width, height: r.height, takenAt: r.taken_at, createdAt: r.created_at,
+    tags: all('SELECT t.player_id id, p.data FROM photo_tags t JOIN players p ON p.id = t.player_id WHERE photo_id = ?', r.id).map((t) => ({ id: t.id, firstName: JSON.parse(t.data).firstName })),
+    reactions: counts,
+    myReaction: user ? reactions.find((x) => x.user_id === user.id)?.emoji ?? null : null,
+    event: ev ? {
+      id: r.event_id, date: r.event_date, title: evTitle(JSON.parse(ev.data)), type: JSON.parse(ev.data).type,
+      score: score?.finished ? { us: score.score?.us ?? 0, them: score.score?.them ?? 0 } : null,
+    } : null,
+  };
+}
 
 api.get('/teams/:teamId/photos', (req, res) => {
   needTeam(req.user, req.params.teamId);
@@ -890,8 +824,21 @@ api.get('/teams/:teamId/photos', (req, res) => {
     all(
       `SELECT p.*, u.name author_name FROM photos p LEFT JOIN users u ON u.id = p.author_id WHERE team_id = ? ORDER BY taken_at DESC`,
       req.params.teamId,
-    ).map(photoOut),
+    ).map((r) => photoOut(r, req.user)),
   );
+});
+
+/** Matchs et événements récents de l'équipe, pour ranger une photo. */
+api.get('/teams/:teamId/photo-events', (req, res) => {
+  needTeam(req.user, req.params.teamId);
+  const today = todayYMD();
+  const out = [];
+  for (const r of all('SELECT * FROM events WHERE team_id = ?', req.params.teamId)) {
+    const e = { ...JSON.parse(r.data), id: r.id };
+    if (e.type === 'training') continue;
+    for (const date of occurrences(e, ymdAdd(today, -60), ymdAdd(today, 1))) out.push({ id: e.id, date, title: evTitle(e) });
+  }
+  res.json(out.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20));
 });
 
 function decodeImage(dataUrl, maxBytes) {
@@ -911,12 +858,15 @@ api.post('/teams/:teamId/photos', (req, res) => {
   writeFileSync(join(UPLOADS, `${id}.jpg`), full);
   writeFileSync(join(UPLOADS, `${id}_t.jpg`), thumb);
   const takenAt = Number(req.body.takenAt) || now();
+  const ev = req.body.eventId ? get('SELECT id FROM events WHERE id = ? AND team_id = ?', String(req.body.eventId), req.params.teamId) : null;
+  const evDate = ev && /^\d{4}-\d{2}-\d{2}$/.test(req.body.eventDate || '') ? req.body.eventDate : null;
   run(
-    'INSERT INTO photos VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO photos (id, team_id, author_id, caption, width, height, taken_at, created_at, event_id, event_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     id, req.params.teamId, req.user.id, str(req.body.caption, 200),
-    Math.max(1, Number(req.body.width) || 1), Math.max(1, Number(req.body.height) || 1), takenAt, now(),
+    Math.max(1, Number(req.body.width) || 1), Math.max(1, Number(req.body.height) || 1), takenAt, now(), ev && evDate ? ev.id : null, ev && evDate ? evDate : null,
   );
-  res.json(photoOut(get('SELECT * FROM photos WHERE id = ?', id)));
+  setPhotoTags(id, req.params.teamId, req.body.tags);
+  res.json(photoOut(get('SELECT * FROM photos WHERE id = ?', id), req.user));
 });
 
 function photoAccess(user, id) {
@@ -935,6 +885,34 @@ api.get('/photos/:id/:size', (req, res) => {
 function canEditPhoto(user, p) {
   return user.role === 'admin' || p.author_id === user.id || (isStaff(user) && can(user, 'album.manage'));
 }
+
+function setPhotoTags(photoId, teamId, tags) {
+  if (!Array.isArray(tags)) return;
+  const ids = new Set(all('SELECT id FROM players WHERE team_id = ?', teamId).map((r) => r.id));
+  run('DELETE FROM photo_tags WHERE photo_id = ?', photoId);
+  for (const pid of tags) if (ids.has(pid)) run('INSERT OR IGNORE INTO photo_tags VALUES (?, ?)', photoId, pid);
+}
+
+/** Enfants présents sur la photo : les parents retrouvent toutes les photos de leur enfant. */
+api.put('/photos/:id/tags', (req, res) => {
+  const p = photoAccess(req.user, req.params.id);
+  if (!canEditPhoto(req.user, p)) throw new HttpError(403, 'Action non autorisée');
+  setPhotoTags(p.id, p.team_id, req.body.tags);
+  if (req.body.eventId !== undefined) {
+    const ev = req.body.eventId ? get('SELECT id FROM events WHERE id = ? AND team_id = ?', String(req.body.eventId), p.team_id) : null;
+    run('UPDATE photos SET event_id = ?, event_date = ? WHERE id = ?', ev?.id ?? null, ev ? String(req.body.eventDate || '').slice(0, 10) : null, p.id);
+  }
+  res.json(photoOut(get('SELECT * FROM photos WHERE id = ?', p.id), req.user));
+});
+
+api.post('/photos/:id/react', (req, res) => {
+  const p = photoAccess(req.user, req.params.id);
+  const emoji = PHOTO_REACTIONS.includes(req.body.emoji) ? req.body.emoji : null;
+  const cur = get('SELECT emoji FROM photo_reactions WHERE photo_id = ? AND user_id = ?', p.id, req.user.id);
+  if (!emoji || cur?.emoji === emoji) run('DELETE FROM photo_reactions WHERE photo_id = ? AND user_id = ?', p.id, req.user.id);
+  else run('INSERT INTO photo_reactions VALUES (?, ?, ?, ?) ON CONFLICT(photo_id, user_id) DO UPDATE SET emoji = excluded.emoji', p.id, req.user.id, emoji, now());
+  res.json(photoOut(get('SELECT * FROM photos WHERE id = ?', p.id), req.user));
+});
 
 api.patch('/photos/:id', (req, res) => {
   const p = photoAccess(req.user, req.params.id);

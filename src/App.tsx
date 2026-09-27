@@ -6,6 +6,15 @@ import { ApiError, api } from './lib/api';
 import { AppProvider, useApp } from './lib/store';
 import type { Me } from './lib/types';
 import { Album } from './pages/Album';
+import { AnnouncementPage, Announcements } from './pages/Announcements';
+import { Club } from './pages/Club';
+import { BulletinPage } from './pages/BulletinPage';
+import { Answer } from './pages/Answer';
+import { ConvocationPage } from './pages/Convocation';
+import { Matches } from './pages/Matches';
+import { Messages } from './pages/Messages';
+import { MatchLive } from './pages/MatchLive';
+import { PublicReveal, RevealPage } from './pages/Reveal';
 import { Settings } from './pages/Admin';
 import { Invite, Login, Setup } from './pages/Auth';
 import { Dashboard } from './pages/Dashboard';
@@ -25,6 +34,20 @@ export function App() {
     return (
       <Routes>
         <Route path="/s/:token" element={<PublicTraining />} />
+      </Routes>
+    );
+  }
+  if (loc.pathname.startsWith('/m/')) {
+    return (
+      <Routes>
+        <Route path="/m/:token" element={<PublicReveal />} />
+      </Routes>
+    );
+  }
+  if (loc.pathname.startsWith('/r/')) {
+    return (
+      <Routes>
+        <Route path="/r/:token" element={<Answer />} />
       </Routes>
     );
   }
@@ -81,9 +104,16 @@ function AppRoutes() {
         <Route path="parametres" element={<Settings />} />
         <Route path="compte" element={<Navigate to="/parametres" replace />} />
         <Route path="exercices" element={<Library />} />
+        <Route path="matchs" element={<Matches />} />
+        <Route path="messages" element={<Messages />} />
+        <Route path="annonces" element={<Announcements />} />
+        <Route path="annonces/:id" element={<AnnouncementPage />} />
+        <Route path="messages/:threadId" element={<Messages />} />
+        <Route path="matchs/:eventId/:date" element={<ConvocationPage />} />
         {isStaff && (
           <>
             <Route path="joueurs" element={<Players />} />
+            <Route path="club" element={<Club />} />
             <Route path="admin" element={<Navigate to="/parametres?tab=membres" replace />} />
           </>
         )}
@@ -92,6 +122,9 @@ function AppRoutes() {
       </Route>
       <Route path="exercices/:id" element={<ExerciseEditor />} />
       {isStaff && <Route path="seances/:id/live" element={<Live />} />}
+      {isStaff && <Route path="matchs/:eventId/:date/live" element={<MatchLive />} />}
+      <Route path="matchs/:eventId/:date/cartes" element={<RevealPage />} />
+      <Route path="bulletins/:id" element={<BulletinPage />} />
     </Routes>
   );
 }

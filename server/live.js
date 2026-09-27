@@ -92,3 +92,9 @@ export function toTeamAndRoom(teamId, exerciseId, msg, except = null) {
 export function refreshTeams(userIds) {
   for (const c of clients.values()) if (!userIds || userIds.includes(c.user.id)) send(c, { t: 'reconnect' });
 }
+
+/** À tous les onglets ouverts de ces utilisateurs (notifications). */
+export function toUsers(userIds, msg) {
+  const set = new Set(userIds);
+  for (const c of clients.values()) if (set.has(c.user.id)) send(c, msg);
+}

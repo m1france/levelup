@@ -236,10 +236,12 @@ const NAMES = [
   ['Hugo', 2018, 2], ['Noé', 2019, 3], ['Kaïs', 2018, 2], ['Chloé', 2019, 1], ['Malo', 2018, 2], ['Ibrahim', 2019, 1],
 ];
 
+const localYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 function nextWednesday() {
   const d = new Date();
   d.setDate(d.getDate() + ((3 - d.getDay() + 7) % 7 || 7));
-  return `${d.toISOString().slice(0, 10)}T14:00`;
+  return `${localYMD(d)}T14:00`;
 }
 
 export function seedDemoTeam(adminId) {
@@ -286,24 +288,106 @@ export function seedDemoTeam(adminId) {
   };
   run('INSERT INTO trainings VALUES (?, ?, ?, 0, NULL, ?, ?, ?)', newId(), teamId, nextWednesday(), JSON.stringify(training), now(), now());
 
-  const note = (i, kind, text, visibility = 'staff') =>
-    run('INSERT INTO player_notes VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)', newId(), ids[i], adminId, kind, text, visibility, now(), now());
-  note(0, 'force', 'Très bonne conduite de balle, garde le ballon près du pied même en accélérant.');
-  note(0, 'faiblesse', 'Ne lève pas assez la tête, oublie ses partenaires démarqués.');
-  note(0, 'objectif', 'Faire au moins une passe avant de tirer pendant les matchs.');
-  note(3, 'remarque', 'Un peu timide en début de séance, se lâche pendant les jeux. À encourager.');
-  note(3, 'force', 'Super attitude, toujours la première à ranger le matériel !', 'parents');
-  note(4, 'faiblesse', 'Frappe uniquement du pied droit.');
+  // Fiches : évaluations, observations et objectifs pour quelques joueurs.
+  const skills = ['conduite', 'passe', 'controle', 'frappe', 'dribble', 'vitesse', 'endurance', 'coordination', 'equilibre',
+    'placement', 'vision', 'repli', 'demarquage', 'concentration', 'confiance', 'combativite', 'frustration', 'ecoute', 'equipe', 'respect', 'assiduite'];
+  const positions = [['BU', 'AG'], ['MC'], ['DC'], ['GB'], ['AD', 'BU'], ['MG'], ['DC', 'MDC'], ['MC', 'MOC']];
+  const day = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  ids.forEach((id, i) => {
+    const level = NAMES[i][2];
+    const rnd = (k) => Math.max(1, Math.min(5, level + 1 + (((i * 7 + k * 3) % 5) - 2 > 0 ? 1 : ((i + k) % 4 === 0 ? -1 : 0))));
+    const ratings = Object.fromEntries(skills.map((s, k) => [s, rnd(k)]));
+    const before = Object.fromEntries(Object.entries(ratings).map(([k, v]) => [k, Math.max(1, v - ((i + k.length) % 3 === 0 ? 1 : 0))]));
+    const avg = (r, keys) => +(keys.reduce((a, k) => a + r[k], 0) / keys.length).toFixed(2);
+    const domains = (r) => ({
+      tech: avg(r, skills.slice(0, 5)), phys: avg(r, skills.slice(5, 9)), tact: avg(r, skills.slice(9, 13)),
+      mental: avg(r, skills.slice(13, 17)), behav: avg(r, skills.slice(17)),
+    });
+    const profile = {
+      ratings, foot: i % 5 === 2 ? 'gauche' : i % 7 === 3 ? 'deux' : 'droit', weakFoot: 1 + (i % 3), positions: positions[i % positions.length],
+      history: [{ at: day(-40), d: domains(before) }, { at: day(-3), d: domains(ratings) }],
+    };
+    const data = { firstName: NAMES[i][0], birthYear: NAMES[i][1], level, number: i + 1, profile };
+    run('UPDATE players SET data = ?, created_at = ? WHERE id = ?', JSON.stringify(data), now() - 60 * 864e5, id);
+  });
+  const obs = (i, trend, skill, text, visibility = 'staff', daysAgo = 3) =>
+    run('INSERT INTO player_observations VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)', newId(), ids[i], adminId, skill, trend, text, visibility, now() - daysAgo * 864e5, now() - daysAgo * 864e5);
+  obs(0, 'up', 'conduite', 'Très bonne conduite de balle, garde le ballon près du pied même en accélérant.', 'staff', 12);
+  obs(0, 'down', 'vision', 'Ne lève pas assez la tête, oublie ses partenaires démarqués.', 'staff', 5);
+  obs(3, 'flat', 'confiance', 'Un peu timide en début de séance, se lâche pendant les jeux. À encourager.', 'staff', 9);
+  obs(3, 'up', 'equipe', 'Super attitude, toujours la première à ranger le matériel !', 'parents', 2);
+  const goal = (i, title, domain, skill, progress, dueIn, visibility = 'staff') =>
+    run('INSERT INTO player_objectives VALUES (?, ?, ?, ?, ?, ?, ?)', newId(), ids[i], adminId, JSON.stringify({
+      title, domain, skill, due: day(dueIn), status: 'active', progress, doneAt: null,
+      checkins: progress ? [{ at: now() - 4 * 864e5, note: 'Deux passes avant de tirer pendant le jeu', progress, by: 'Éducateur' }] : [],
+    }), visibility, now() - 20 * 864e5, now());
+  goal(0, 'Faire une passe avant de tirer en match', 'tact', 'vision', 50, 21, 'parents');
+  goal(4, 'Réussir ses passes du pied gauche', 'tech', 'passe', 25, 30);
 
   // Calendrier : entraînement tous les mercredis et un match le samedi suivant.
   const wed = nextWednesday().slice(0, 10);
   const sat = new Date(`${wed}T12:00`);
   sat.setDate(sat.getDate() + 3);
-  const ev = (data) => run('INSERT INTO events VALUES (?, ?, ?, ?, ?)', newId(), teamId, JSON.stringify({
+  const ev = (data) => {
+    const id = newId();
+    run('INSERT INTO events VALUES (?, ?, ?, ?, ?)', id, teamId, JSON.stringify({
     title: '', allDay: false, endTime: '', meetTime: '', location: '', opponent: '', venue: '', notes: '', color: '',
     parents: true, exdates: [], recurrence: { freq: 'none', interval: 1, days: [], until: null, count: null }, ...data,
-  }), now(), now());
+    }), now(), now());
+    return id;
+  };
   ev({ type: 'training', title: 'Entraînement', start: wed, time: '14:00', endTime: '15:30', location: 'Stade municipal',
     recurrence: { freq: 'weekly', interval: 1, days: [3], until: null, count: null } });
-  ev({ type: 'match', start: sat.toISOString().slice(0, 10), time: '10:00', meetTime: '09:15', opponent: 'Teyran', venue: 'away', location: 'Stade de Teyran' });
+  const matchId = ev({ type: 'match', start: localYMD(sat), time: '10:00', meetTime: '09:15', opponent: 'Teyran', venue: 'away', location: 'Stade de Teyran' });
+
+  // Vie d'équipe : discussion, sondage, « qui apporte quoi », covoiturage pour le prochain match.
+  const thread = newId();
+  const t0 = now() - 2 * 3600e3;
+  run(`INSERT INTO chat_threads VALUES (?, 'team', ?, '', NULL, ?, ?)`, thread, teamId, t0, now());
+  const msg = (kind, body, data, at) => run('INSERT INTO chat_messages VALUES (?, ?, ?, ?, ?, ?, ?, 0)', newId(), thread, adminId, kind, body, JSON.stringify(data), at);
+  msg('text', 'Bienvenue dans la discussion de l’équipe 👋 Ici : infos, covoiturage, photos. Pensez à activer les notifications !', {}, t0);
+  msg('poll', '', { question: 'Tenue pour la photo d’équipe ?', multi: false, options: [{ id: 'o1', label: 'Maillot vert' }, { id: 'o2', label: 'Maillot blanc' }] }, t0 + 60e3);
+  msg('tasks', '', { title: 'Match à Teyran', date: localYMD(sat), items: [{ id: 'i1', label: '🍪 Goûter' }, { id: 'i2', label: '💧 Bouteilles d’eau' }, { id: 'i3', label: '👕 Laver les maillots' }] }, t0 + 120e3);
+  const offer = newId();
+  run(`INSERT INTO carpool VALUES (?, ?, ?, ?, 'offer', 'both', 3, 'Parking du stade municipal', '08:45', 'Rehausseur disponible', NULL, ?)`, offer, matchId, localYMD(sat), adminId, now());
+  msg('carpool', '', { offerId: offer, eventId: matchId, date: localYMD(sat) }, t0 + 180e3);
+
+  // Trois matchs déjà joués : convocations publiées et temps de jeu, pour que l'équité ait de la matière.
+  const past = [
+    { d: -21, opponent: 'Castelnau', score: [3, 1], venue: 'home' },
+    { d: -14, opponent: 'Lattes', score: [2, 2], venue: 'away' },
+    { d: -7, opponent: 'Jacou', score: [4, 3], venue: 'home' },
+  ];
+  past.forEach((m, k) => {
+    const eid = newId();
+    const date = day(m.d);
+    run('INSERT INTO events VALUES (?, ?, ?, ?, ?)', eid, teamId, JSON.stringify({
+      type: 'match', title: '', start: date, allDay: false, time: '10:00', endTime: '11:30', meetTime: '09:15', location: m.venue === 'home' ? 'Stade municipal' : `Stade de ${m.opponent}`,
+      opponent: m.opponent, venue: m.venue, notes: '', color: '', parents: true, exdates: [], recurrence: { freq: 'none', interval: 1, days: [], until: null, count: null },
+    }), now(), now());
+    // Rotation imparfaite : certains jouent plus que d'autres.
+    const sel = ids.filter((_, i) => (i + k) % 9 !== 0 && (i + k * 2) % 7 !== 1).slice(0, 10);
+    const unavailable = ids.find((id) => !sel.includes(id));
+    const seconds = Object.fromEntries(sel.map((id, i) => [id, (i < 8 ? 38 : 16) * 60 + ((i * 97) % 300)]));
+    const events = [];
+    for (let g = 0; g < m.score[0]; g++) events.push({ id: newId(6), t: 'goal', pid: sel[(g * 3 + k) % 6], period: 1 + (g % 2), sec: 300 + g * 200 });
+    for (let g = 0; g < m.score[1]; g++) events.push({ id: newId(6), t: 'against', period: 1 + (g % 2), sec: 400 + g * 180 });
+    const roles = Object.fromEntries(sel.map((id, i) => [id, { [['GB', 'DG', 'DC', 'DD', 'MG', 'MC', 'MD', 'BU'][i % 8]]: seconds[id] }]));
+    const match = {
+      roles,
+      formation: '3-3-1', field: sel.slice(0, 8), absent: [], starters: sel.slice(0, 8), period: 2, running: false, since: null, elapsed: 1500,
+      seconds, events, score: { us: m.score[0], them: m.score[1] }, started: true, finished: true,
+    };
+    const published = new Date(`${day(m.d - 3)}T19:30`).getTime();
+    run('INSERT INTO convocations VALUES (?, ?, ?, ?, ?, ?)', eid, date, teamId, JSON.stringify({
+      selection: sel, message: '', notified: Object.fromEntries(ids.map((id) => [id, sel.includes(id) ? 'in' : 'out'])), match,
+      summary: { text: k === 2 ? 'Match plein d’envie, bravo à tous pour les efforts défensifs !' : '', at: now() },
+    }), published, now());
+    for (const id of sel) run('INSERT INTO availability VALUES (?, ?, ?, ?, ?, NULL, ?)', eid, date, id, 'yes', '', published - 864e5);
+    if (unavailable) run('INSERT INTO availability VALUES (?, ?, ?, ?, ?, NULL, ?)', eid, date, unavailable, 'no', 'Anniversaire', published - 864e5);
+  });
 }

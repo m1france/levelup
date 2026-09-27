@@ -2,13 +2,20 @@ import { ArrowDownUp, Check, ChevronRight, Eye, Play, Plus } from 'lucide-react'
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LivePitch, SceneThumb, coverToExercise } from '../components/Pitch';
-import { Calendar } from '../components/Calendar';
+import { Calendar, hasConv } from '../components/Calendar';
+import { matchPath } from '../lib/convocations';
+import { CarpoolSpotlight } from '../components/Carpool';
+import { PlayerAvatar } from '../components/PlayerAvatar';
+import { PushCard } from '../components/Notifications';
+import { TicketRail } from '../components/Tickets';
 import { Spinner, useAsync, useToast } from '../components/ui';
+import { ConvCard, useTickets } from './Matches';
+import { AnnouncementCard } from './Announcements';
 import { api } from '../lib/api';
 import { useLive } from '../lib/live';
 import { MONTHS_LONG, agenda, formatTime, relativeDay, toYMD } from '../lib/events';
 import { dateTile, todayISO, useApp } from '../lib/store';
-import type { ExerciseData, TeamEvent, Training } from '../lib/types';
+import type { Announcement, ConvSnapshot, ExerciseData, TeamEvent, Ticket, Training } from '../lib/types';
 import { HERO_PALETTE } from '../pitch/render';
 import { createTraining, totalMinutes } from './Trainings';
 
@@ -161,15 +168,20 @@ export function Dashboard() {
   const [byMonth, setByMonth] = useState(false);
   const q = useAsync(async () => {
     if (!team) return null;
-    const [trainings, events] = await Promise.all([
+    const [trainings, events, convs] = await Promise.all([
       api.get<Training[]>(`/teams/${team.id}/trainings`),
       api.get<TeamEvent[]>(`/teams/${team.id}/events`),
+      isStaff ? api.get<ConvSnapshot[]>(`/teams/${team.id}/convocations`).catch(() => []) : Promise.resolve([] as ConvSnapshot[]),
     ]);
-    return { trainings, events };
+    return { trainings, events, convs };
   }, [team?.id]);
+  const tickets = useTickets();
+  const anns = useAsync(() => api.get<Announcement[]>('/announcements'), []);
+  const freshAnns = (anns.data ?? []).filter((a) => a.target && (!a.read || (a.important && Date.now() - a.createdAt < 3 * 864e5))).slice(0, 3);
   // Séances créées ou modifiées par les autres éducateurs, et exercices de couverture.
   useLive((m) => {
     if ((m.t === 'training' || m.t === 'exercise') && m.teamId === team?.id) q.reload();
+    if (m.t === 'conv' && isStaff) q.reload();
   });
 
   const newTraining = async () => {
@@ -186,6 +198,16 @@ export function Dashboard() {
   const canPlan = isStaff && can('trainings.manage');
   const next = d ? nextItem(d.events, d.trainings) : null;
   const all = [...upcoming, ...past];
+  const now = Date.now();
+  // Éducateur : convocations à préparer dans les 10 prochains jours, en tête d'accueil.
+  const todo = (d?.convs ?? []).filter((c) => c.timeline.start > now && c.timeline.start - now < 10 * 864e5 && c.phase !== 'published');
+  // Parent : billets des prochains matchs (et le dernier résultat de moins de 2 jours).
+  // Ce qui demande une action d'abord (répondre), puis les prochains matchs, puis les résultats récents.
+  const rank = (t: Ticket) => (t.result ? 2 : t.status === 'to_answer' ? 0 : 1);
+  const myTickets = (tickets.data ?? [])
+    .filter((t) => t.timeline.start + 2 * 864e5 > now)
+    .sort((a, b) => rank(a) - rank(b) || a.timeline.start - b.timeline.start)
+    .slice(0, 6);
 
   const action = hero ? (
     canPlan ? (
@@ -208,7 +230,10 @@ export function Dashboard() {
       <div className="home-head">
         <h1>Bonjour {me.user.name.split(' ')[0]}</h1>
         {next && (
-          <button className="next-ev" onClick={() => next.training && nav(`/seances/${next.training.id}`)}>
+          <button
+            className="next-ev"
+            onClick={() => (next.training ? nav(`/seances/${next.training.id}`) : next.event && hasConv(next.event) && nav(matchPath(next.event.id, next.date)))}
+          >
             <i style={{ background: next.color }} />
             <span>
               <b>{relativeDay(next.date)}{next.time ? ` · ${formatTime(next.time)}` : ''}</b> : {next.title}
@@ -220,6 +245,63 @@ export function Dashboard() {
         <Spinner fill />
       ) : (
         <>
+          {freshAnns.length > 0 && (
+            <div className="home-ann">
+              {freshAnns.map((a) => (
+                <AnnouncementCard key={a.id} a={a} onOpen={() => nav(`/annonces/${a.id}`)} />
+              ))}
+            </div>
+          )}
+          {!isStaff && me.children.length > 1 && (
+            <div className="family-strip">
+              {me.children.map((c) => {
+                const t = me.teams.find((x) => x.id === c.teamId);
+                return (
+                  <button key={c.id} onClick={() => nav(`/joueurs/${c.id}`)}>
+                    <PlayerAvatar player={c} size={40} />
+                    <span>
+                      <b>{c.firstName}</b>
+                      <small>{t?.category}</small>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {!isStaff && (
+            <section className="home-matches">
+              <PushCard compact />
+              {myTickets.length > 0 && (
+                <>
+                  <div className="sec-head">
+                    <h2>Prochains matchs</h2>
+                    <button className="plain-toggle" onClick={() => nav('/matchs')}>
+                      Tout voir
+                    </button>
+                  </div>
+                  <TicketRail tickets={myTickets} onChanged={tickets.reload} />
+                </>
+              )}
+            </section>
+          )}
+          {isStaff && todo.length > 0 && (
+            <section className="home-matches">
+              <div className="sec-head">
+                <h2>Convocations à préparer</h2>
+                <button className="plain-toggle" onClick={() => nav('/matchs')}>
+                  Tout voir
+                </button>
+              </div>
+              <div className="stack" style={{ gap: 10 }}>
+                {todo.slice(0, 3).map((c) => (
+                  <ConvCard key={`${c.eventId}:${c.date}`} c={c} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          <CarpoolSpotlight onOpen={(c) => nav(`${matchPath(c.eventId, c.date)}?covoiturage=1`)} />
+
           <Hero training={hero} action={action} />
 
           {team && d && (

@@ -105,13 +105,18 @@ export function Invite() {
   const { token } = useParams();
   const nav = useNavigate();
   const info = useAsync(() => api.get<InviteInfo>(`/invites/${token}`), [token]);
+  // Parent déjà connecté : le lien sert à rattacher un autre enfant au même compte (fratrie).
+  const meQ = useAsync(() => api.get<{ user: { name: string; role: string } }>('/me').catch(() => null), []);
+  const [attachIds, setAttachIds] = useState<string[]>([]);
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [f, setF] = useState({ name: '', email: '', password: '', playerIds: [] as string[] });
   const { error, busy, submit } = useSubmit(async () => {
     await api.post(`/invites/${token}`, f);
     nav('/', { replace: true });
     location.reload();
   });
-  if (info.loading) return <Spinner fill />;
+  if (info.loading || meQ.loading) return <Spinner fill />;
   if (info.error || !info.data)
     return (
       <div className="auth">
@@ -124,6 +129,50 @@ export function Invite() {
     );
   const inv = info.data;
   const open = inv.kind === 'link';
+  const signedParent = meQ.data?.user.role === 'parent';
+  if (open && inv.role === 'parent' && signedParent) {
+    return (
+      <div className="auth">
+        <div className="auth-card">
+          <img className="logo" src="/icon.svg" alt="" />
+          <h1>Ajouter un enfant</h1>
+          <p className="lead">
+            Connecté en tant que <b>{meQ.data!.user.name}</b>. Choisissez l’enfant à rattacher à votre compte : vous suivrez toute la fratrie au même endroit.
+          </p>
+          <div className="chips" style={{ marginBottom: 16 }}>
+            {inv.players.map((p) => (
+              <button
+                type="button"
+                key={p.id}
+                className={`chip${attachIds.includes(p.id) ? ' on' : ''}`}
+                onClick={() => setAttachIds(attachIds.includes(p.id) ? attachIds.filter((x) => x !== p.id) : [...attachIds, p.id])}
+              >
+                {[p.firstName, p.lastName].filter(Boolean).join(' ')}
+              </button>
+            ))}
+          </div>
+          {attachError && <div className="form-error" style={{ marginBottom: 12 }}>{attachError}</div>}
+          <button
+            className="btn primary lg block"
+            disabled={!attachIds.length || attachBusy}
+            onClick={async () => {
+              setAttachBusy(true);
+              setAttachError(null);
+              try {
+                await api.post(`/invites/${token}/attach`, { playerIds: attachIds });
+                location.href = '/';
+              } catch (e) {
+                setAttachError((e as Error).message);
+                setAttachBusy(false);
+              }
+            }}
+          >
+            Ajouter à mon compte
+          </button>
+        </div>
+      </div>
+    );
+  }
   const togglePlayer = (id: string) =>
     setF({ ...f, playerIds: f.playerIds.includes(id) ? f.playerIds.filter((x) => x !== id) : [...f.playerIds, id] });
   return (
