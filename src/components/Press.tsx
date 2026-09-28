@@ -1,12 +1,12 @@
 /**
  * Réglages de la conférence de presse (onglet des paramètres) et carte « annonce » de la fiche joueur :
- * présentateurs (photo → tête 3D sculptée automatiquement, coiffure, voix Fish Audio ou clonage de leur voix),
- * textes, aperçu 3D en direct.
+ * présentateurs (coiffure, voix Fish Audio ou clonage de leur voix), textes, aperçu 3D de la salle en direct ;
+ * sur la fiche joueur : prononciation du prénom et photo en pied affichée dans l'éclair.
  */
-import { AlertTriangle, Camera, Check, Mic, Pause, Play, Square, Trash2, Upload, Volume2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { AlertTriangle, ImagePlus, Mic, Pause, Play, Square, Trash2, Upload, Volume2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../lib/api';
-import { preparePhoto } from '../lib/images';
+import { prepareFullPhoto } from '../lib/images';
 import { useApp } from '../lib/store';
 import type { HairStyle, Player, PressSettings } from '../lib/types';
 import { Field, Spinner, useAsync, useToast } from './ui';
@@ -149,29 +149,19 @@ export function Recorder({ url, onSave, onDelete, maxSec = 30, label, disabled }
 /* ------------------------------------------------------------------ aperçu 3D */
 
 type Presenter = PressSettings['presenters'][number];
-type View = 'room' | number;
 
 interface PreviewScene {
-  setTalk: (v: number) => void;
   dispose: () => void;
-  setSpeaker: (i: number) => void;
-  cue: (c: 'orbit' | 'portrait') => void;
+  cue: (c: 'orbit') => void;
 }
 
-/** La salle de presse en direct avec les réglages en cours : vue d'ensemble ou gros plan sur un présentateur (qui parle). */
-function Preview3D({ presenters, group, club, logo, color, view }: { presenters: Presenter[]; group: string; club: string; logo: string | null; color: string; view: View }) {
+/** La salle de presse en direct avec les réglages en cours, en plan d'ensemble. */
+function Preview3D({ presenters, group, club, logo, color }: { presenters: Presenter[]; group: string; club: string; logo: string | null; color: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const scene = useRef<PreviewScene | null>(null);
   const [err, setErr] = useState(false);
   const [busy, setBusy] = useState(true);
-  const key = JSON.stringify(presenters.map((p) => [p.name, p.role, p.photoUrl, p.style, p.hair, p.cap, p.number]));
-  const apply = (s: PreviewScene) => {
-    if (view === 'room') s.cue('orbit');
-    else {
-      s.setSpeaker(view);
-      s.cue('portrait');
-    }
-  };
+  const key = JSON.stringify(presenters.map((p) => [p.name, p.role, p.style, p.hair, p.cap]));
   useEffect(() => {
     let alive = true;
     setBusy(true);
@@ -179,7 +169,7 @@ function Preview3D({ presenters, group, club, logo, color, view }: { presenters:
       void Promise.all([import('../press/scene'), import('../press/textures')])
         .then(async ([{ PressScene }, { clubLook }]) =>
           PressScene.create(ref.current!, {
-            presenters: presenters.map((p) => ({ name: p.name, role: p.role, photo: p.photoUrl, landmarks: p.landmarks, style: p.style, hair: p.hair, cap: p.cap, number: p.number })),
+            presenters: presenters.map((p) => ({ name: p.name, role: p.role, style: p.style, hair: p.hair, cap: p.cap })),
             speaker: 0,
             logo,
             club,
@@ -192,7 +182,7 @@ function Preview3D({ presenters, group, club, logo, color, view }: { presenters:
           if (!alive) return s.dispose();
           scene.current?.dispose();
           scene.current = s;
-          apply(s);
+          s.cue('orbit');
           setBusy(false);
         })
         .catch(() => alive && setErr(true));
@@ -205,26 +195,13 @@ function Preview3D({ presenters, group, club, logo, color, view }: { presenters:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, logo, club, color, group]);
   useEffect(() => () => scene.current?.dispose(), []);
-  useEffect(() => {
-    if (scene.current) apply(scene.current);
-    let raf = 0;
-    const tick = (t: number) => {
-      raf = requestAnimationFrame(tick);
-      // En gros plan, la bouche s'anime comme s'il parlait (pour juger le rendu).
-      const s = t / 1000;
-      scene.current?.setTalk(view === 'room' ? 0 : Math.max(0, Math.sin(s * 11) * 0.5 + Math.sin(s * 4.3) * 0.4) * (Math.sin(s * 0.7) > -0.3 ? 1 : 0));
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
   if (err) return <p className="small muted">Aperçu 3D indisponible sur cet appareil.</p>;
   return (
     <div className="press-preview-wrap">
       <canvas ref={ref} className="press-preview" />
       {busy && (
         <span className="press-preview-busy">
-          <Spinner /> Sculpture des têtes…
+          <Spinner /> Installation de la salle…
         </span>
       )}
     </div>
@@ -258,8 +235,6 @@ export function PressSettingsPanel() {
   const [draft, setDraft] = useState<PressSettings | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<View>('room');
-  const [faceBusy, setFaceBusy] = useState<number | null>(null);
   const [testing, setTesting] = useState<number | null>(null);
   const canEdit = can('convocations.manage');
   const groups = useMemo(() => groupsFromTeams(me.teams.map((t) => t.category)), [me.teams]);
@@ -292,7 +267,7 @@ export function PressSettingsPanel() {
     }
   };
 
-  /** Photo, échantillon de voix : envoyés tout de suite, en gardant les autres modifications en cours. */
+  /** Échantillon de voix : envoyé tout de suite, en gardant les autres modifications en cours. */
   const media = async (fn: () => Promise<PressSettings>) => {
     const out = await fn();
     q.setData(out);
@@ -302,36 +277,11 @@ export function PressSettingsPanel() {
             ...d,
             presenters: d.presenters.map((p) => {
               const o = out.presenters.find((x) => x.id === p.id);
-              return o ? { ...p, photo: o.photo, photoUrl: o.photoUrl, landmarks: o.landmarks, sampleUrl: o.sampleUrl, voice: { ...p.voice, sample: o.voice.sample, transcript: o.voice.transcript } } : p;
+              return o ? { ...p, sampleUrl: o.sampleUrl, voice: { ...p.voice, sample: o.voice.sample, transcript: o.voice.transcript } } : p;
             }),
           }
         : d,
     );
-  };
-
-  /** Photo envoyée : le visage est détecté dans le navigateur, puis la tête 3D en est sculptée. */
-  const uploadPhoto = async (i: number, f?: File) => {
-    if (!f) return;
-    const p = draft.presenters[i];
-    setFaceBusy(i);
-    try {
-      const img = await preparePhoto(f);
-      const el = new Image();
-      await new Promise((ok, fail) => {
-        el.onload = ok;
-        el.onerror = () => fail(new Error('Photo illisible'));
-        el.src = img.image;
-      });
-      const { detectFace } = await import('../press/faceDetect');
-      const landmarks = await detectFace(el).catch(() => null);
-      await media(() => api.post<PressSettings>(`/press/presenters/${p.id}/photo`, { image: img.image, landmarks }));
-      setView(i);
-      toast(landmarks ? 'Visage détecté : tête 3D générée' : 'Aucun visage détecté : choisissez une photo de face, bien éclairée', !landmarks);
-    } catch (e) {
-      toast((e as Error).message, true);
-    } finally {
-      setFaceBusy(null);
-    }
   };
 
   const testVoice = async (i: number) => {
@@ -353,7 +303,7 @@ export function PressSettingsPanel() {
       presenters: [
         ...draft.presenters,
         {
-          id: '', name: 'Coach', role: '', groups: [], photo: null, photoUrl: null, landmarks: null, style: 'short', hair: 'auto', cap: 'auto', number: null,
+          id: '', name: 'Coach', role: '', groups: [], style: 'short', hair: 'auto', cap: 'auto',
           voice: { id: draft.voices[draft.presenters.length % draft.voices.length]?.id ?? '', sample: null, transcript: '' }, sampleUrl: null,
         },
       ],
@@ -367,7 +317,7 @@ export function PressSettingsPanel() {
           <div className="grow">
             <b>Conférence de presse</b>
             <p className="small muted">
-              À la publication d’une convocation, les familles reçoivent une cinématique : les présentateurs annoncent la sélection derrière leur micro, puis chaque joueur convoqué apparaît avec sa photo pendant que son prénom est prononcé.
+              À la publication d’une convocation, les familles reçoivent une cinématique : les présentateurs, en veste noire du club, annoncent la sélection derrière leur micro, puis chaque joueur convoqué surgit dans un éclair, avec sa photo en pied, pendant que son prénom est prononcé.
             </p>
           </div>
           <label className="switch">
@@ -390,9 +340,7 @@ export function PressSettingsPanel() {
         {draft.presenters.map((p, i) => (
           <div key={p.id || i} className="card pad stack press-presenter">
             <div className="row" style={{ gap: 10 }}>
-              <span className="press-face" style={p.photoUrl ? { backgroundImage: `url(${p.photoUrl})` } : undefined}>
-                {!p.photoUrl && <Camera size={18} />}
-              </span>
+              <span className="press-face">{(p.name || 'P').slice(0, 1).toUpperCase()}</span>
               <div className="grow">
                 <b>{p.name || 'Présentateur'}</b>
                 <div className="small muted">{i === 0 ? 'Siège de gauche' : 'Siège de droite'} · annonce {p.groups.join(', ') || 'toutes les catégories'}</div>
@@ -428,43 +376,6 @@ export function PressSettingsPanel() {
               </div>
             </Field>
 
-            <Field label="Tête 3D" hint="sculptée d’après la photo">
-              <div className="press-face-status">
-                {faceBusy === i ? (
-                  <>
-                    <Spinner /> Détection du visage…
-                  </>
-                ) : p.landmarks ? (
-                  <>
-                    <Check size={15} className="ok" /> Visage détecté sur la photo
-                  </>
-                ) : p.photoUrl ? (
-                  <>
-                    <AlertTriangle size={15} /> Aucun visage détecté : photo de face, bien éclairée
-                  </>
-                ) : (
-                  <span className="muted">Sans photo, une tête générique est utilisée.</span>
-                )}
-              </div>
-              {canEdit && p.id && (
-                <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
-                  <label className="btn sm">
-                    <Camera /> {p.photoUrl ? 'Changer la photo' : 'Ajouter une photo'}
-                    <input type="file" accept="image/*" hidden onChange={(e) => (void uploadPhoto(i, e.target.files?.[0]), (e.target.value = ''))} />
-                  </label>
-                  {p.photoUrl && (
-                    <button className="btn sm ghost" onClick={() => void media(() => api.del<PressSettings>(`/press/presenters/${p.id}/photo`))}>
-                      Retirer
-                    </button>
-                  )}
-                  <button className="btn sm ghost" onClick={() => setView(i)}>
-                    Voir en gros plan
-                  </button>
-                </div>
-              )}
-              {canEdit && !p.id && <p className="small muted">Enregistrez pour ajouter la photo.</p>}
-            </Field>
-
             <div className="row wrap" style={{ gap: 10 }}>
               <Field label="Coiffure">
                 <select className="input" value={p.style} disabled={!canEdit} onChange={(e) => setP(i, { style: e.target.value as HairStyle })}>
@@ -477,9 +388,6 @@ export function PressSettingsPanel() {
               </Field>
               <ColorAuto label="Cheveux" value={p.hair} disabled={!canEdit} onChange={(hair) => setP(i, { hair })} />
               {p.style === 'cap' && <ColorAuto label="Casquette" value={p.cap} disabled={!canEdit} onChange={(cap) => setP(i, { cap })} />}
-              <Field label="N° maillot">
-                <input className="input" style={{ width: 80 }} inputMode="numeric" value={p.number ?? ''} disabled={!canEdit} onChange={(e) => setP(i, { number: e.target.value === '' ? null : Number(e.target.value.replace(/\D/g, '')) || 0 })} />
-              </Field>
             </div>
 
             <Field label="Voix Fish Audio" hint={p.voice.sample ? 'remplacée par sa voix clonée' : 'bibliothèque ou lien fish.audio'}>
@@ -536,21 +444,9 @@ export function PressSettingsPanel() {
       </div>
 
       <div className="card pad stack">
-        <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8 }}>
-          <b>Aperçu</b>
-          <div className="row wrap" style={{ gap: 6 }}>
-            <button className={`chip${view === 'room' ? ' on' : ''}`} onClick={() => setView('room')}>
-              La salle
-            </button>
-            {draft.presenters.map((p, i) => (
-              <button key={i} className={`chip${view === i ? ' on' : ''}`} onClick={() => setView(i)}>
-                {p.name} en gros plan
-              </button>
-            ))}
-          </div>
-        </div>
-        <Preview3D presenters={draft.presenters} group={groups[0] ?? 'U8'} club={me.club?.name ?? ''} logo={me.club?.logo ?? null} color={color} view={view} />
-        {!me.club?.logo && <p className="small muted">Ajoutez le logo du club (onglet Club) : il habille le mur, la table, les maillots et la casquette.</p>}
+        <b>Aperçu de la salle</b>
+        <Preview3D presenters={draft.presenters} group={groups[0] ?? 'U8'} club={me.club?.name ?? ''} logo={me.club?.logo ?? null} color={color} />
+        {!me.club?.logo && <p className="small muted">Ajoutez le logo du club (onglet Club) : il habille le mur, la table, la veste des présentateurs et la casquette.</p>}
       </div>
 
       <div className="card pad stack">
@@ -592,13 +488,18 @@ function ColorAuto({ label, value, onChange, disabled }: { label: string; value:
 
 /* ------------------------------------------------------------------ fiche joueur */
 
-/** Carte de la fiche joueur : comment son prénom sera annoncé (prononciation, écoute avec la voix du coach). */
+/**
+ * Carte de la fiche joueur : sa photo en pied (celle qui surgit dans l'éclair de la conférence de presse)
+ * et la prononciation de son prénom, à écouter avec la voix du coach.
+ */
 export function PressPlayerCard({ player, canEdit, onChange }: { player: Player; canEdit: boolean; onChange: (p: Player) => void }) {
   const toast = useToast();
   const [say, setSay] = useState(player.press?.say ?? '');
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
   useEffect(() => setSay(player.press?.say ?? ''), [player.press?.say]);
-  const photo = player.photo ? `/api/players/${player.id}/photo?v=${player.photo}` : null;
+  const full = player.fullPhoto ? `/api/players/${player.id}/full-photo?v=${player.fullPhoto}` : null;
   const saveSay = async () => {
     if ((player.press?.say ?? '') === say.trim()) return;
     try {
@@ -618,16 +519,56 @@ export function PressPlayerCard({ player, canEdit, onChange }: { player: Player;
       setBusy(false);
     }
   };
+  const upload = async (file?: File) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      onChange(await api.post<Player>(`/players/${player.id}/full-photo`, { image: await prepareFullPhoto(file) }));
+      toast('Photo en pied enregistrée');
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setUploading(false);
+    }
+  };
+  const remove = async () => {
+    try {
+      onChange(await api.del<Player>(`/players/${player.id}/full-photo`));
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
   return (
     <div className="card pad press-player">
-      <span className="pc-portrait press-player-photo" style={{ ['--team' as string]: '#c8102e' } as CSSProperties}>
-        {photo ? <img src={photo} alt="" /> : <b>{player.firstName.slice(0, 1)}</b>}
-      </span>
-      <div className="grow stack" style={{ gap: 6 }}>
+      <button
+        type="button"
+        className={`press-full${full ? '' : ' empty'}${uploading ? ' busy' : ''}`}
+        onClick={() => canEdit && input.current?.click()}
+        disabled={!canEdit || uploading}
+        aria-label={full ? 'Changer la photo en pied' : 'Ajouter une photo en pied'}
+      >
+        {full ? <img src={full} alt={`${player.firstName}, en pied`} /> : uploading ? <Spinner /> : <ImagePlus size={22} />}
+      </button>
+      <input ref={input} type="file" accept="image/*" hidden onChange={(e) => (void upload(e.target.files?.[0]), (e.target.value = ''))} />
+      <div className="grow stack" style={{ gap: 8 }}>
         <div>
           <b>🎙️ Annonce en conférence de presse</b>
-          <div className="small muted">Convoqué, {player.firstName} apparaît avec cette photo pendant que le coach annonce son prénom.</div>
+          <div className="small muted">
+            Convoqué, {player.firstName} surgit dans l’éclair avec sa photo en pied pendant que le coach annonce son prénom. Choisissez une photo du corps entier, debout, bien cadrée.
+          </div>
         </div>
+        {canEdit && (
+          <div className="row wrap" style={{ gap: 6 }}>
+            <button className="btn sm" onClick={() => input.current?.click()} disabled={uploading}>
+              <ImagePlus /> {full ? 'Changer la photo en pied' : 'Ajouter la photo en pied'}
+            </button>
+            {full && (
+              <button className="btn sm ghost" onClick={() => void remove()}>
+                Retirer
+              </button>
+            )}
+          </div>
+        )}
         <div className="row wrap" style={{ gap: 6 }}>
           <input
             className="input"

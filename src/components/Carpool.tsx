@@ -106,10 +106,11 @@ function OfferCard({ o, cp, onChange }: { o: CarpoolOffer; cp: Carpool; onChange
 }
 
 /** Covoiturage d'un match : voitures, places libres, enfants qui cherchent une place. */
-export function CarpoolPanel({ eventId, date, compact }: { eventId: string; date: string; compact?: boolean }) {
+export function CarpoolPanel({ eventId, date, compact, hideEmpty }: { eventId: string; date: string; compact?: boolean; /** Rien du tout tant que personne n'a proposé ni demandé de place. */ hideEmpty?: boolean }) {
   const q = useCarpool(eventId, date);
   const [form, setForm] = useState<'offer' | 'request' | null>(null);
   const cp = q.data;
+  if (hideEmpty && (!cp || (!cp.offers.length && !cp.requests.length))) return null;
   if (!cp) return <div className="carpool loading" />;
   const open = cp.requests.filter((r) => !r.solved);
   if (compact) return <CarpoolVisual cp={cp} needs={open} />;

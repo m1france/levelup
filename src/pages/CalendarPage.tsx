@@ -52,7 +52,8 @@ export function CalendarPage() {
       .sort((a, b) => b.at - a.at)
       .slice(0, 30);
   }, [q.data?.events]);
-  const fresh = Date.now() - 7 * 864e5;
+  // « Ajouté / modifié · il y a… » n'a de sens que dans les 2 heures qui suivent.
+  const fresh = Date.now() - 2 * 3600e3;
 
   if (!team) return <div className="page"><Empty title="Aucune équipe" /></div>;
   return (
@@ -93,8 +94,13 @@ export function CalendarPage() {
                       </span>
                       <span className="grow">
                         <span className="cf-kind" style={{ color }}>
-                          {edited ? <Pencil size={11} /> : <CalendarPlus size={11} />} {EVENT_TYPES[e.type].label} {edited ? 'modifié' : 'ajouté'} · {relative(at)}
-                          {at > fresh && !edited && <i className="cf-new">Nouveau</i>}
+                          {at > fresh ? (
+                            <>
+                              {edited ? <Pencil size={11} /> : <CalendarPlus size={11} />} {EVENT_TYPES[e.type].label} {edited ? 'modifié' : 'ajouté'} · {relative(at)}
+                            </>
+                          ) : (
+                            EVENT_TYPES[e.type].label
+                          )}
                         </span>
                         <b className="ellipsis">{e.group ? `${e.group} · ` : ''}{eventTitle(e)}</b>
                         <small className="ellipsis">

@@ -24,6 +24,7 @@ import { Library } from './pages/Library';
 import { Live } from './pages/Live';
 import { PlayerPage } from './pages/PlayerPage';
 import { Players } from './pages/Players';
+import { SessionsPage } from './pages/Sessions';
 import { PublicTraining } from './pages/PublicTraining';
 import { TrainingPage } from './pages/TrainingPage';
 
@@ -112,7 +113,7 @@ function AppRoutes() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
-        <Route path="seances" element={<Navigate to="/" replace />} />
+        <Route path="seances" element={<SessionsPage />} />
         <Route path="album" element={<Album />} />
         <Route path="calendrier" element={<CalendarPage />} />
         <Route path="seances/:id" element={<TrainingPage />} />

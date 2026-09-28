@@ -1,8 +1,8 @@
-import { ArrowDownUp, CalendarClock, Car, Check, ChevronRight, Eye, Megaphone, Play, Plus, Repeat } from 'lucide-react';
+import { CalendarClock, CalendarDays, Car, Check, ChevronRight, Eye, Megaphone, Play, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LivePitch, SceneThumb, coverToExercise } from '../components/Pitch';
-import { Calendar, EventForm, hasConv, usePrepareSession } from '../components/Calendar';
+import { Calendar, hasConv, usePrepareSession } from '../components/Calendar';
 import { PHASE, matchPath } from '../lib/convocations';
 import { GlassArt, HeroSlide, Showcase, type ShowcaseSlide } from '../components/Showcase';
 import { PlayerAvatar } from '../components/PlayerAvatar';
@@ -75,7 +75,7 @@ function GlassDate({ date }: { date: string }) {
   );
 }
 
-function SessionCard({ t, past, onClick }: { t: Training; past?: boolean; onClick: () => void }) {
+export function SessionCard({ t, past, onClick }: { t: Training; past?: boolean; onClick: () => void }) {
   const tile = dateTile(t.date);
   const cover = useMemo(() => (t.cover ? coverToExercise(t.cover) : null), [t.cover]);
   const done = !!t.attendance?.length;
@@ -99,7 +99,7 @@ function SessionCard({ t, past, onClick }: { t: Training; past?: boolean; onClic
 }
 
 /** Séances regroupées par mois, en accordéon : le mois à gauche, une ligne pleine largeur avec ses séances. */
-function MonthAccordion({ list, onOpen }: { list: Training[]; onOpen: (t: Training) => void }) {
+export function MonthAccordion({ list, onOpen }: { list: Training[]; onOpen: (t: Training) => void }) {
   const groups = useMemo(() => {
     const m = new Map<string, Training[]>();
     for (const t of [...list].sort((a, b) => b.date.localeCompare(a.date))) {
@@ -154,7 +154,7 @@ function MonthAccordion({ list, onOpen }: { list: Training[]; onOpen: (t: Traini
 }
 
 /** Entraînement programmé dont la séance n'est pas encore préparée : la date est connue de tous, le contenu viendra. */
-function PlannedCard({ it, canPrepare, onPrepare }: { it: Agenda; canPrepare: boolean; onPrepare: () => void }) {
+export function PlannedCard({ it, canPrepare, onPrepare }: { it: Agenda; canPrepare: boolean; onPrepare: () => void }) {
   const tile = dateTile(`${it.date}T${it.time || '12:00'}`);
   return (
     <div className={`s-card planned${canPrepare ? '' : ' readonly'}`} onClick={canPrepare ? onPrepare : undefined} role={canPrepare ? 'button' : undefined}>
@@ -190,8 +190,6 @@ export function Dashboard() {
   const { team, can, isStaff, me } = useApp();
   const nav = useNavigate();
   const toast = useToast();
-  const [byMonth, setByMonth] = useState(false);
-  const [plan, setPlan] = useState(false);
   const q = useAsync(async () => {
     if (!team) return null;
     const [trainings, events, convs] = await Promise.all([
@@ -224,10 +222,9 @@ export function Dashboard() {
   };
 
   const d = q.data;
-  const { hero, upcoming, past } = pickHero(d?.trainings ?? []);
+  const { hero, upcoming } = pickHero(d?.trainings ?? []);
   const canPlan = isStaff && can('trainings.manage');
   const next = d ? nextItem(d.events, d.trainings) : null;
-  const all = [...upcoming, ...past];
   // Entraînements programmés des 4 prochaines semaines sans séance préparée.
   const planned = d
     ? agenda(d.events.filter((e) => e.type === 'training'), d.trainings, todayISO(), toYMD(new Date(Date.now() + 28 * 864e5))).filter((it) => it.event && !it.training).slice(0, 8)
@@ -354,7 +351,8 @@ export function Dashboard() {
       ),
     });
   }
-  for (const c of (carpools.data ?? []).slice(0, 3)) {
+  // Covoiturage : seulement quand une voiture est proposée ou qu'une famille cherche une place.
+  for (const c of (carpools.data ?? []).filter((c) => c.offers.length > 0 || c.requests.length > 0).slice(0, 3)) {
     const need = c.needs > 0 && c.free < c.needs;
     const open = () => nav(`${matchPath(c.eventId, c.date)}?covoiturage=1`);
     slides.push({
@@ -469,16 +467,9 @@ export function Dashboard() {
             <div className="sec-head">
               <h2>Séances</h2>
               <div className="row" style={{ gap: 4 }}>
-                {all.length >= 6 && (
-                  <button className={`plain-toggle${byMonth ? ' on' : ''}`} onClick={() => setByMonth((b) => !b)} aria-pressed={byMonth}>
-                    <ArrowDownUp size={15} /> Date
-                  </button>
-                )}
-                {isStaff && can('events.manage') && (
-                  <button className="plain-toggle" onClick={() => setPlan(true)} title="Programmer des entraînements réguliers (ex. chaque mercredi et vendredi)">
-                    <Repeat size={15} /> Programmer
-                  </button>
-                )}
+                <button className="plain-toggle" onClick={() => nav('/seances')} title="Toutes les séances, semaine par semaine, y compris les anciennes">
+                  <CalendarDays size={15} /> Toutes les séances
+                </button>
                 {canPlan && (
                   <button className="btn icon sm only-mobile" onClick={newTraining} aria-label="Nouvelle séance">
                     <Plus />
@@ -486,46 +477,27 @@ export function Dashboard() {
                 )}
               </div>
             </div>
-            {byMonth && all.length >= 6 ? (
-              <MonthAccordion list={all} onOpen={(t) => nav(`/seances/${t.id}`)} />
-            ) : (
-              <div className="s-grid">
-                {canPlan && (
-                  <button className="s-card s-new hide-mobile" onClick={newTraining} aria-label="Nouvelle séance">
-                    <div className="cover">
-                      <Plus />
-                    </div>
-                  </button>
-                )}
-                {[
-                  ...upcoming.map((t) => ({ at: t.date, node: <SessionCard key={t.id} t={t} onClick={() => nav(`/seances/${t.id}`)} /> })),
-                  ...planned.map((it) => ({
-                    at: `${it.date}T${it.time || '12:00'}`,
-                    node: <PlannedCard key={it.key} it={it} canPrepare={canPlan} onPrepare={() => void prepare(it)} />,
-                  })),
-                ]
-                  .sort((a, b) => a.at.localeCompare(b.at))
-                  .map((x) => x.node)}
-                {past.map((t) => (
-                  <SessionCard key={t.id} t={t} past onClick={() => nav(`/seances/${t.id}`)} />
-                ))}
-              </div>
-            )}
+            {!upcoming.length && !planned.length && !canPlan && <p className="muted small">Aucune séance à venir pour l’instant.</p>}
+            <div className="s-grid">
+              {canPlan && (
+                <button className="s-card s-new hide-mobile" onClick={newTraining} aria-label="Nouvelle séance">
+                  <div className="cover">
+                    <Plus />
+                  </div>
+                </button>
+              )}
+              {[
+                ...upcoming.map((t) => ({ at: t.date, node: <SessionCard key={t.id} t={t} onClick={() => nav(`/seances/${t.id}`)} /> })),
+                ...planned.map((it) => ({
+                  at: `${it.date}T${it.time || '12:00'}`,
+                  node: <PlannedCard key={it.key} it={it} canPrepare={canPlan} onPrepare={() => void prepare(it)} />,
+                })),
+              ]
+                .sort((a, b) => a.at.localeCompare(b.at))
+                .map((x) => x.node)}
+            </div>
           </section>
         </>
-      )}
-      {plan && team && (
-        <EventForm
-          teamId={team.id}
-          date={todayISO()}
-          initialType="training"
-          initialWeekly
-          onClose={() => setPlan(false)}
-          onSaved={() => {
-            setPlan(false);
-            q.reload();
-          }}
-        />
       )}
     </div>
   );

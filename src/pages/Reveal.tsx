@@ -254,11 +254,46 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
     64,
     Math.min(
       150,
-      Math.floor((window.innerWidth - side - 36 - (maxCols - 1) * 12) / maxCols),
+      Math.floor((window.innerWidth - 2 * side - 36 - (maxCols - 1) * 12) / maxCols),
       Math.floor((window.innerHeight - 230 - top - (rows.length - 1) * 14) / rows.length / 1.4),
     ),
   );
   const bigW = Math.round(Math.min(340, window.innerWidth * 0.72, (window.innerHeight - 250) / 1.4));
+
+  // Les cartes sont centrées sur le rond central du terrain (qui, en perspective, n'est pas au centre de l'écran).
+  // À la fin, elles grandissent pour devenir l'élément principal.
+  const grid = useRef<HTMLDivElement>(null);
+  const finaleEl = useRef<HTMLDivElement>(null);
+  const finH = useRef(120);
+  const [place, setPlace] = useState<{ x: number; y: number; k: number } | null>(null);
+  const [vp, setVp] = useState(0);
+  useEffect(() => {
+    const onResize = () => setVp((n) => n + 1);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const dealt = phase === 'deal' || phase === 'play';
+  useLayoutEffect(() => {
+    const g = grid.current;
+    const spot = document.querySelector<HTMLElement>('.rv-field .spot');
+    if (!dealt || !g || !spot) return;
+    const r = spot.getBoundingClientRect();
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const gw = g.offsetWidth;
+    const gh = g.offsetHeight;
+    const over = finale;
+    if (finaleEl.current) finH.current = finaleEl.current.offsetHeight;
+    const fin = over ? finH.current + 34 : 64;
+    const head = plateau && !wide ? 140 : 72;
+    // Place disponible de part et d'autre du centre (symétrique : la colonne des scores ne décentre pas les cartes).
+    const k = over ? Math.max(1, Math.min(1.7, (W - 2 * side - 32) / gw, (H - head - fin - 12) / gh)) : 1;
+    const half = (gh * k) / 2;
+    const lo = head + half;
+    const hi = H - fin - half;
+    const y = lo > hi ? (lo + hi) / 2 : Math.min(Math.max(r.top + r.height / 2, lo), hi);
+    setPlace({ x: r.left + r.width / 2, y, k });
+  }, [dealt, finale, vp, run, cardW, plateau, wide, side]);
 
   return (
     <div className={`rv phase-${phase}${plateau ? ' plateau' : ''}`}>
@@ -335,7 +370,11 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
               </b>
             </div>
           )}
-          <div className="rv-grid" style={side ? { left: side } : top ? { top: `calc(50% + ${top / 2}px)` } : undefined}>
+          <div
+            ref={grid}
+            className="rv-grid"
+            style={place ? { left: place.x, top: place.y, transform: `translate(-50%, -50%) scale(${place.k})` } : undefined}
+          >
             {rows.map((row, r) => (
               <div key={r} className="rv-row">
                 {row.map((i) => {
@@ -363,20 +402,10 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
             </p>
           )}
           {finale && !focus && (
-            <div className="rv-finale">
+            <div className="rv-finale" ref={finaleEl}>
               <Confetti colors={['#d5f58e', '#ffd76a', '#ffffff', data.team.color, '#56a8ff']} />
               <b>Bravo l’équipe !</b>
               {data.summary && <p>« {data.summary} »</p>}
-              <div className="row" style={{ gap: 10, justifyContent: 'center' }}>
-                <button className="duo-btn ghost" onClick={replay}>
-                  Rejouer
-                </button>
-                {data.shareToken && (
-                  <button className="duo-btn" onClick={share}>
-                    Partager
-                  </button>
-                )}
-              </div>
             </div>
           )}
         </>

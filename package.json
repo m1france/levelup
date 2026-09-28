@@ -14,7 +14,6 @@
     "node": ">=22.13"
   },
   "dependencies": {
-    "@mediapipe/tasks-vision": "^1.0.1",
     "express": "^5.2.1",
     "lucide-react": "^1.48.0",
     "react": "^19.3.0",

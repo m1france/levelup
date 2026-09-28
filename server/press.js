@@ -1,10 +1,11 @@
 /**
  * Conférence de presse : la convocation annoncée en cinématique 3D.
  * Deux présentateurs (un par catégorie, ex. U8 et U9) assis derrière une table de presse annoncent le groupe,
- * puis chaque joueur convoqué apparaît avec sa photo pendant que son prénom est prononcé.
+ * puis chaque joueur convoqué surgit dans un éclair avec sa photo en pied pendant que son prénom est prononcé ;
+ * l'écran final montre les cartes des convoqués.
  *
- * Réglages du club (clé `press.settings`) : présentateurs (nom, rôle, catégories, photo et points du visage
- * pour sculpter la tête 3D, coiffure, voix Fish Audio ou échantillon de leur voix à cloner), textes, durée par joueur.
+ * Réglages du club (clé `press.settings`) : présentateurs (nom, rôle, catégories, coiffure,
+ * voix Fish Audio ou échantillon de leur voix à cloner), textes, durée par joueur.
  * Les voix sont générées par Fish Audio (OpenRouter), une fois par phrase, puis gardées en cache.
  */
 import { Router } from 'express';
@@ -14,7 +15,8 @@ import { get, run, parse, kvGet, kvSet, UPLOADS, clubLogoUrl } from './db.js';
 import { need, needTeam, isStaff, childIdsFor, newId, HttpError } from './auth.js';
 import { occ, occPlayers, evTitle, meetOf, bringOf } from './convocations.js';
 import { eventGroup, playerGroup, teamInfo } from './groups.js';
-import { playerAccess, playerOut } from './players.js';
+import { fullPhotoFile, playerAccess, playerOut } from './players.js';
+import { squadCards } from './reveal.js';
 import { sign, verify } from './tokens.js';
 import { speech, ttsReady, TtsError } from './tts.js';
 
@@ -47,11 +49,9 @@ function presenterDefaults(p = {}, i = 0) {
     name: str(p.name, 40) || `Coach ${i + 1}`,
     role: str(p.role, 60),
     groups: Array.isArray(p.groups) ? [...new Set(p.groups.map((g) => str(g, 12).toUpperCase()).filter(Boolean))].slice(0, 6) : [],
-    photo: Number.isFinite(p.photo) ? p.photo : null,
     style: HAIR_STYLES.includes(p.style) ? p.style : 'short',
     hair: color(p.hair, 'auto'),
     cap: color(p.cap, 'auto'),
-    number: p.number === null || p.number === '' || p.number === undefined ? null : num(p.number, 0, 99, null),
     voice: {
       id: voiceId(p.voice?.id) || FISH_VOICES[i % FISH_VOICES.length].id,
       sample: p.voice?.sample && Number.isFinite(p.voice.sample.v) ? { v: p.voice.sample.v, type: str(p.voice.sample.type, 60) } : null,
@@ -103,17 +103,11 @@ const save = (s) => kvSet('press.settings', JSON.stringify(s));
 
 /* ------------------------------------------------------------------ fichiers */
 
+// Anciennes photos et points du visage des présentateurs : la tête est désormais entièrement sculptée,
+// ces fichiers ne servent plus et partent avec le présentateur.
 const presenterPhoto = (id) => join(UPLOADS, `press_${id}.jpg`);
 const presenterFace = (id) => join(UPLOADS, `press_${id}.face.json`);
 const presenterSample = (id) => join(UPLOADS, `press_${id}_sample.audio`);
-
-function decodeImage(dataUrl, maxBytes = 2_500_000) {
-  const m = /^data:image\/(jpeg|webp|png);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
-  if (!m) throw new HttpError(400, 'Image invalide');
-  const buf = Buffer.from(m[2], 'base64');
-  if (buf.length > maxBytes) throw new HttpError(413, 'Image trop lourde');
-  return buf;
-}
 
 /** Enregistrement audio (MediaRecorder : webm/opus, mp4/aac, ogg ; ou fichier mp3/wav importé). */
 function decodeAudio(dataUrl, maxBytes = 4_000_000) {
@@ -123,21 +117,6 @@ function decodeAudio(dataUrl, maxBytes = 4_000_000) {
   if (buf.length > maxBytes) throw new HttpError(413, 'Enregistrement trop long');
   if (buf.length < 2000) throw new HttpError(400, 'Enregistrement trop court');
   return { buf, type: m[1].toLowerCase() };
-}
-
-/** Points du visage détectés dans le navigateur (MediaPipe) : 468 à 478 triplets [x, y, z]. */
-function cleanLandmarks(v) {
-  if (!Array.isArray(v) || v.length < 468 || v.length > 478) return null;
-  const out = v.map((p) => (Array.isArray(p) && p.length === 3 && p.every((n) => Number.isFinite(n) && Math.abs(n) < 5) ? p.map((n) => Math.round(n * 1e5) / 1e5) : null));
-  return out.every(Boolean) ? out : null;
-}
-
-function readLandmarks(id) {
-  try {
-    return JSON.parse(readFileSync(presenterFace(id), 'utf8'));
-  } catch {
-    return null;
-  }
 }
 
 function sendFile(res, path, type) {
@@ -262,12 +241,9 @@ function presentersFor(s, group, base) {
     name: p.name,
     role: p.role,
     groups: p.groups,
-    photo: p.photo ? `${base}/presenter/${p.id}/photo?v=${p.photo}` : null,
-    landmarks: p.photo ? readLandmarks(p.id) : null,
     style: p.style,
     hair: p.hair,
     cap: p.cap,
-    number: p.number,
   }));
   const speaker = Math.max(0, list.findIndex((p) => group && p.groups.includes(group)));
   return { presenters: list, speaker };
@@ -286,21 +262,27 @@ function pressPayload(o, { base, publicLink = false, user = null }) {
   const kids = user && !isStaff(user) ? childIdsFor(user) : [];
   const byId = new Map(occPlayers(o).map((p) => [p.id, p]));
   const seg = segments(o, s);
-  const players = sel
-    .map((pid) => byId.get(pid))
-    .filter(Boolean)
-    .map((p) => {
-      const consent = p.info?.photoConsent ?? '';
-      const photo = p.photo && (publicLink ? consent === 'yes' : consent !== 'no');
-      return {
-        id: p.id,
-        firstName: p.firstName,
-        number: p.number ?? null,
-        photo: photo ? `${base}/photo/${p.id}?v=${p.photo}` : null,
-        voice: `${base}/say/p-${p.id}`,
-        mine: kids.includes(p.id),
-      };
-    });
+  const chosen = sel.map((pid) => byId.get(pid)).filter(Boolean);
+  // Photos : seulement avec l'autorisation des parents (« oui » explicite pour le lien public).
+  const allowed = (p) => {
+    const consent = p.info?.photoConsent ?? '';
+    return publicLink ? consent === 'yes' : consent !== 'no';
+  };
+  const portrait = (p) => (p.photo && allowed(p) ? `${base}/photo/${p.id}?v=${p.photo}` : null);
+  const cards = squadCards(chosen.map((p) => ({ p, photo: portrait(p), mine: kids.includes(p.id) })));
+  const players = chosen.map((p, i) => {
+    const full = !!p.fullPhoto && allowed(p) && existsSync(fullPhotoFile(p.id));
+    return {
+      id: p.id,
+      firstName: p.firstName,
+      number: p.number ?? null,
+      photo: full ? `${base}/full/${p.id}?v=${p.fullPhoto}` : portrait(p),
+      full,
+      voice: `${base}/say/p-${p.id}`,
+      mine: kids.includes(p.id),
+      card: cards[i],
+    };
+  });
   return {
     eventId: o.e.id,
     date: o.date,
@@ -358,9 +340,11 @@ pressPublic.get('/public/press/:token/say/:key', async (req, res) => {
   await sendSegment(res, publicOcc(req.params.token), req.params.key);
 });
 
-pressPublic.get('/public/press/:token/presenter/:id/photo', (req, res) => {
-  publicOcc(req.params.token);
-  sendPresenterPhoto(res, req.params.id);
+pressPublic.get('/public/press/:token/full/:pid', (req, res) => {
+  const o = publicOcc(req.params.token);
+  const p = selectedPlayer(o, req.params.pid);
+  if (p.info?.photoConsent !== 'yes') throw new HttpError(404, 'Photo introuvable');
+  sendFile(res, fullPhotoFile(p.id), 'jpeg');
 });
 
 function selectedPlayer(o, pid) {
@@ -376,11 +360,6 @@ function presenterById(id) {
   return p;
 }
 
-function sendPresenterPhoto(res, id) {
-  const p = presenterById(id);
-  if (!p.photo) throw new HttpError(404, 'Photo introuvable');
-  sendFile(res, presenterPhoto(p.id), 'jpeg');
-}
 
 /* ------------------------------------------------------------------ routes connectées */
 
@@ -419,9 +398,11 @@ pressApi.get('/convocations/:eventId/:date/press/say/:key', async (req, res) => 
   await sendSegment(res, viewerOcc(req), req.params.key);
 });
 
-pressApi.get('/convocations/:eventId/:date/press/presenter/:id/photo', (req, res) => {
-  viewerOcc(req);
-  sendPresenterPhoto(res, req.params.id);
+pressApi.get('/convocations/:eventId/:date/press/full/:pid', (req, res) => {
+  const o = viewerOcc(req);
+  const p = selectedPlayer(o, req.params.pid);
+  if (p.info?.photoConsent === 'no') throw new HttpError(404, 'Photo introuvable');
+  sendFile(res, fullPhotoFile(p.id), 'jpeg');
 });
 
 /* Réglages (éducateurs qui gèrent les convocations). */
@@ -432,8 +413,6 @@ const settingsOut = (s) => ({
   voices: FISH_VOICES,
   presenters: s.presenters.map((p) => ({
     ...p,
-    photoUrl: p.photo ? `/api/press/presenters/${p.id}/photo?v=${p.photo}` : null,
-    landmarks: p.photo ? readLandmarks(p.id) : null,
     sampleUrl: p.voice.sample ? `/api/press/presenters/${p.id}/sample?v=${p.voice.sample.v}` : null,
   })),
 });
@@ -455,13 +434,10 @@ pressApi.put('/press/settings', (req, res) => {
     presenters: cur.presenters,
   };
   if (Array.isArray(b.presenters)) {
-    // Photo et échantillon de voix ne changent que par leurs routes dédiées.
+    // L'échantillon de voix ne change que par sa route dédiée.
     next.presenters = b.presenters.slice(0, 2).map((p, i) => {
       const old = cur.presenters.find((x) => x.id === p.id);
-      return presenterDefaults(
-        { ...p, id: old?.id ?? newId(), photo: old?.photo ?? null, voice: { ...p.voice, sample: old?.voice.sample ?? null, transcript: old?.voice.transcript ?? '' } },
-        i,
-      );
+      return presenterDefaults({ ...p, id: old?.id ?? newId(), voice: { ...p.voice, sample: old?.voice.sample ?? null, transcript: old?.voice.transcript ?? '' } }, i);
     });
     for (const old of cur.presenters) {
       if (next.presenters.some((p) => p.id === old.id)) continue;
@@ -481,31 +457,6 @@ function editPresenter(req, fn) {
   save(s);
   return settingsOut(s);
 }
-
-/** Photo et points du visage (détectés dans le navigateur) : la tête 3D en est sculptée. */
-pressApi.post('/press/presenters/:id/photo', (req, res) => {
-  const buf = decodeImage(req.body.image);
-  const landmarks = cleanLandmarks(req.body.landmarks);
-  res.json(editPresenter(req, (p) => {
-    writeFileSync(presenterPhoto(p.id), buf);
-    if (landmarks) writeFileSync(presenterFace(p.id), JSON.stringify(landmarks));
-    else drop(presenterFace(p.id));
-    p.photo = now();
-  }));
-});
-
-pressApi.delete('/press/presenters/:id/photo', (req, res) => {
-  res.json(editPresenter(req, (p) => {
-    drop(presenterPhoto(p.id));
-    drop(presenterFace(p.id));
-    p.photo = null;
-  }));
-});
-
-pressApi.get('/press/presenters/:id/photo', (req, res) => {
-  if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
-  sendPresenterPhoto(res, req.params.id);
-});
 
 /** Échantillon de la voix du présentateur (10 à 30 s) et sa transcription : Fish Audio clone sa voix. */
 pressApi.post('/press/presenters/:id/sample', (req, res) => {

@@ -798,7 +798,8 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
   const first = !o.row?.published_at;
   const notified = { ...(o.data.notified || {}) };
   let sent = 0;
-  // Convoqué : la notification ouvre la conférence de presse (le prénom est gardé pour la cinématique).
+  // Toutes les familles reçoivent la même notification : elle ouvre la conférence de presse, qui annonce le groupe.
+  // Le prénom convoqué (ou non) n'est jamais écrit dans la notification : la cinématique garde la surprise.
   const press = pressSettings().enabled;
   const group = eventGroup(o.e) ?? get('SELECT category FROM teams WHERE id = ?', o.e.teamId)?.category ?? '';
   tx(() => {
@@ -811,26 +812,18 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
       for (const uid of parents) run('DELETE FROM conv_reads WHERE event_id = ? AND date = ? AND user_id = ?', o.e.id, o.date, uid);
       if (!parents.length || o.e.parents === false) continue;
       const change = !first ? 'Mise à jour : ' : '';
-      sent += notify(parents, state === 'in'
-        ? press
-          ? {
-              kind: 'convoked',
-              title: `${change}🎙️ Conférence de presse : la convocation ${group} est tombée`,
-              body: `${evTitle(o.e)} ${shortDay(o.date)} · Lancez la vidéo pour découvrir le groupe !`,
-              url: `${matchUrl(o)}/conference`,
-              tag: `conv-${o.e.id}-${o.date}-${p.id}`,
-            }
-          : {
-              kind: 'convoked',
-              title: `${change}✅ ${p.firstName} est dans le groupe ${shortDay(o.date)}`,
-              body: `${evTitle(o.e)} · ${whereLine(o)}${bringOf(o) ? `. ${bringOf(o)}` : ''}`,
-              url: matchUrl(o),
-              tag: `conv-${o.e.id}-${o.date}-${p.id}`,
-            }
+      sent += notify(parents, press
+        ? {
+            kind: 'convocation',
+            title: `${change}🎙️ Conférence de presse : la convocation ${group} est tombée`,
+            body: `${evTitle(o.e)} ${shortDay(o.date)} · Lancez la vidéo pour découvrir le groupe !`,
+            url: `${matchUrl(o)}/conference`,
+            tag: `conv-${o.e.id}-${o.date}-${p.id}`,
+          }
         : {
-            kind: 'not_selected',
-            title: `${change}${p.firstName} n'est pas dans le groupe ${shortDay(o.date)}`,
-            body: `${evTitle(o.e)} : pas dans le groupe pour ce match. Les convocations tournent pour que chacun joue autant.`,
+            kind: 'convocation',
+            title: `${change}📣 La convocation ${group} est tombée`,
+            body: `${evTitle(o.e)} ${shortDay(o.date)} · Découvrez le groupe.`,
             url: matchUrl(o),
             tag: `conv-${o.e.id}-${o.date}-${p.id}`,
           });

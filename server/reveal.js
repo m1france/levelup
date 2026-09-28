@@ -109,6 +109,18 @@ function card(p, m, awardKey, totalSec, photoUrl) {
   };
 }
 
+/**
+ * Cartes du groupe convoqué (conférence de presse), hors match : statistiques d'après les évaluations, sans récompense.
+ * Comme en fin de match, tout le monde reçoit la même note générale (pas de classement entre les enfants).
+ * `list` : [{ p (joueur), photo (URL du portrait ou null), mine }].
+ */
+export function squadCards(list) {
+  const cards = list.map(({ p, photo, mine }) => ({ ...card(p, {}, null, 1, photo), award: { key: 'squad', label: '', emoji: '', tier: 'gold' }, mine: !!mine }));
+  const ovr = cards.length ? clamp(cards.reduce((a, c) => a + c.ovr, 0) / cards.length + 2) : 80;
+  for (const c of cards) c.ovr = ovr;
+  return cards;
+}
+
 /** Cartes d'un match terminé. `publicToken` : lien sans compte (photos seulement si l'autorisation a été donnée). */
 export function revealPayload(o, { user = null, publicToken = null } = {}) {
   const m = o.data.match;

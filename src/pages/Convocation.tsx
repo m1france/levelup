@@ -1,6 +1,6 @@
 import {
-  ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Link2, MapPin, Megaphone, MessageCircle, Mic,
-  Minus, Play, Send, Sparkles, TrendingDown, TrendingUp, Trophy, X,
+  ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Link2, ListChecks, MapPin, Megaphone, MessageCircle, Mic,
+  Minus, Play, Send, TrendingDown, TrendingUp, Trophy, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -30,10 +30,11 @@ export function ConvocationPage() {
   const [params] = useSearchParams();
   useLive((m) => m.t === 'conv' && m.eventId === eventId && m.date === date && q.reload());
   const nav = useNavigate();
-  // Parent : une convocation publiée pas encore vue s'ouvre d'abord en conférence de presse (une fois par session).
+  // Parent : une convocation publiée pas encore vue s'ouvre d'abord en conférence de presse (une fois par session),
+  // que l'enfant soit convoqué ou non : c'est la cinématique qui annonce le groupe.
   const seenKey = `press-seen:${eventId}:${date}`;
   const pressFirst =
-    q.data?.kind === 'parent' && !params.has('billet') && !sessionFlag(seenKey) && q.data.tickets.some((t) => t.press && t.publishedAt && !t.read && !t.result && t.status === 'convoked');
+    q.data?.kind === 'parent' && !params.has('billet') && !sessionFlag(seenKey) && q.data.tickets.some((t) => t.press && t.publishedAt && !t.read && !t.result && (t.status === 'convoked' || t.status === 'not_selected'));
   useEffect(() => {
     if (!pressFirst) return;
     sessionFlag(seenKey, true);
@@ -199,7 +200,7 @@ function PlayerRow({
           </Link>
           {suggested && !selected && (
             <span className="cv-spark" title="Proposé par la suggestion équitable">
-              <Sparkles size={13} />
+              <ListChecks size={13} />
             </span>
           )}
         </div>
@@ -522,15 +523,18 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
               <b className={over ? 'warn' : sel.size === d.squad ? 'ok' : ''}>{sel.size}</b>
               <span>/ {d.squad} convoqués</span>
               {canEdit && saving !== 'idle' && <span className={`save-dot ${saving}`} title={saving === 'error' ? 'Non enregistré' : 'Enregistrement…'} />}
+              {canEdit && (
+                <button
+                  className="btn icon ghost cv-suggest"
+                  onClick={applySuggestion}
+                  disabled={!d.suggestion.length}
+                  aria-label="Suggestion équitable"
+                  title="Suggestion équitable : disponibles d’abord, puis ceux qui ont le moins joué, les non-retenus récents et les moins de minutes"
+                >
+                  <ListChecks />
+                </button>
+              )}
             </div>
-            {canEdit && (
-              <button className="btn block" onClick={applySuggestion} disabled={!d.suggestion.length}>
-                <Sparkles /> Suggestion équitable
-              </button>
-            )}
-            <p className="small muted">
-              Disponibles d’abord, puis ceux qui ont le moins joué, les non-retenus récents et les moins de minutes.
-            </p>
             <div className="equity">
               <Gauge value={d.stats.equity} />
               <div>
@@ -584,8 +588,8 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
             </div>
           </div>
           {Date.now() < d.timeline.start && (
-            <div className="card cv-box">
-              <CarpoolPanel eventId={d.eventId} date={d.date} compact />
+            <div className="card cv-box cv-carpool">
+              <CarpoolPanel eventId={d.eventId} date={d.date} compact hideEmpty />
             </div>
           )}
         </aside>
@@ -628,7 +632,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
               </p>
             )}
             <p className="small muted">
-              Les parents des non-retenus reçoivent un message bienveillant : « Les convocations tournent pour que chacun joue autant. »
+              Les familles reçoivent une notification qui lance la conférence de presse : le groupe y est annoncé, sans message individuel « convoqué » ou « non retenu ».
             </p>
             {!published && Date.now() > d.timeline.deadline && (
               <p className="form-error">La date limite ({momentLabel(d.timeline.deadline)}) est dépassée : la publication sera marquée en retard.</p>
