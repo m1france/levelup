@@ -16,6 +16,7 @@ import { toTeam } from './live.js';
 import { publicKey, saveSubscription } from './push.js';
 import { AWARDS, autoAwards } from './reveal.js';
 import { eventGroup, inGroup, teamInfo } from './groups.js';
+import { pressSettings, warmPress } from './press.js';
 
 export const CONV_TYPES = ['match', 'plateau', 'tournament'];
 
@@ -311,8 +312,8 @@ function readToken(token) {
 
 /* ------------------------------------------------------------------ messages */
 
-const meetOf = (o) => o.data.meetTime || o.e.meetTime || '';
-const bringOf = (o) => (o.data.bring ?? '') || o.settings.bring;
+export const meetOf = (o) => o.data.meetTime || o.e.meetTime || '';
+export const bringOf = (o) => (o.data.bring ?? '') || o.settings.bring;
 
 function whereLine(o) {
   const meet = meetOf(o);
@@ -589,6 +590,7 @@ function ticket(o, child, user) {
     availability: avail,
     timeline: { request: o.t.request, answerBy: o.t.answerBy, deadline: o.t.deadline, start: o.t.start },
     publishedAt: o.row?.published_at ?? null,
+    press: pressSettings().enabled,
     read: published ? !!get('SELECT 1 FROM conv_reads WHERE event_id = ? AND date = ? AND user_id = ?', o.e.id, o.date, user.id) : false,
     squad: players.map((p) => ({ id: p.id, firstName: p.firstName, number: p.number })),
     result: m?.finished
@@ -796,6 +798,9 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
   const first = !o.row?.published_at;
   const notified = { ...(o.data.notified || {}) };
   let sent = 0;
+  // Convoqué : la notification ouvre la conférence de presse (le prénom est gardé pour la cinématique).
+  const press = pressSettings().enabled;
+  const group = eventGroup(o.e) ?? get('SELECT category FROM teams WHERE id = ?', o.e.teamId)?.category ?? '';
   tx(() => {
     for (const p of players) {
       const state = sel.has(p.id) ? 'in' : 'out';
@@ -807,13 +812,21 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
       if (!parents.length || o.e.parents === false) continue;
       const change = !first ? 'Mise à jour : ' : '';
       sent += notify(parents, state === 'in'
-        ? {
-            kind: 'convoked',
-            title: `${change}✅ ${p.firstName} est dans le groupe ${shortDay(o.date)}`,
-            body: `${evTitle(o.e)} · ${whereLine(o)}${bringOf(o) ? `. ${bringOf(o)}` : ''}`,
-            url: matchUrl(o),
-            tag: `conv-${o.e.id}-${o.date}-${p.id}`,
-          }
+        ? press
+          ? {
+              kind: 'convoked',
+              title: `${change}🎙️ Conférence de presse : la convocation ${group} est tombée`,
+              body: `${evTitle(o.e)} ${shortDay(o.date)} · Lancez la vidéo pour découvrir le groupe !`,
+              url: `${matchUrl(o)}/conference`,
+              tag: `conv-${o.e.id}-${o.date}-${p.id}`,
+            }
+          : {
+              kind: 'convoked',
+              title: `${change}✅ ${p.firstName} est dans le groupe ${shortDay(o.date)}`,
+              body: `${evTitle(o.e)} · ${whereLine(o)}${bringOf(o) ? `. ${bringOf(o)}` : ''}`,
+              url: matchUrl(o),
+              tag: `conv-${o.e.id}-${o.date}-${p.id}`,
+            }
         : {
             kind: 'not_selected',
             title: `${change}${p.firstName} n'est pas dans le groupe ${shortDay(o.date)}`,
@@ -827,6 +840,8 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
     o.row = convRow(o.e.id, o.date);
   });
   toTeam(o.e.teamId, { t: 'conv', eventId: o.e.id, date: o.date });
+  // Les voix de la conférence de presse se génèrent maintenant : les familles qui ouvrent la notification n'attendent pas.
+  warmPress(o);
   res.json({ ...detail(o), sent });
 });
 

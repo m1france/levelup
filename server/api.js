@@ -16,6 +16,7 @@ import { playersApi, playerOut } from './players.js';
 import { revealApi, revealPublic } from './reveal.js';
 import { socialApi } from './social.js';
 import { clubApi, clubPublic } from './club.js';
+import { pressApi, pressPublic } from './press.js';
 
 export const api = Router();
 
@@ -190,6 +191,7 @@ api.get('/public/trainings/:token', (req, res) => {
 api.use(convPublic);
 api.use(revealPublic);
 api.use(clubPublic);
+api.use(pressPublic);
 
 // Logo du club : public, il figure aussi sur les cartes de match partagées sans compte.
 api.get('/club/logo', (req, res) => sendLogo(res, 'club_logo'));
@@ -493,6 +495,7 @@ api.use(convApi);
 api.use(revealApi);
 api.use(socialApi);
 api.use(clubApi);
+api.use(pressApi);
 
 /* ------------------------------------------------------------------ exercices */
 

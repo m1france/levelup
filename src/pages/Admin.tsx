@@ -4,12 +4,13 @@ import { useSearchParams } from 'react-router-dom';
 import { Avatar, Empty, Field, Seg, Sheet, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
 import { Account } from './Account';
 import { ConvPresets } from './ConvPresets';
+import { PressSettingsPanel } from '../components/Press';
 import { api, uid } from '../lib/api';
 import { prepareLogo } from '../lib/images';
 import { CATEGORIES, ROLE_LABELS, playerName, useApp } from '../lib/store';
 import type { InviteLink, Member, Player, Role, Team } from '../lib/types';
 
-type Tab = 'profil' | 'convocations' | 'membres' | 'equipes' | 'permissions' | 'club';
+type Tab = 'profil' | 'convocations' | 'conference' | 'membres' | 'equipes' | 'permissions' | 'club';
 
 /** Paramètres : profil de l'utilisateur et, selon ses droits, l'administration du club. */
 export function Settings() {
@@ -18,6 +19,7 @@ export function Settings() {
   const tabs: { value: Tab; label: string }[] = [
     { value: 'profil', label: 'Profil' },
     ...(can('events.manage') && me.user.role !== 'parent' ? [{ value: 'convocations' as Tab, label: 'Convocations' }] : []),
+    ...(me.user.role !== 'parent' ? [{ value: 'conference' as Tab, label: 'Conférence de presse' }] : []),
     ...(can('members.manage') ? [{ value: 'membres' as Tab, label: 'Membres' }] : []),
     ...(can('teams.manage') ? [{ value: 'equipes' as Tab, label: 'Équipes' }] : []),
     ...(isAdmin ? [{ value: 'permissions' as Tab, label: 'Permissions' }, { value: 'club' as Tab, label: 'Club' }] : []),
@@ -43,6 +45,7 @@ export function Settings() {
       )}
       {tab === 'profil' && <Account />}
       {tab === 'convocations' && <ConvPresets />}
+      {tab === 'conference' && <PressSettingsPanel />}
       {tab === 'membres' && <Members />}
       {tab === 'equipes' && <Teams />}
       {tab === 'permissions' && <Permissions />}

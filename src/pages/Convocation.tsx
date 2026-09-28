@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Link2, MapPin, Megaphone, MessageCircle,
+  ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Link2, MapPin, Megaphone, MessageCircle, Mic,
   Minus, Play, Send, Sparkles, TrendingDown, TrendingUp, Trophy, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -29,6 +29,16 @@ export function ConvocationPage() {
   const q = useAsync(() => api.get<Payload>(`/convocations/${eventId}/${date}`), [eventId, date]);
   const [params] = useSearchParams();
   useLive((m) => m.t === 'conv' && m.eventId === eventId && m.date === date && q.reload());
+  const nav = useNavigate();
+  // Parent : une convocation publiée pas encore vue s'ouvre d'abord en conférence de presse (une fois par session).
+  const seenKey = `press-seen:${eventId}:${date}`;
+  const pressFirst =
+    q.data?.kind === 'parent' && !params.has('billet') && !sessionFlag(seenKey) && q.data.tickets.some((t) => t.press && t.publishedAt && !t.read && !t.result && t.status === 'convoked');
+  useEffect(() => {
+    if (!pressFirst) return;
+    sessionFlag(seenKey, true);
+    nav(`/matchs/${eventId}/${date}/conference`, { replace: true });
+  }, [pressFirst, seenKey, nav, eventId, date]);
   if (q.loading && !q.data) return <Spinner fill />;
   if (q.error || !q.data)
     return (
@@ -37,6 +47,7 @@ export function ConvocationPage() {
       </div>
     );
   if (q.data.kind === 'parent') {
+    if (pressFirst) return <Spinner fill />;
     return (
       <div className="page narrow">
         <Link to="/matchs" className="back">
@@ -51,6 +62,16 @@ export function ConvocationPage() {
     );
   }
   return <StaffConvocation d={q.data} reload={q.reload} setData={(d) => q.setData({ kind: 'staff', ...d })} />;
+}
+
+/** Petit drapeau de session (stockage indisponible : considéré comme déjà vu). */
+function sessionFlag(key: string, set?: boolean) {
+  try {
+    if (set) sessionStorage.setItem(key, '1');
+    return sessionStorage.getItem(key) === '1';
+  } catch {
+    return true;
+  }
 }
 
 /* ------------------------------------------------------------------ frise des étapes */
@@ -419,6 +440,14 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
           </div>
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
+          <button
+            className="btn lg"
+            onClick={() => nav(`/matchs/${d.eventId}/${d.date}/conference`)}
+            disabled={!sel.size}
+            title={published ? 'La convocation en cinématique, telle que les familles la découvrent' : 'Aperçu de la cinématique avec la sélection en cours'}
+          >
+            <Mic /> Conférence de presse
+          </button>
           {canEdit && (
             <button className="btn lg primary" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/live`)}>
               {played ? <Trophy /> : <Play fill="currentColor" />} {played ? 'Feuille de match' : 'Mode match'}
