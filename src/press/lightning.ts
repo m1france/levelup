@@ -1,8 +1,8 @@
 /**
- * Éclair de la conférence de presse, dessiné au canevas :
- * deux traits de foudre jaillissent des bords gauche et droit de l'écran, avancent en zigzag jusqu'au centre,
- * s'y rejoignent dans un flash, puis ouvrent une brèche électrique (ovale crépitant) où s'inscrit le prénom.
- * Les tracés sont régénérés plusieurs fois par seconde : la foudre scintille comme une vraie décharge.
+ * Éclair de la conférence de presse, façon Duolingo, dessiné au canevas :
+ * un gros éclair jaune, plat et arrondi, tombe du haut de l'écran en s'étirant, s'écrase au centre
+ * (écrasement, rebond), lance une onde et des rayons, puis se pose en badge au sommet du cercle
+ * qui s'ouvre ; des étincelles à quatre branches et des confettis ronds jaillissent autour.
  */
 
 export interface Portal {
@@ -15,50 +15,50 @@ export interface Portal {
 
 type Pt = [number, number];
 
+const YELLOW = '#ffc800';
+const SHADE = '#e69500';
+const clamp = (t: number) => Math.min(1, Math.max(0, t));
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
-const easeOut = (t: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
-/** Rebond léger à l'ouverture de la brèche. */
-const backOut = (t: number) => {
-  const c = 1.9;
-  const x = Math.min(1, Math.max(0, t)) - 1;
+const easeIn = (t: number) => clamp(t) ** 2.2;
+const easeOut = (t: number) => 1 - Math.pow(1 - clamp(t), 3);
+/** Rebond franc (dépasse puis revient). */
+const backOut = (t: number, c = 2.2) => {
+  const x = clamp(t) - 1;
   return 1 + (c + 1) * x * x * x + c * x * x;
 };
+/** Ressort amorti : 1 → 0 en oscillant (écrasement de l'éclair). */
+const spring = (t: number) => (t < 0 ? 0 : Math.exp(-7 * t) * Math.cos(t * 26));
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-/** Trait de foudre : déplacement du point milieu, récursif, perpendiculaire au segment. */
-function zigzag(a: Pt, b: Pt, rough: number, depth: number, out: Pt[] = [a]): Pt[] {
-  if (depth === 0) {
-    out.push(b);
-    return out;
-  }
-  const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
-  const dx = b[0] - a[0], dy = b[1] - a[1];
-  const len = Math.hypot(dx, dy) || 1;
-  const off = (Math.random() - 0.5) * rough * len;
-  const m: Pt = [mx - (dy / len) * off, my + (dx / len) * off];
-  zigzag(a, m, rough, depth - 1, out);
-  zigzag(m, b, rough, depth - 1, out);
-  return out;
+/** Silhouette de l'éclair ⚡, hauteur 1, centrée sur l'origine. */
+const BOLT: Pt[] = [
+  [0.0, -0.5],
+  [0.3, -0.5],
+  [0.12, -0.1],
+  [0.34, -0.1],
+  [-0.16, 0.52],
+  [-0.02, 0.08],
+  [-0.26, 0.08],
+];
+
+interface Sparkle {
+  x: number;
+  y: number;
+  size: number;
+  born: number;
+  life: number;
+  color: string;
+  spin: number;
 }
 
-interface Bolt {
-  pts: Pt[];
-  branches: Pt[][];
-}
-
-function makeBolt(a: Pt, b: Pt, rough = 0.42, depth = 7): Bolt {
-  const pts = zigzag(a, b, rough, depth);
-  const branches: Pt[][] = [];
-  // Ramifications : de courtes fourches qui partent du tronc.
-  const n = Math.floor(rand(2, 5));
-  for (let i = 0; i < n; i++) {
-    const k = Math.floor(rand(0.15, 0.85) * (pts.length - 1));
-    const p = pts[k];
-    const q = pts[Math.min(pts.length - 1, k + 4)];
-    const ang = Math.atan2(q[1] - p[1], q[0] - p[0]) + rand(-1, 1) * 0.9;
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) * rand(0.06, 0.18);
-    branches.push(zigzag(p, [p[0] + Math.cos(ang) * len, p[1] + Math.sin(ang) * len], 0.5, 4));
-  }
-  return { pts, branches };
+interface Dot {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  r: number;
+  born: number;
+  color: string;
 }
 
 export class LightningFx {
@@ -68,13 +68,13 @@ export class LightningFx {
   private w = 0;
   private h = 0;
   private dpr = 1;
-  private bolts: [Bolt, Bolt] | null = null;
-  private rim: Pt[] = [];
-  private sparks: { a: Pt; b: Bolt; life: number }[] = [];
-  private lastGen = 0;
   private met = false;
   private meetTimer = 0;
-  /** Instant (s) où les deux éclairs se rejoignent. */
+  private sparkles: Sparkle[] = [];
+  private dots: Dot[] = [];
+  private nextSparkle = 0;
+  private last = 0;
+  /** Instant (s) où l'éclair touche le centre. */
   readonly meetAt = 0.34;
   portal: Portal = { x: 0, y: 0, rx: 0, ry: 0 };
   onMeet: (() => void) | null = null;
@@ -84,13 +84,14 @@ export class LightningFx {
     this.portal = opts.portal;
     this.resize();
     this.frame();
-    // Onglet en arrière-plan (images ralenties) : la rencontre a lieu quand même, à l'heure.
+    // Onglet en arrière-plan (images ralenties) : l'impact a lieu quand même, à l'heure.
     this.meetTimer = window.setTimeout(() => this.meet(), this.meetAt * 1000 + 60);
   }
 
   private meet() {
     if (this.met) return;
     this.met = true;
+    this.burst();
     this.onMeet?.();
   }
 
@@ -111,144 +112,242 @@ export class LightningFx {
     clearTimeout(this.meetTimer);
   }
 
-  /** Tracé d'une décharge : halo large, halo moyen, cœur blanc. */
-  private stroke(pts: Pt[], width: number, alpha: number) {
+  private get palette() {
+    return ['#ffffff', YELLOW, this.opts.color, '#ffe066', '#58cc02', '#1cb0f6'];
+  }
+
+  /** Impact : une gerbe d'étincelles et de confettis autour du cercle. */
+  private burst() {
+    const { x, y, rx, ry } = this.portal;
+    const now = this.time();
+    const pal = this.palette;
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + rand(-0.2, 0.2);
+      const d = rand(1.08, 1.45);
+      this.sparkles.push({ x: x + Math.cos(a) * rx * d, y: y + Math.sin(a) * ry * d, size: rand(10, 22) * (rx / 220), born: now + rand(0, 0.12), life: rand(0.45, 0.7), color: pal[i % 3], spin: rand(-2, 2) });
+    }
+    for (let i = 0; i < 26; i++) {
+      const a = rand(0, Math.PI * 2);
+      const v = rand(260, 620) * (rx / 220);
+      this.dots.push({ x: x + Math.cos(a) * rx * 0.6, y: y + Math.sin(a) * ry * 0.6, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 120, r: rand(3.5, 8) * (rx / 220), born: now, color: pal[i % pal.length] });
+    }
+  }
+
+  private time() {
+    return (performance.now() - this.t0) / 1000;
+  }
+
+  /* ---------------------------------------------------------------- formes */
+
+  /** Éclair plat, coins arrondis, tranche foncée dessous et reflet blanc (relief Duolingo). */
+  private bolt(cx: number, cy: number, size: number, sx: number, sy: number, rot: number, alpha = 1) {
+    const g = this.g;
+    const path = () => {
+      g.beginPath();
+      BOLT.forEach(([px, py], i) => (i ? g.lineTo(px, py) : g.moveTo(px, py)));
+      g.closePath();
+    };
+    g.save();
+    g.globalAlpha = alpha;
+    g.translate(cx, cy);
+    g.rotate(rot);
+    g.scale(size * sx, size * sy);
+    g.lineJoin = 'round';
+    g.lineWidth = 0.09;
+    // Tranche (relief).
+    g.save();
+    g.translate(0, 0.07);
+    path();
+    g.fillStyle = SHADE;
+    g.strokeStyle = SHADE;
+    g.fill();
+    g.stroke();
+    g.restore();
+    // Face.
+    path();
+    g.fillStyle = YELLOW;
+    g.strokeStyle = YELLOW;
+    g.fill();
+    g.stroke();
+    // Reflet.
+    g.beginPath();
+    g.moveTo(0.06, -0.42);
+    g.lineTo(0.2, -0.42);
+    g.lineCap = 'round';
+    g.lineWidth = 0.06;
+    g.strokeStyle = 'rgba(255,255,255,0.75)';
+    g.stroke();
+    g.beginPath();
+    g.arc(-0.14, 0.035, 0.03, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(255,255,255,0.6)';
+    g.fill();
+    g.restore();
+  }
+
+  /** Étincelle à quatre branches incurvées. */
+  private star(x: number, y: number, r: number, rot: number, color: string, alpha: number) {
+    const g = this.g;
+    g.save();
+    g.globalAlpha = alpha;
+    g.translate(x, y);
+    g.rotate(rot);
+    g.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 2;
+      const tip: Pt = [Math.cos(a) * r, Math.sin(a) * r];
+      if (i === 0) g.moveTo(...tip);
+      else g.quadraticCurveTo(0, 0, ...tip);
+    }
+    g.quadraticCurveTo(0, 0, r, 0);
+    g.fillStyle = color;
+    g.fill();
+    g.restore();
+  }
+
+  /** Découpe l'intérieur du cercle : ce qui suit ne se dessine qu'autour de la brèche. */
+  private outside(rx: number, ry: number) {
     const g = this.g;
     g.beginPath();
-    g.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
-    g.globalAlpha = alpha * 0.1;
-    g.strokeStyle = this.opts.color;
-    g.lineWidth = width * 9;
-    g.stroke();
-    g.globalAlpha = alpha * 0.28;
-    g.lineWidth = width * 3.4;
-    g.stroke();
-    g.globalAlpha = alpha * 0.9;
-    g.strokeStyle = this.opts.core ?? '#f2f8ff';
-    g.lineWidth = width;
-    g.stroke();
+    g.rect(0, 0, this.w, this.h);
+    g.ellipse(this.portal.x, this.portal.y, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+    g.clip('evenodd');
   }
 
-  private drawBolt(b: Bolt, upTo: number, width: number, alpha: number) {
-    const n = Math.max(2, Math.floor(b.pts.length * upTo));
-    this.stroke(b.pts.slice(0, n), width, alpha);
-    for (const br of b.branches) if (b.pts.indexOf(br[0]) < n) this.stroke(br, width * 0.45, alpha * 0.7);
-  }
-
-  /** Bord de la brèche : ovale dont le rayon tremble. */
-  private makeRim(rx: number, ry: number) {
-    const { x, y } = this.portal;
-    const N = 120;
-    const pts: Pt[] = [];
-    for (let i = 0; i <= N; i++) {
-      const a = (i / N) * Math.PI * 2;
-      const j = 1 + (Math.random() - 0.5) * 0.07 + Math.sin(a * 7 + performance.now() / 90) * 0.012;
-      pts.push([x + Math.cos(a) * rx * j, y + Math.sin(a) * ry * j]);
-    }
-    pts[N] = pts[0];
-    return pts;
-  }
+  /* ---------------------------------------------------------------- animation */
 
   private frame = () => {
     this.raf = requestAnimationFrame(this.frame);
-    const t = (performance.now() - this.t0) / 1000;
+    const t = this.time();
+    const dt = Math.min(0.05, t - this.last);
+    this.last = t;
     const g = this.g;
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.clearRect(0, 0, this.w, this.h);
-    g.globalCompositeOperation = 'lighter';
     g.lineCap = 'round';
     g.lineJoin = 'round';
     const { x: cx, y: cy, rx, ry } = this.portal;
-
-    // Nouveaux tracés toutes les 45 ms environ : scintillement.
-    const regen = t - this.lastGen > 0.045;
-    if (regen) this.lastGen = t;
-    const k = easeOut(t / this.meetAt);
+    const size = Math.min(rx * 1.5, this.h * 0.42);
 
     if (t < this.meetAt) {
-      // Les deux éclairs avancent depuis les bords vers le centre.
-      const yL = cy + Math.sin(t * 9) * this.h * 0.04;
-      const yR = cy - Math.sin(t * 8) * this.h * 0.04;
-      if (regen || !this.bolts) this.bolts = [makeBolt([-10, yL - this.h * 0.12], [cx, cy]), makeBolt([this.w + 10, yR + this.h * 0.1], [cx, cy])];
-      const w = Math.max(2.4, this.w / 330);
-      this.drawBolt(this.bolts[0], k, w, 1);
-      this.drawBolt(this.bolts[1], k, w, 1);
-      // Tête lumineuse de chaque éclair.
-      for (const b of this.bolts) {
-        const p = b.pts[Math.max(1, Math.floor(b.pts.length * k)) - 1];
-        const r = 26 + Math.random() * 16;
-        const grd = g.createRadialGradient(p[0], p[1], 0, p[0], p[1], r);
-        grd.addColorStop(0, 'rgba(255,255,255,0.95)');
-        grd.addColorStop(0.35, this.opts.color);
-        grd.addColorStop(1, 'rgba(0,0,0,0)');
-        g.globalAlpha = 0.8;
-        g.fillStyle = grd;
-        g.fillRect(p[0] - r, p[1] - r, r * 2, r * 2);
+      // Chute : l'éclair accélère en s'étirant, traînées de vitesse au-dessus.
+      const k = easeIn(t / this.meetAt);
+      const y = lerp(-size * 0.8, cy, k);
+      const stretch = lerp(1, 1.35, k);
+      for (let i = 0; i < 3; i++) {
+        const lx = cx + (i - 1) * size * 0.2;
+        const len = size * (0.35 + 0.25 * k) * (i === 1 ? 1.3 : 1);
+        g.beginPath();
+        g.moveTo(lx, y - size * 0.55);
+        g.lineTo(lx, y - size * 0.55 - len);
+        g.strokeStyle = 'rgba(255,255,255,0.55)';
+        g.lineWidth = Math.max(4, size * 0.045);
+        g.stroke();
       }
+      this.bolt(cx, y, size, 1 / Math.sqrt(stretch), stretch, lerp(0.25, 0, k));
     } else {
       this.meet();
       const s = t - this.meetAt;
-      // Flash de la rencontre.
-      if (s < 0.5) {
-        const r = Math.max(this.w, this.h) * (0.2 + s * 1.8);
-        const grd = g.createRadialGradient(cx, cy, 0, cx, cy, r);
-        grd.addColorStop(0, `rgba(255,255,255,${0.95 * (1 - s / 0.5)})`);
-        grd.addColorStop(0.3, `rgba(200,230,255,${0.4 * (1 - s / 0.5)})`);
-        grd.addColorStop(1, 'rgba(0,0,0,0)');
-        g.globalAlpha = 1;
-        g.fillStyle = grd;
-        g.fillRect(0, 0, this.w, this.h);
-      }
-      // Brèche : l'ovale s'ouvre avec un léger rebond.
-      const open = backOut(s / 0.42);
+      const open = backOut(s / 0.45);
       const orx = rx * open, ory = ry * open;
-      // Intérieur : lueur électrique.
-      // Dégradé tracé dans le repère de l'ovale : la lueur suit tout le bord.
-      g.globalAlpha = Math.min(1, s * 4) * 0.8;
+
+      // Rayons de soleil qui tournent lentement autour du cercle.
       g.save();
+      this.outside(orx, ory);
       g.translate(cx, cy);
-      g.scale(1, ory / Math.max(1, orx));
-      const R = Math.max(1, orx);
-      const inner = g.createRadialGradient(0, 0, 0, 0, 0, R);
-      inner.addColorStop(0, 'rgba(40,60,110,0.0)');
-      inner.addColorStop(0.7, 'rgba(60,110,190,0.08)');
-      inner.addColorStop(0.96, this.opts.color);
-      inner.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = inner;
-      g.beginPath();
-      g.arc(0, 0, R, 0, Math.PI * 2);
-      g.fill();
+      g.rotate(s * 0.35);
+      const R = Math.hypot(this.w, this.h);
+      const rays = 14;
+      g.globalAlpha = 0.16 * easeOut(s / 0.5);
+      g.fillStyle = this.opts.color;
+      for (let i = 0; i < rays; i++) {
+        const a = (i / rays) * Math.PI * 2;
+        g.beginPath();
+        g.moveTo(0, 0);
+        g.arc(0, 0, R, a, a + Math.PI / rays);
+        g.closePath();
+        g.fill();
+      }
       g.restore();
-      // Bord crépitant : deux passes décalées.
-      if (regen || !this.rim.length) this.rim = this.makeRim(orx, ory);
-      const w = Math.max(1.6, this.w / 700);
-      this.stroke(this.rim, w, 0.95);
-      this.stroke(this.makeRim(orx * 0.985, ory * 0.985), w * 0.6, 0.5);
-      // Les éclairs restent accrochés à la brèche depuis les bords de l'écran, de plus en plus ténus.
-      const fade = Math.max(0.15, 1 - s * 0.6);
-      if (regen || !this.bolts) {
-        const side = (dir: number): Bolt => makeBolt([dir < 0 ? -10 : this.w + 10, cy + rand(-0.15, 0.15) * this.h], [cx + dir * orx * 0.98, cy + rand(-0.25, 0.25) * ory], 0.38, 6);
-        this.bolts = [side(-1), side(1)];
+
+      // Onde de choc : un anneau épais qui s'agrandit et s'amincit.
+      if (s < 0.5) {
+        const k = easeOut(s / 0.5);
+        g.beginPath();
+        g.ellipse(cx, cy, rx * (1 + k * 0.7), ry * (1 + k * 0.7), 0, 0, Math.PI * 2);
+        g.strokeStyle = '#ffffff';
+        g.globalAlpha = 1 - k;
+        g.lineWidth = Math.max(2, rx * 0.12 * (1 - k));
+        g.stroke();
+        g.globalAlpha = 1;
       }
-      if (Math.random() < 0.85) {
-        this.drawBolt(this.bolts[0], 1, Math.max(1.6, this.w / 620), fade);
-        this.drawBolt(this.bolts[1], 1, Math.max(1.6, this.w / 620), fade);
+
+      // Traits d'impact : de courts bâtons arrondis qui partent du bord puis se rétractent.
+      if (s < 0.42) {
+        const k = s / 0.42;
+        const out = easeOut(k * 1.6);
+        const back = easeOut((k - 0.35) / 0.65);
+        g.strokeStyle = YELLOW;
+        g.lineWidth = Math.max(4, rx * 0.05);
+        for (let i = 0; i < 10; i++) {
+          const a = (i / 10) * Math.PI * 2 + Math.PI / 10;
+          const r0 = 1.12 + back * 0.35, r1 = 1.12 + out * 0.38;
+          if (r1 <= r0) continue;
+          g.beginPath();
+          g.moveTo(cx + Math.cos(a) * orx * r0, cy + Math.sin(a) * ory * r0);
+          g.lineTo(cx + Math.cos(a) * orx * r1, cy + Math.sin(a) * ory * r1);
+          g.stroke();
+        }
       }
-      // Étincelles : petits arcs qui sautent du bord vers l'extérieur.
-      if (Math.random() < 0.35 && s > 0.2) {
-        const a = Math.random() * Math.PI * 2;
-        const p: Pt = [cx + Math.cos(a) * orx, cy + Math.sin(a) * ory];
-        const len = rand(0.12, 0.3) * Math.min(orx, ory);
-        this.sparks.push({ a: p, b: makeBolt(p, [p[0] + Math.cos(a) * len, p[1] + Math.sin(a) * len], 0.6, 4), life: 1 });
+
+      // Bord du cercle : anneau blanc épais avec tranche, comme un bouton Duolingo.
+      const ring = Math.max(5, rx * 0.045);
+      g.lineWidth = ring;
+      g.beginPath();
+      g.ellipse(cx, cy + ring * 0.55, orx, ory, 0, 0, Math.PI * 2);
+      g.strokeStyle = 'rgba(0,0,0,0.28)';
+      g.stroke();
+      g.beginPath();
+      g.ellipse(cx, cy, orx, ory, 0, 0, Math.PI * 2);
+      g.strokeStyle = this.opts.core ?? '#ffffff';
+      g.stroke();
+
+      // Confettis ronds, avec gravité.
+      for (const d of this.dots) {
+        const age = t - d.born;
+        d.vy += 900 * dt;
+        d.vx *= 0.985;
+        d.x += d.vx * dt;
+        d.y += d.vy * dt;
+        g.globalAlpha = clamp(1.4 - age);
+        g.beginPath();
+        g.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+        g.fillStyle = d.color;
+        g.fill();
       }
-      for (const sp of this.sparks) {
-        this.drawBolt(sp.b, 1, w * 0.7, sp.life);
-        sp.life -= 0.16;
+      g.globalAlpha = 1;
+      this.dots = this.dots.filter((d) => t - d.born < 1.4 && d.y < this.h + 20);
+
+      // Étincelles qui scintillent autour du cercle.
+      if (s > 0.5 && t > this.nextSparkle) {
+        this.nextSparkle = t + rand(0.14, 0.3);
+        const a = rand(0, Math.PI * 2);
+        const d = rand(1.1, 1.35);
+        this.sparkles.push({ x: cx + Math.cos(a) * rx * d, y: cy + Math.sin(a) * ry * d, size: rand(8, 16) * (rx / 220), born: t, life: rand(0.5, 0.8), color: this.palette[Math.floor(rand(0, 3))], spin: rand(-1.5, 1.5) });
       }
-      this.sparks = this.sparks.filter((sp) => sp.life > 0);
+      for (const sp of this.sparkles) {
+        const k = (t - sp.born) / sp.life;
+        if (k < 0) continue;
+        const sc = k < 0.4 ? backOut(k / 0.4) : 1 - easeOut((k - 0.4) / 0.6);
+        this.star(sp.x, sp.y, sp.size * sc, sp.spin * k, sp.color, 1);
+      }
+      this.sparkles = this.sparkles.filter((sp) => t - sp.born < sp.life);
+
+      // L'éclair : écrasé à l'impact, il rebondit puis se pose en badge au sommet du cercle.
+      const hop = easeOut((s - 0.12) / 0.4);
+      const sq = spring(s);
+      const bs = lerp(1, 0.45, hop) * (1 + (hop < 1 ? 0 : Math.sin(s * 4) * 0.03));
+      const by = lerp(cy, cy - ory - size * 0.12, hop) - Math.sin(Math.PI * clamp((s - 0.12) / 0.4)) * size * 0.25;
+      this.bolt(cx, by, size * bs, 1 + sq * 0.35, 1 - sq * 0.35, lerp(0, -0.12, hop) + Math.sin(s * 3) * 0.04 * hop);
     }
-    g.globalAlpha = 1;
-    g.globalCompositeOperation = 'source-over';
   };
 }

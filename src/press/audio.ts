@@ -1,5 +1,5 @@
 /**
- * Son de la conférence de presse : ambiance de salle, déclencheurs d'appareils photo, éclair, impacts,
+ * Son de la conférence de presse : ambiance de salle, déclencheurs d'appareils photo, chute et impact de l'éclair,
  * et la voix des présentateurs (fichiers MP3 générés par Fish Audio sur le serveur).
  * Les bruitages sont synthétisés avec Web Audio : aucun fichier à télécharger.
  */
@@ -166,67 +166,73 @@ export class PressAudio {
     n.stop(t + dur + 0.1);
   }
 
-  /** Coup de tonnerre de l'éclair. */
+  /** Impact de l'éclair, façon dessin animé : « boum » rond, « pop » et petit carillon qui monte. */
   thunder() {
     const t = this.ctx.currentTime;
     const o = this.ctx.createOscillator();
     const og = this.ctx.createGain();
     o.type = 'sine';
-    o.frequency.setValueAtTime(110, t);
-    o.frequency.exponentialRampToValueAtTime(32, t + 0.9);
-    og.gain.setValueAtTime(0.9, t);
-    og.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
+    o.frequency.setValueAtTime(190, t);
+    o.frequency.exponentialRampToValueAtTime(55, t + 0.25);
+    og.gain.setValueAtTime(0.85, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
     o.connect(og).connect(this.sfx);
     o.start(t);
-    o.stop(t + 1.2);
-    const n = this.noiseSrc();
-    const lp = this.ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.setValueAtTime(5000, t);
-    lp.frequency.exponentialRampToValueAtTime(180, t + 1.6);
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.7, t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.25, t + 0.2);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 1.9);
-    n.connect(lp).connect(g).connect(this.sfx);
-    n.start(t);
-    n.stop(t + 2);
-    // Crépitement électrique.
-    for (let i = 0; i < 6; i++) {
-      const c = this.noiseSrc();
-      const hp = this.ctx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.value = 3000;
-      const cg = this.ctx.createGain();
-      const s = t + i * 0.035 + Math.random() * 0.02;
-      cg.gain.setValueAtTime(0.35, s);
-      cg.gain.exponentialRampToValueAtTime(0.001, s + 0.03);
-      c.connect(hp).connect(cg).connect(this.sfx);
-      c.start(s);
-      c.stop(s + 0.05);
-    }
+    o.stop(t + 0.4);
+    const p = this.ctx.createOscillator();
+    const pg = this.ctx.createGain();
+    p.type = 'triangle';
+    p.frequency.setValueAtTime(520, t);
+    p.frequency.exponentialRampToValueAtTime(1300, t + 0.07);
+    pg.gain.setValueAtTime(0.35, t);
+    pg.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    p.connect(pg).connect(this.sfx);
+    p.start(t);
+    p.stop(t + 0.14);
+    [1318.5, 1568, 2093].forEach((f, i) => {
+      const s = t + 0.06 + i * 0.07;
+      for (const [mul, v] of [[1, 0.13], [2.01, 0.035]] as [number, number][]) {
+        const c = this.ctx.createOscillator();
+        const cg = this.ctx.createGain();
+        c.type = 'sine';
+        c.frequency.value = f * mul;
+        cg.gain.setValueAtTime(0.0001, s);
+        cg.gain.linearRampToValueAtTime(v, s + 0.008);
+        cg.gain.exponentialRampToValueAtTime(0.001, s + 0.5);
+        c.connect(cg).connect(this.sfx);
+        c.start(s);
+        c.stop(s + 0.55);
+      }
+    });
   }
 
-  /** Grésillement électrique des éclairs qui traversent l'écran (≈ dur secondes). */
+  /** Sifflement de chute de l'éclair (≈ dur secondes) : note qui descend et souffle. */
   crackle(dur = 0.35) {
     const t = this.ctx.currentTime;
-    const n = Math.round(dur / 0.018);
-    for (let i = 0; i < n; i++) {
-      const c = this.noiseSrc();
-      const hp = this.ctx.createBiquadFilter();
-      hp.type = 'bandpass';
-      hp.frequency.value = 2500 + Math.random() * 4000;
-      hp.Q.value = 1.2;
-      const cg = this.ctx.createGain();
-      const s = t + i * 0.018 + Math.random() * 0.01;
-      const v = 0.12 + (i / n) * 0.35;
-      cg.gain.setValueAtTime(v, s);
-      cg.gain.exponentialRampToValueAtTime(0.001, s + 0.025);
-      c.connect(hp).connect(cg).connect(this.sfx);
-      c.start(s);
-      c.stop(s + 0.04);
-    }
+    const o = this.ctx.createOscillator();
+    const og = this.ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(1800, t);
+    o.frequency.exponentialRampToValueAtTime(380, t + dur);
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.linearRampToValueAtTime(0.1, t + 0.04);
+    og.gain.linearRampToValueAtTime(0.0001, t + dur);
+    o.connect(og).connect(this.sfx);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+    const n = this.noiseSrc();
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 2;
+    f.frequency.setValueAtTime(4000, t);
+    f.frequency.exponentialRampToValueAtTime(900, t + dur);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.3, t + dur * 0.9);
+    g.gain.linearRampToValueAtTime(0, t + dur);
+    n.connect(f).connect(g).connect(this.sfx);
+    n.start(t);
+    n.stop(t + dur + 0.05);
   }
 
   /** Impact à l'apparition d'un joueur : grosse caisse, accord brillant, étincelle. */
