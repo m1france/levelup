@@ -105,6 +105,8 @@ export interface Player {
   level?: 1 | 2 | 3;
   /** Version de la photo (horodatage), absente sans photo. */
   photo?: number;
+  /** Version de la photo en pied (conférence de presse), absente sans photo. */
+  fullPhoto?: number;
   /** Conférence de presse : prononciation du prénom. */
   press?: { say?: string };
   profile?: PlayerProfile;
@@ -774,22 +776,30 @@ export interface RosterRow {
 export type HairStyle = 'cap' | 'fringe' | 'short' | 'curly' | 'long' | 'bald';
 
 /** Points du visage détectés sur la photo (MediaPipe) : [x, y, z]. */
-export type FaceLandmarks = [number, number, number][];
-
 export interface PressPresenter {
   id: string;
   name: string;
   role: string;
   groups: string[];
-  photo: string | null;
-  landmarks: FaceLandmarks | null;
   style: HairStyle;
   hair: string;
   cap: string;
-  number: number | null;
 }
 
-export interface PressPlayer { id: string; firstName: string; number: number | null; photo: string | null; voice: string; mine: boolean }
+/**
+ * Joueur annoncé : `photo` est la photo en pied (sinon le portrait), affichée dans l'éclair ;
+ * `card` sa carte façon Ultimate Team pour l'écran final (portrait carré).
+ */
+export interface PressPlayer {
+  id: string;
+  firstName: string;
+  number: number | null;
+  photo: string | null;
+  full: boolean;
+  voice: string;
+  mine: boolean;
+  card: PlayerCard;
+}
 
 export interface PressSpeech { text: string; url: string }
 
@@ -828,9 +838,7 @@ export interface PressSettings {
   hold: number;
   tts: boolean;
   voices: { id: string; label: string }[];
-  presenters: (Omit<PressPresenter, 'photo'> & {
-    photo: number | null;
-    photoUrl: string | null;
+  presenters: (PressPresenter & {
     sampleUrl: string | null;
     voice: { id: string; sample: { v: number; type: string } | null; transcript: string };
   })[];

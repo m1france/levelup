@@ -1,10 +1,12 @@
-import { ArrowLeft, Link2, Play, RotateCcw, Share2, SkipForward, Volume2, VolumeX, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { ArrowLeft, ClipboardList, Link2, Play, RotateCcw, SkipForward, Volume2, VolumeX, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Spinner, useAsync, useToast } from '../components/ui';
+import { FutCard } from '../components/FutCard';
+import { Spinner, useAsync } from '../components/ui';
 import { api } from '../lib/api';
-import { MONTHS_LONG, formatTime, fromYMD } from '../lib/events';
+import { MONTHS_LONG, fromYMD } from '../lib/events';
 import { PressAudio } from '../press/audio';
+import { LightningFx, type Portal } from '../press/lightning';
 import { PressScene } from '../press/scene';
 import { clubLook } from '../press/textures';
 import type { PressData, PressPlayer } from '../lib/types';
@@ -52,7 +54,7 @@ function PressError({ text, onBack }: { text: string | null; onBack?: () => void
         <h2 className="pc-poster-title">Conférence indisponible</h2>
         <p style={{ opacity: 0.75 }}>{text}</p>
         {onBack && (
-          <button className="duo-btn" onClick={onBack}>
+          <button className="btn lg" onClick={onBack}>
             Retour
           </button>
         )}
@@ -76,15 +78,20 @@ function dayWords(ymd: string) {
   return `${WD[d.getDay()]} ${d.getDate()} ${MONTHS_LONG[d.getMonth()]}`;
 }
 
-/* ------------------------------------------------------------------ éléments visuels */
+/** « 09:30 » → « 9h30 », « 09:00 » → « 9h ». */
+const hour = (t: string) => {
+  const [h, m] = t.split(':');
+  return `${Number(h)}h${m && m !== '00' ? m : ''}`;
+};
 
-function Bolt({ className }: { className?: string }) {
-  return (
-    <svg className={`bolt ${className ?? ''}`} viewBox="0 0 60 120" aria-hidden>
-      <path d="M38 2 L8 66 L30 66 L18 118 L54 44 L32 44 L46 2 Z" />
-    </svg>
-  );
+/** Titre de l'écran final : « Samedi à 9h30 ». */
+function whenTitle(ymd: string, time: string) {
+  const day = WD[fromYMD(ymd).getDay()];
+  const d = day.charAt(0).toUpperCase() + day.slice(1);
+  return time ? `${d} à ${hour(time)}` : d;
 }
+
+/* ------------------------------------------------------------------ éléments visuels */
 
 function Confetti({ count = 70, colors }: { count?: number; colors: string[] }) {
   const bits = useMemo(
@@ -112,14 +119,6 @@ function Confetti({ count = 70, colors }: { count?: number; colors: string[] }) 
   );
 }
 
-function Portrait({ p, size, color }: { p: PressPlayer; size?: number; color: string }) {
-  return (
-    <span className="pc-portrait" style={{ width: size, height: size, ['--team' as string]: color } as CSSProperties}>
-      {p.photo ? <img src={p.photo} alt="" draggable={false} /> : <b>{p.firstName.slice(0, 1).toUpperCase()}</b>}
-    </span>
-  );
-}
-
 /** Sous-titres : les mots déjà prononcés s'allument. */
 function Caption({ text, upTo }: { text: string; upTo: number }) {
   const words = [...text.matchAll(/\S+/g)];
@@ -134,6 +133,78 @@ function Caption({ text, upTo }: { text: string; upTo: number }) {
   );
 }
 
+/** Brèche de l'éclair : centrée un peu au-dessus du milieu, en ovale vertical (photo en pied). */
+function portalFor(w: number, h: number): Portal {
+  const rx = Math.min(w * 0.36, h * 0.27, 300);
+  return { x: w / 2, y: h * 0.47, rx, ry: Math.min(h * 0.39, rx * 1.45) };
+}
+
+function usePortal() {
+  const [p, setP] = useState(() => portalFor(window.innerWidth, window.innerHeight));
+  useEffect(() => {
+    const on = () => setP(portalFor(window.innerWidth, window.innerHeight));
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
+  return p;
+}
+
+/** Mélange de deux couleurs hexadécimales. */
+function mixHex(a: string, b: string, t: number) {
+  const pa = parseInt(a.replace('#', '').padEnd(6, '0').slice(0, 6), 16);
+  const pb = parseInt(b.replace('#', ''), 16);
+  const ch = (s: number) => Math.round(((pa >> s) & 255) * (1 - t) + ((pb >> s) & 255) * t);
+  return `rgb(${ch(16)}, ${ch(8)}, ${ch(0)})`;
+}
+
+/**
+ * Éclair : deux décharges surgissent des bords de l'écran, se rejoignent au centre et ouvrent une brèche électrique ;
+ * le contenu (photo en pied, prénom) apparaît dans la brèche au moment de la rencontre.
+ */
+function LightningReveal({ glow, onMeet, children, className }: { glow: string; onMeet?: () => void; children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const fx = useRef<LightningFx | null>(null);
+  const portal = usePortal();
+  const [met, setMet] = useState(false);
+  const meet = useRef(onMeet);
+  meet.current = onMeet;
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    const f = new LightningFx(ref.current, { color: glow, portal });
+    f.onMeet = () => {
+      setMet(true);
+      meet.current?.();
+    };
+    fx.current = f;
+    return () => f.dispose();
+    // Un éclair par apparition (le composant est recréé à chaque joueur).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    fx.current?.resize();
+    fx.current?.setPortal(portal);
+  }, [portal]);
+  return (
+    <div className={`pc-bolt${met ? ' met' : ''}${className ? ` ${className}` : ''}`} style={{ ['--px' as string]: `${portal.x}px`, ['--py' as string]: `${portal.y}px`, ['--rx' as string]: `${portal.rx}px`, ['--ry' as string]: `${portal.ry}px` } as CSSProperties}>
+      <canvas ref={ref} className="pc-bolt-canvas" aria-hidden />
+      <div className="pc-rift">{met && children}</div>
+    </div>
+  );
+}
+
+/** Contenu de la brèche : la photo en pied (ou le portrait), le prénom par-dessus, le numéro. */
+function PlayerInRift({ p }: { p: PressPlayer }) {
+  return (
+    <div className={`pc-rift-player${p.photo ? '' : ' nophoto'}${p.full ? ' full' : ''}`}>
+      {p.photo && <img className="pc-rift-photo" src={p.photo} alt="" draggable={false} />}
+      <h1 className="pc-rift-name" style={{ ['--len' as string]: Math.max(4, p.firstName.length) } as CSSProperties}>
+        {p.firstName.toUpperCase()}
+      </h1>
+      {p.number != null && <span className="pc-rift-num">{p.number}</span>}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ cinématique */
 
 type Phase = 'poster' | 'intro' | 'speech' | 'eclair' | 'player' | 'final';
@@ -141,7 +212,6 @@ type Phase = 'poster' | 'intro' | 'speech' | 'eclair' | 'player' | 'final';
 class Cancelled extends Error {}
 
 export function PressShow({ data, onClose, onStart }: { data: PressData; onClose?: () => void; onStart?: () => void }) {
-  const toast = useToast();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<PressScene | null>(null);
   const audioRef = useRef<PressAudio | null>(null);
@@ -165,6 +235,8 @@ export function PressShow({ data, onClose, onStart }: { data: PressData; onClose
   const speaker = data.presenters[data.speaker] ?? null;
   const matchLine = [data.opponent ? `${data.title}` : data.title, dayWords(data.date)].filter(Boolean).join(' · ');
   const hasMine = data.players.some((p) => p.mine);
+  // Lueur des éclairs : bleu électrique teinté de la couleur du club.
+  const glow = mixHex(color.startsWith('#') ? color : '#c8102e', '#8fd6ff', 0.55);
 
   useEffect(() => {
     let alive = true;
@@ -181,7 +253,7 @@ export function PressShow({ data, onClose, onStart }: { data: PressData; onClose
     if (!el || !look) return;
     const quality = (navigator.hardwareConcurrency ?? 8) <= 4 ? 'low' : 'high';
     PressScene.create(el, {
-      presenters: data.presenters.map((p) => ({ name: p.name, role: p.role, photo: p.photo, landmarks: p.landmarks, style: p.style, hair: p.hair, cap: p.cap, number: p.number })),
+      presenters: data.presenters.map((p) => ({ name: p.name, role: p.role, style: p.style, hair: p.hair, cap: p.cap })),
       speaker: data.speaker,
       logo: data.club.logo,
       club: data.club.name,
@@ -300,21 +372,22 @@ export function PressShow({ data, onClose, onStart }: { data: PressData; onClose
       a?.riser(1.35);
       await wait(1400);
       setPhase('eclair');
-      setFlash((f) => f + 1);
-      a?.thunder();
+      a?.crackle(0.34);
       s?.cue('reveal');
       a?.duck(0.12);
-      await wait(2300);
+      await wait(2700);
 
       // 4. Chaque joueur : éclair, photo, prénom prononcé, deux secondes à l'écran.
       for (let i = 0; i < data.players.length; i++) {
         const p = data.players[i];
         setIdx(i);
         setPhase('player');
-        setFlash((f) => f + 1);
+        // Les éclairs traversent l'écran (≈ 0,34 s), se rejoignent : impact, prénom.
+        a?.crackle(0.34);
+        await wait(340);
         a?.stinger(Math.floor(i / 2));
         s?.burst(p.mine ? 12 : 6);
-        await wait(380);
+        await wait(120);
         const voiceDone = a && !a.muted ? a.clip(p.voice) : Promise.resolve(false);
         await Promise.all([wait(data.hold * 1000), voiceDone]);
         check();
@@ -362,20 +435,6 @@ export function PressShow({ data, onClose, onStart }: { data: PressData; onClose
     const m = !muted;
     setMuted(m);
     audioRef.current?.setMuted(m);
-  };
-
-  const share = async () => {
-    if (!data.shareToken) return;
-    const url = `${location.origin}/c/${data.shareToken}`;
-    try {
-      if (navigator.share) await navigator.share({ title: `Conférence de presse · Convocation ${data.group}`, text: `🎙️ La convocation ${data.group} est tombée !`, url });
-      else {
-        await navigator.clipboard.writeText(url);
-        toast('Lien copié');
-      }
-    } catch {
-      /* partage annulé */
-    }
   };
 
   const player = data.players[idx];
@@ -438,7 +497,7 @@ export function PressShow({ data, onClose, onStart }: { data: PressData; onClose
             <b>CONVOCATION {data.group}</b>
             <div>
               <span>
-                {[data.title, dayWords(data.date), data.meetTime && `RDV ${formatTime(data.meetTime)}`, data.time && `Coup d’envoi ${formatTime(data.time)}`, data.location, `${data.players.length} joueurs convoqués`]
+                {[data.title, dayWords(data.date), data.meetTime && `RDV ${hour(data.meetTime)}`, data.time && `Coup d’envoi ${hour(data.time)}`, `${data.players.length} joueurs convoqués`]
                   .filter(Boolean)
                   .join('   •   ')}
                 {'   •   '}
@@ -474,33 +533,24 @@ export function PressShow({ data, onClose, onStart }: { data: PressData; onClose
 
       {/* Éclair : titre de la convocation */}
       {phase === 'eclair' && (
-        <div className="rv-center pc-eclair">
-          <Bolt className="l" />
-          <Bolt className="r" />
-          <h1 className="rv-title" data-text="CONVOCATION">
-            CONVOCATION
-          </h1>
-          <div className="pc-group">{data.group}</div>
-          <p className="pc-eclair-sub">{matchLine}</p>
-        </div>
+        <LightningReveal key="eclair" glow={glow} onMeet={() => (audioRef.current?.thunder(), setFlash((f) => f + 1))}>
+          <div className="pc-rift-title">
+            <small>Convocation</small>
+            <b>{data.group}</b>
+            <span>{matchLine}</span>
+          </div>
+        </LightningReveal>
       )}
 
-      {/* Un joueur à la fois */}
+      {/* Un joueur à la fois : il surgit dans la brèche de l'éclair */}
       {phase === 'player' && player && (
-        <div className={`pc-player${player.mine ? ' mine' : ''}`} key={player.id}>
-          <div className="rv-rays" style={{ ['--glow' as string]: player.mine ? '#ffd76a' : color, opacity: 0.4 } as CSSProperties} />
-          <Bolt className="l" />
-          <Bolt className="r" />
+        <>
           <span className="pc-count">
             {idx + 1} / {data.players.length}
           </span>
-          <div className="pc-photo">
-            <Portrait p={player} color={color} />
-            {player.number != null && <span className="pc-num">{player.number}</span>}
-          </div>
-          <h1 className="rv-title pc-name" data-text={player.firstName.toUpperCase()}>
-            {player.firstName.toUpperCase()}
-          </h1>
+          <LightningReveal key={player.id} glow={player.mine ? '#ffc94a' : glow} className={player.mine ? 'mine' : ''}>
+            <PlayerInRift p={player} />
+          </LightningReveal>
           {player.mine && <span className="pc-mine">⭐ Votre enfant est convoqué !</span>}
           {player.mine && <Confetti colors={['#ffd76a', '#ffffff', color, '#d5f58e']} />}
           <div className="pc-dots" aria-hidden>
@@ -508,53 +558,53 @@ export function PressShow({ data, onClose, onStart }: { data: PressData; onClose
               <i key={p.id} className={i < idx ? 'done' : i === idx ? 'now' : ''} />
             ))}
           </div>
-        </div>
+        </>
       )}
 
-      {/* Le groupe */}
+      {/* Le groupe : date du match, cartes des convoqués, puis les actions tout en bas */}
       {phase === 'final' && (
-        <div className="pc-final">
-          {hasMine && <Confetti colors={['#ffd76a', '#ffffff', color, '#d5f58e']} />}
-          <small className="pc-kicker">Convocation {data.group}</small>
-          <h2 className="pc-final-title">Le groupe</h2>
-          <div className="pc-squad">
-            {data.players.map((p, i) => (
-              <div key={p.id} className={`pc-squad-card${p.mine ? ' mine' : ''}`} style={{ ['--i' as string]: i } as CSSProperties}>
-                <Portrait p={p} color={color} />
-                <b>{p.firstName}</b>
-              </div>
-            ))}
+        <>
+          <div className="pc-final">
+            {hasMine && <Confetti colors={['#ffd76a', '#ffffff', color, '#d5f58e']} />}
+            <small className="pc-kicker">Convocation {data.group}</small>
+            <h2 className="pc-final-title">{whenTitle(data.date, data.time || data.meetTime)}</h2>
+            {data.meetTime && data.time && data.meetTime !== data.time && <p className="pc-final-sub">Rendez-vous à {hour(data.meetTime)}</p>}
+            <div className="pc-cards">
+              {data.players.map((p, i) => (
+                <div key={p.id} className={`pc-card${p.mine ? ' mine' : ''}`} style={{ ['--i' as string]: i } as CSSProperties}>
+                  <FutCard
+                    card={p.card}
+                    team={{ category: data.group, color, logo: data.club.logo }}
+                    size={170}
+                    foot={
+                      <>
+                        {p.number != null && <span>#{p.number}</span>}
+                        {p.mine && <span>⭐ Mon enfant</span>}
+                      </>
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+            {data.message && <p className="pc-msg">« {data.message} »</p>}
+            {caption && <Caption text={caption.text} upTo={caption.upTo} />}
           </div>
-          <div className="pc-info">
-            <span>📅 {dayWords(data.date)}</span>
-            {data.meetTime && <span>⏰ RDV {formatTime(data.meetTime)}</span>}
-            {data.time && <span>⚽ Coup d’envoi {formatTime(data.time)}</span>}
-            {data.location && <span>📍 {data.location}</span>}
-            {data.bring && <span>🎒 {data.bring}</span>}
-          </div>
-          {data.message && <p className="pc-msg">« {data.message} »</p>}
-          {caption && <Caption text={caption.text} upTo={caption.upTo} />}
-          <div className="row wrap" style={{ gap: 10, justifyContent: 'center' }}>
-            <button className="duo-btn ghost" onClick={replay}>
-              <RotateCcw size={16} /> Revoir
+          <div className="pc-actions">
+            <button className="btn lg" onClick={replay}>
+              <RotateCcw /> Revoir
             </button>
-            {data.shareToken && (
-              <button className="duo-btn ghost" onClick={share}>
-                <Share2 size={16} /> Partager
-              </button>
-            )}
             {onClose && (
-              <button className="duo-btn" onClick={onClose}>
-                {data.preview ? 'Retour à la convocation' : 'Voir la convocation'}
+              <button className="btn lg lime" onClick={onClose}>
+                <ClipboardList /> {data.preview ? 'Retour à la convocation' : 'Voir la convocation'}
               </button>
             )}
             {!onClose && data.published && (
-              <Link className="duo-btn" to="/">
-                <Link2 size={16} /> Ouvrir Atelier
+              <Link className="btn lg lime" to="/">
+                <Link2 /> Ouvrir Atelier
               </Link>
             )}
           </div>
-        </div>
+        </>
       )}
     </div>
   );

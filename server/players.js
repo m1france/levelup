@@ -7,7 +7,7 @@
  * et observations explicitement partagés, les présences, les matchs et les infos pratiques de leur enfant.
  */
 import { Router } from 'express';
-import { writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { all, get, run, parse, UPLOADS } from './db.js';
 import { can, need, needTeam, isStaff, childIdsFor, newId, HttpError } from './auth.js';
@@ -248,6 +248,8 @@ playersApi.delete('/players/:id', (req, res) => {
   const row = playerAccess(req.user, req.params.id);
   if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
   run('DELETE FROM players WHERE id = ?', row.id);
+  // Les photos de l'enfant partent avec sa fiche.
+  for (const f of [join(UPLOADS, `player_${row.id}.jpg`), fullPhotoFile(row.id)]) if (existsSync(f)) unlinkSync(f);
   res.json({ ok: true });
 });
 
@@ -415,6 +417,36 @@ playersApi.post('/players/:id/photo', (req, res) => {
 playersApi.get('/players/:id/photo', (req, res) => {
   const row = playerAccess(req.user, req.params.id);
   sendPlayerPhoto(res, row.id);
+});
+
+/** Photo en pied (corps entier) : c'est elle qui surgit dans l'éclair de la conférence de presse. */
+export const fullPhotoFile = (pid) => join(UPLOADS, `player_${pid}_full.jpg`);
+
+playersApi.post('/players/:id/full-photo', (req, res) => {
+  const row = playerAccess(req.user, req.params.id);
+  if (isStaff(req.user)) need(req.user, 'players.manage');
+  writeFileSync(fullPhotoFile(row.id), decodeImage(req.body.image, 3_000_000));
+  const data = JSON.parse(row.data);
+  data.fullPhoto = now();
+  run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
+  res.json(playerOut(get('SELECT * FROM players WHERE id = ?', row.id), req.user, true));
+});
+
+playersApi.delete('/players/:id/full-photo', (req, res) => {
+  const row = playerAccess(req.user, req.params.id);
+  if (isStaff(req.user)) need(req.user, 'players.manage');
+  if (existsSync(fullPhotoFile(row.id))) unlinkSync(fullPhotoFile(row.id));
+  const data = JSON.parse(row.data);
+  delete data.fullPhoto;
+  run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
+  res.json(playerOut(get('SELECT * FROM players WHERE id = ?', row.id), req.user, true));
+});
+
+playersApi.get('/players/:id/full-photo', (req, res) => {
+  const row = playerAccess(req.user, req.params.id);
+  if (!existsSync(fullPhotoFile(row.id))) throw new HttpError(404, 'Photo introuvable');
+  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  res.type('jpeg').sendFile(fullPhotoFile(row.id));
 });
 
 /* ------------------------------------------------------------------ tests mesurés */

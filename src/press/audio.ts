@@ -208,6 +208,27 @@ export class PressAudio {
     }
   }
 
+  /** Grésillement électrique des éclairs qui traversent l'écran (≈ dur secondes). */
+  crackle(dur = 0.35) {
+    const t = this.ctx.currentTime;
+    const n = Math.round(dur / 0.018);
+    for (let i = 0; i < n; i++) {
+      const c = this.noiseSrc();
+      const hp = this.ctx.createBiquadFilter();
+      hp.type = 'bandpass';
+      hp.frequency.value = 2500 + Math.random() * 4000;
+      hp.Q.value = 1.2;
+      const cg = this.ctx.createGain();
+      const s = t + i * 0.018 + Math.random() * 0.01;
+      const v = 0.12 + (i / n) * 0.35;
+      cg.gain.setValueAtTime(v, s);
+      cg.gain.exponentialRampToValueAtTime(0.001, s + 0.025);
+      c.connect(hp).connect(cg).connect(this.sfx);
+      c.start(s);
+      c.stop(s + 0.04);
+    }
+  }
+
   /** Impact à l'apparition d'un joueur : grosse caisse, accord brillant, étincelle. */
   stinger(step = 0) {
     const t = this.ctx.currentTime;
