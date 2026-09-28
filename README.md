@@ -4,6 +4,16 @@ L'application du club : convocations et matchs, séances, suivi des joueurs, alb
 
 ## Fonctionnalités
 
+### V6 : la convocation en conférence de presse
+
+- **Cinématique 3D** (three.js, chargée seulement à l'ouverture) : à la publication d'une convocation, les parents d'un enfant convoqué reçoivent « 🎙️ Conférence de presse : la convocation U8 est tombée », qui ouvre une vraie conférence de presse. La salle est entièrement générée : mur de logos du club, estrade, table nappée « Convocation U8 », micros, chevalets, écran LED, journalistes, photographes qui mitraillent et caméras de télévision. Éclairage d'environnement, occlusion ambiante, profondeur de champ sur les gros plans et halo des lumières. La couleur vient automatiquement du logo du club.
+- **Présentateurs sculptés d'après leur photo** : à l'envoi de la photo, 478 points du visage sont détectés dans le navigateur (MediaPipe Face Landmarker). Le visage 3D en est tiré et texturé par la photo, avec une exposition harmonisée. Il se prolonge sans couture jusqu'au crâne, avec oreilles, cou, bouche qui s'ouvre sur les dents au rythme de la voix et clignements des yeux. Coiffure procédurale au choix : casquette (logo du club), frange, court, bouclé, long. Maillot rayé en maille, col, manches à liseré, mains aux doigts posés sur la table.
+- **Voix Fish Audio** (modèle `fish-audio/s2.1-pro-free:free` via OpenRouter) : « Nous sommes heureux de vous annoncer notre sélection pour ce match. Alors, voici la convocation des U8 ! », puis chaque prénom, avec un ton d'annonce. Chaque présentateur a une voix française de la bibliothèque Fish Audio, ou **sa propre voix clonée** à partir d'un échantillon de 15 à 30 s lu dans les paramètres. Les phrases sont générées une seule fois (cache dans `data/uploads/tts/`), dès la publication.
+- **Chaque joueur convoqué**, dans le style de l'éclair des cartes de match : flash, éclairs, rayons, photo et prénom prononcé, puis 2 secondes à l'écran (réglable) avant le suivant. Le parent voit « ⭐ Votre enfant est convoqué ! » au passage de son enfant. On termine sur le groupe complet, le rendez-vous et le lieu, et une phrase de conclusion.
+- **Fiche joueur** : sa photo et la prononciation de son prénom (« Ka-isse »), à écouter avec la voix du coach de sa catégorie.
+- **Paramètres › Conférence de presse** : les deux présentateurs (prénom, rôle, catégories annoncées, photo, coiffure et couleurs, numéro, voix, clonage), les textes (`{groupe}`, `{adversaire}`, `{rendezvous}`, `{lieu}`, `{club}`, `{match}`), la durée par joueur, et un aperçu 3D en direct (la salle, ou chaque présentateur en gros plan).
+- L'éducateur prévisualise la cinématique depuis la page du match avant de publier, et partage un **lien public** (`/c/…`) après publication. Sans clé OpenRouter ou sans son, les sous-titres suivent le rythme de la lecture ; sans WebGL, les animations restent jouées sur un fond aux couleurs du club.
+
 ### V5 : catégories, diapositives et éditeur plus précis
 
 - **U8 / U9 séparés** : une équipe « U8/U9 » s'entraîne ensemble, mais chaque match, plateau ou tournoi appartient à une catégorie (choisie dans le calendrier). Convocations, disponibilités, temps de jeu, équité, covoiturage, billets des parents et cartes de match ne concernent que les enfants de cette catégorie (déduite de l'année de naissance et de la saison). La page Matchs a un sélecteur U8 / U9.
@@ -95,6 +105,8 @@ npm install
 npm run dev
 ```
 
+Pour les voix de la conférence de presse, copiez `.env.example` en `.env` et renseignez `OPENROUTER_API_KEY` (le fichier `.env` n'est jamais versionné).
+
 Ouvrez http://localhost:5173. Au premier lancement, vous créez le club et votre compte administrateur. La case « équipe d'exemple » ajoute un groupe U8/U9 de 18 joueurs et une séance prête à lancer.
 
 ## Production
@@ -132,6 +144,7 @@ src/
   pitch/       moteur terrain : géométrie, rendu canvas, animation, édition, export vidéo
   pages/       écrans (éditeur, séances, live, joueurs, admin…)
   lib/         API (file d'attente hors-ligne), contexte, types
+  press/       conférence de presse : scène three.js, textures dessinées, son et voix
 ```
 
 Les identifiants sont générés côté client et les écritures sont des `PUT` idempotents : une modification faite hors ligne peut être rejouée sans risque de doublon.
@@ -141,3 +154,4 @@ Les identifiants sont générés côté client et les écritures sont des `PUT` 
 - Une remarque reste privée aux éducateurs, sauf si elle est explicitement marquée « Partagée avec les parents ».
 - Le niveau d'aisance (qui sert à équilibrer les groupes) n'est jamais envoyé aux parents.
 - Le lien public d'une séance ne contient ni présences, ni groupes, ni notes des éducateurs.
+- Le lien public d'une conférence de presse ne montre la photo d'un enfant que si l'autorisation photo est « oui ». Dans l'app, elle est masquée si l'autorisation est « non ».

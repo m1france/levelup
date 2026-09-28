@@ -2608,3 +2608,184 @@ a.tk-line:hover { background: var(--surface-2); }
   .cal.big .cal-pill { font-size: 0; padding: 0; height: 5px; border-left-width: 0; background: var(--c); }
   .cal.big .cal-more { display: none; }
 }
+
+/* ================================================================== Conférence de presse (convocation en cinématique) */
+
+.pc {
+  position: fixed; inset: 0; z-index: 160; overflow: hidden; color: #fff; background: #07090f;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; user-select: none; -webkit-user-select: none;
+}
+.pc-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; transition: filter 0.8s ease, transform 1.2s ease; }
+.pc-canvas.dim { filter: blur(7px) brightness(0.42) saturate(1.2); transform: scale(1.06); }
+.pc-canvas.soft { filter: blur(4px) brightness(0.5); transform: scale(1.03); }
+.phase-poster .pc-canvas { filter: blur(3px) brightness(0.45); }
+.pc-fallback { position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--team) 55%, #111) 0%, #0b0d14 60%, #05060a 100%); }
+.pc-vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(75% 65% at 50% 50%, transparent 45%, rgba(0, 0, 0, 0.7) 100%); }
+.pc .rv-flash { z-index: 40; }
+
+.pc-bars i { position: absolute; left: 0; right: 0; height: 0; background: #000; z-index: 6; transition: height 0.9s cubic-bezier(0.6, 0, 0.2, 1); }
+.pc-bars i:first-child { top: 0; }
+.pc-bars i:last-child { bottom: 0; }
+.pc-bars.on i { height: 9vh; }
+
+.pc-top { position: absolute; top: 0; left: 0; right: 0; z-index: 50; display: flex; align-items: center; gap: 8px; padding: calc(12px + env(safe-area-inset-top)) 14px 0; }
+.pc-preview { font-size: 12px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 6px 12px; border-radius: 999px; background: rgba(255, 196, 0, 0.92); color: #1d1600; }
+
+/* Habillage télé */
+.pc-tv { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
+.pc-live {
+  position: absolute; top: calc(9vh + 14px); left: 18px; display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px;
+  background: #e10600; font-weight: 900; font-size: 13px; letter-spacing: 0.12em; border-radius: 4px; animation: pc-slide 0.6s 0.4s both;
+}
+.pc-live i { width: 9px; height: 9px; border-radius: 50%; background: #fff; animation: pc-blink 1s steps(2) infinite; }
+@keyframes pc-blink { 50% { opacity: 0.2; } }
+.pc-bug { position: absolute; top: calc(9vh + 10px); right: 18px; width: 54px; height: 54px; object-fit: contain; opacity: 0.85; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6)); animation: fade 1s 0.6s both; }
+.pc-lower {
+  position: absolute; left: 5vw; bottom: calc(9vh + 86px); display: flex; flex-direction: column; min-width: min(360px, 80vw);
+  animation: pc-slide 0.55s cubic-bezier(0.2, 1, 0.3, 1) both;
+}
+.pc-lower b { background: #fff; color: #111; font-size: clamp(20px, 4.4vw, 30px); font-weight: 900; padding: 6px 16px 4px; text-transform: uppercase; letter-spacing: -0.01em; border-left: 8px solid var(--team); }
+.pc-lower span { align-self: flex-start; background: var(--team); color: #fff; font-weight: 800; font-size: 14px; padding: 5px 16px; text-transform: uppercase; letter-spacing: 0.08em; }
+@keyframes pc-slide { from { transform: translateX(-40px); opacity: 0; clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.pc-caption {
+  position: absolute; left: 50%; bottom: calc(9vh + 16px); transform: translateX(-50%); width: min(900px, 92vw); margin: 0; text-align: center;
+  font-size: clamp(16px, 3.4vw, 24px); font-weight: 700; line-height: 1.35; text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+}
+.pc-caption span { opacity: 0.35; transition: opacity 0.15s; }
+.pc-caption span.on { opacity: 1; }
+.pc-ticker { display: none; }
+@media (min-height: 520px) {
+  .pc-ticker { display: flex; position: absolute; left: 0; right: 0; bottom: calc(9vh - 34px); height: 34px; background: rgba(8, 10, 16, 0.92); align-items: stretch; overflow: hidden; animation: fade 0.6s 1s both; z-index: 7; }
+  .pc-ticker b { flex: none; display: grid; place-items: center; padding: 0 14px; background: var(--team); font-size: 13px; letter-spacing: 0.08em; }
+  .pc-ticker div { flex: 1; overflow: hidden; display: flex; align-items: center; }
+  .pc-ticker span { white-space: pre; font-size: 13.5px; font-weight: 700; color: #dfe3ea; padding-left: 100%; animation: pc-ticker 22s linear infinite; }
+}
+@keyframes pc-ticker { to { transform: translateX(-100%); } }
+
+/* Affiche */
+.pc-poster {
+  position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center;
+  background: radial-gradient(60% 50% at 50% 45%, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.55));
+}
+.pc-poster-logo { width: 92px; height: 92px; object-fit: contain; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.6)); animation: pop 0.6s both; }
+.pc-kicker { font-size: 13px; font-weight: 900; letter-spacing: 0.16em; text-transform: uppercase; color: #ffd6d6; }
+.pc-poster-title { margin: 0; font-size: clamp(36px, 9vw, 76px); font-weight: 900; font-style: italic; letter-spacing: -0.04em; line-height: 0.95; text-shadow: 0 6px 0 rgba(0, 0, 0, 0.35); }
+.pc-poster-title em { color: #d5f58e; font-style: italic; }
+.pc-poster-sub { margin: 0; font-weight: 700; opacity: 0.85; }
+.pc-poster-hint { margin: 0; font-size: 14px; font-weight: 700; opacity: 0.8; }
+.pc-play {
+  width: 96px; height: 96px; margin: 14px 0 4px; border-radius: 50%; border: 0; cursor: pointer; display: grid; place-items: center; color: #fff;
+  background: var(--team); box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.14), 0 14px 40px rgba(0, 0, 0, 0.5); transition: transform 0.15s;
+  animation: pc-pulse 2s ease-in-out infinite;
+}
+.pc-play:hover { transform: scale(1.06); }
+.pc-play:disabled { opacity: 0.7; cursor: progress; animation: none; }
+.pc-play svg { width: 40px; height: 40px; margin-left: 6px; }
+@keyframes pc-pulse { 50% { box-shadow: 0 0 0 18px rgba(255, 255, 255, 0.05), 0 14px 40px rgba(0, 0, 0, 0.5); } }
+
+/* Éclair « Convocation U8 » */
+.pc-eclair { z-index: 20; animation: shake 0.5s 0.05s; }
+.pc-group {
+  font-size: clamp(64px, 20vw, 180px); font-weight: 900; font-style: italic; line-height: 0.85; letter-spacing: -0.05em; color: #d5f58e;
+  text-shadow: 0 0 40px rgba(213, 245, 142, 0.75), 0 8px 0 #0a2016; animation: slam 0.7s 0.25s cubic-bezier(0.2, 1.4, 0.3, 1) both;
+}
+.pc-eclair-sub { margin: 0; font-weight: 800; font-size: clamp(15px, 3.4vw, 20px); text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.9; animation: rise 0.6s 0.55s both; }
+
+/* Joueur */
+.pc-player { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 70px 16px 40px; animation: shake 0.45s 0.05s; }
+.pc-player .rv-rays { top: 44%; }
+.pc-player .bolt.l { top: 30%; }
+.pc-player .bolt.r { top: 34%; }
+.pc-count { position: absolute; top: calc(18px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); font-weight: 900; font-size: 14px; letter-spacing: 0.14em; padding: 6px 14px; border-radius: 999px; background: rgba(255, 255, 255, 0.14); backdrop-filter: blur(8px); }
+.pc-photo { position: relative; z-index: 3; animation: pc-photo-in 0.7s cubic-bezier(0.2, 1.3, 0.35, 1) both; }
+.pc-photo .pc-portrait { width: min(46vmin, 300px); height: min(46vmin, 300px); padding: 7px; }
+@keyframes pc-photo-in { 0% { transform: scale(2.4) rotate(-10deg); opacity: 0; filter: blur(12px) brightness(3); } 55% { opacity: 1; filter: none; } 100% { transform: none; } }
+.pc-num {
+  position: absolute; right: 4%; bottom: 4%; min-width: 58px; height: 58px; padding: 0 8px; border-radius: 18px; display: grid; place-items: center;
+  background: #fff; color: #111; font-size: 30px; font-weight: 900; box-shadow: 0 6px 0 rgba(0, 0, 0, 0.3); animation: duo-pop 0.6s 0.35s both;
+}
+.pc-name { position: relative; z-index: 3; font-size: clamp(44px, 13vw, 120px); text-align: center; animation-delay: 0.18s; overflow-wrap: anywhere; }
+.pc-mine {
+  position: relative; z-index: 3; padding: 10px 20px; border-radius: 999px; background: linear-gradient(90deg, #ffd76a, #ffb400); color: #2a1a00;
+  font-weight: 900; font-size: 17px; box-shadow: 0 0 30px rgba(255, 200, 60, 0.7); animation: duo-pop 0.65s 0.45s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+}
+.pc-player.mine .pc-portrait { box-shadow: 0 0 0 5px #ffd76a, 0 0 60px rgba(255, 215, 106, 0.9); }
+.pc-dots { position: absolute; bottom: calc(22px + env(safe-area-inset-bottom)); left: 0; right: 0; display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; padding: 0 30px; }
+.pc-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); transition: all 0.3s; }
+.pc-dots i.done { background: rgba(255, 255, 255, 0.8); }
+.pc-dots i.now { width: 26px; border-radius: 6px; background: #d5f58e; }
+
+.pc-portrait {
+  position: relative; display: grid; place-items: center; border-radius: 50%; padding: 4px; flex: none;
+  background: conic-gradient(from 200deg, var(--team), #fff, var(--team), #ffd76a, var(--team));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+.pc-portrait img, .pc-portrait b {
+  width: 100%; height: 100%; border-radius: 50%; object-fit: cover; border: 4px solid #0b0d14; display: grid; place-items: center;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--team) 70%, #fff), var(--team)); font-size: 2.6em; font-weight: 900; color: #fff;
+}
+.pc-photo .pc-portrait b { font-size: 120px; }
+
+/* Groupe final */
+.pc-final {
+  position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; gap: 12px; overflow-y: auto;
+  padding: calc(70px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom)); text-align: center;
+}
+.pc-final > * { flex: none; }
+.pc-final-title { margin: 0; font-size: clamp(40px, 10vw, 84px); font-weight: 900; font-style: italic; letter-spacing: -0.045em; line-height: 0.9; text-shadow: 0 0 28px rgba(213, 245, 142, 0.6), 0 6px 0 rgba(0, 0, 0, 0.4); animation: slam 0.7s cubic-bezier(0.2, 1.4, 0.3, 1) both; }
+.pc-squad { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 12px 10px; width: min(760px, 100%); margin: 8px 0; }
+.pc-squad-card { display: flex; flex-direction: column; align-items: center; gap: 6px; animation: deal 0.6s cubic-bezier(0.2, 1.3, 0.35, 1) both; animation-delay: calc(var(--i) * 70ms + 0.3s); }
+.pc-squad-card .pc-portrait { width: 76px; height: 76px; }
+.pc-squad-card .pc-portrait b { font-size: 30px; }
+.pc-squad-card > b { font-size: 14px; font-weight: 800; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-squad-card.mine .pc-portrait { box-shadow: 0 0 0 4px #ffd76a, 0 0 30px rgba(255, 215, 106, 0.8); }
+.pc-squad-card.mine > b { color: #ffd76a; }
+.pc-info { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 760px; animation: rise 0.6s 0.6s both; }
+.pc-info span { padding: 8px 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(8px); font-weight: 700; font-size: 14px; }
+.pc-msg { margin: 0; max-width: 560px; font-style: italic; opacity: 0.9; }
+.pc-final .pc-caption { position: static; transform: none; font-size: 17px; }
+.pc-final .duo-btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-eclair, .pc-player { animation: none; }
+  .pc-canvas { transition: none; }
+}
+
+/* Accès depuis le billet et la page convocation */
+.press-cta {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; text-decoration: none; color: #fff;
+  background: linear-gradient(120deg, #11151f, color-mix(in srgb, var(--team, #c8102e) 70%, #11151f)); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.press-cta b { display: block; font-size: 15px; }
+.press-cta small { display: block; opacity: 0.8; font-size: 12.5px; }
+.press-cta-ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: rgba(255, 255, 255, 0.14); font-size: 22px; flex: none; }
+.press-cta-go { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: #fff; color: #111; flex: none; }
+.press-cta-go svg { width: 16px; height: 16px; margin-left: 2px; }
+
+/* Réglages de la conférence de presse */
+.press-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; align-items: start; }
+.press-presenter .field { flex: 1; min-width: 140px; }
+.press-face { width: 52px; height: 52px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--surface-2) center / cover no-repeat; color: var(--ink-3); box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px #c8102e; }
+.press-rec { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.press-rec-label { font-size: 13px; font-weight: 700; min-width: 86px; }
+.press-preview { width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; background: #07090f; display: block; }
+.press-add { border: 1.5px dashed var(--line-strong); background: transparent; color: var(--ink-2); font-weight: 700; cursor: pointer; min-height: 120px; }
+.press-add:hover { border-color: var(--accent); color: var(--accent); }
+.press-save { position: sticky; bottom: 16px; display: flex; justify-content: flex-end; z-index: 5; }
+.press-save .btn { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18); }
+.press-color { width: 42px; height: 36px; padding: 2px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); }
+.press-color:disabled { opacity: 0.4; }
+.press-player { display: flex; gap: 14px; align-items: flex-start; margin: 0 0 18px; }
+.press-player-photo { width: 64px; height: 64px; }
+.press-player-photo b { font-size: 26px; }
+@media (max-width: 600px) { .press-player-photo { width: 48px; height: 48px; } }
+.pc-poster-logo.plate, .pc-bug.plate { background: #fff; border-radius: 22%; padding: 6%; }
+
+.press-warn { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--ink); font-size: 13.5px; }
+.press-warn svg { flex: none; color: var(--warn); margin-top: 2px; }
+.press-warn code { font-size: 12.5px; }
+.press-face-status { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.press-face-status .ok { color: var(--accent); }
+.press-read { margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); font-style: italic; line-height: 1.45; }
+.press-preview-wrap { position: relative; }
+.press-preview-busy { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: #fff; font-weight: 700; font-size: 14px; background: rgba(7, 9, 15, 0.55); border-radius: 14px; }

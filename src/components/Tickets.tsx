@@ -1,4 +1,4 @@
-import { Backpack, Car, Check, ChevronDown, CircleHelp, Clock, Home, MapPin, MessageCircle, Navigation, Plane, Trophy, Users, X } from 'lucide-react';
+import { Backpack, Car, Check, ChevronDown, CircleHelp, Clock, Home, MapPin, MessageCircle, Navigation, Plane, Play, Trophy, Users, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -202,6 +202,20 @@ export function MatchTicket({ t, onChanged, showChild = true, carpool: carpoolOp
               <small>Retournez les cartes et découvrez sa récompense</small>
             </span>
             <span className="cards-cta-go">🃏</span>
+          </Link>
+        </div>
+      )}
+      {t.publishedAt && t.press && !t.result && (
+        <div className="tk-action">
+          <Link to={`${matchPath(t.eventId, t.date)}/conference`} className="press-cta">
+            <span className="press-cta-ic">🎙️</span>
+            <span className="grow">
+              <b>{t.status === 'convoked' ? 'Revoir la conférence de presse' : 'Conférence de presse'}</b>
+              <small>La convocation {t.group ?? ''} annoncée par les coachs</small>
+            </span>
+            <span className="press-cta-go">
+              <Play fill="currentColor" />
+            </span>
           </Link>
         </div>
       )}
