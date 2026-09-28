@@ -2704,39 +2704,40 @@ a.tk-line:hover { background: var(--surface-2); }
   position: absolute; z-index: 1; left: calc(var(--px) - var(--rx)); top: calc(var(--py) - var(--ry)); width: calc(var(--rx) * 2); height: calc(var(--ry) * 2);
   border-radius: 50%; overflow: hidden; clip-path: ellipse(50% 50% at 50% 50%);
 }
-.pc-bolt.met .pc-rift { background: radial-gradient(closest-side, rgba(12, 18, 36, 0.55), rgba(6, 10, 22, 0.92)); animation: rift-open 0.42s cubic-bezier(0.2, 1.4, 0.35, 1) both; }
-@keyframes rift-open { from { transform: scale(0.05); filter: brightness(4); } 60% { filter: none; } }
-.pc-bolt.met { animation: shake 0.45s; }
+.pc-bolt.met .pc-rift { background: #1d2b3a; animation: rift-open 0.45s cubic-bezier(0.2, 1.5, 0.35, 1) both; }
+@keyframes rift-open { from { transform: scale(0.05); } }
+.pc-bolt.met { animation: duo-bump 0.4s cubic-bezier(0.3, 1.6, 0.4, 1); }
+@keyframes duo-bump { 0% { transform: scale(0.97, 1.03); } 40% { transform: scale(1.02, 0.98); } 100% { transform: none; } }
 
 .pc-rift-player { position: absolute; inset: 0; }
 .pc-rift-photo {
   position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 18%;
   -webkit-mask-image: radial-gradient(closest-side, #000 72%, transparent 100%); mask-image: radial-gradient(closest-side, #000 72%, transparent 100%);
-  animation: rift-photo 0.9s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  animation: rift-photo 0.6s cubic-bezier(0.2, 1.4, 0.4, 1) both;
 }
 .pc-rift-player.full .pc-rift-photo { object-position: center 30%; }
-@keyframes rift-photo { 0% { transform: scale(1.35) translateY(6%); filter: brightness(3) blur(10px); opacity: 0; } 35% { opacity: 1; } 100% { transform: none; filter: none; } }
+@keyframes rift-photo { 0% { transform: scale(0.6) translateY(12%); opacity: 0; } 40% { opacity: 1; } 100% { transform: none; } }
 .pc-rift-player::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 46%; background: linear-gradient(to top, rgba(4, 8, 18, 0.88), transparent); pointer-events: none; }
 .pc-rift-player.nophoto::after { display: none; }
 .pc-rift-name {
   position: absolute; z-index: 2; left: 4%; right: 4%; bottom: 13%; margin: 0; text-align: center; line-height: 0.9;
   font-size: calc(var(--rx) * min(0.34, 2.3 / var(--len, 6))); font-weight: 900; font-style: italic; letter-spacing: -0.035em; color: #fff; white-space: nowrap;
-  text-shadow: 0 0 22px rgba(160, 215, 255, 0.95), 0 0 60px rgba(120, 190, 255, 0.6), 0 5px 0 rgba(0, 0, 0, 0.35);
-  animation: slam 0.6s 0.08s cubic-bezier(0.2, 1.4, 0.3, 1) both;
+  text-shadow: 0 5px 0 rgba(0, 0, 0, 0.35);
+  animation: duo-pop 0.55s 0.08s cubic-bezier(0.2, 1.6, 0.4, 1) both;
 }
 .pc-rift-player.nophoto .pc-rift-name { bottom: auto; top: 50%; transform: translateY(-50%); animation-name: rift-name-center; }
-@keyframes rift-name-center { 0% { transform: translateY(-50%) scale(3) skewX(-12deg); opacity: 0; filter: blur(8px); } 60% { opacity: 1; filter: none; } 100% { transform: translateY(-50%) skewX(-6deg); } }
+@keyframes rift-name-center { 0% { transform: translateY(-50%) scale(0.2) rotate(-8deg); opacity: 0; } 70% { transform: translateY(-50%) scale(1.12) rotate(2deg); opacity: 1; } 100% { transform: translateY(-50%); } }
 .pc-rift-num {
   position: absolute; z-index: 2; top: 13%; right: 17%; min-width: 2em; height: 2em; padding: 0 0.4em; display: grid; place-items: center;
   font-size: calc(var(--rx) * 0.1); font-weight: 900; border-radius: 0.6em; background: rgba(255, 255, 255, 0.92); color: #0b0d14; animation: duo-pop 0.6s 0.35s both;
 }
-.pc-bolt.mine .pc-rift-name { text-shadow: 0 0 24px rgba(255, 210, 90, 0.95), 0 0 60px rgba(255, 190, 60, 0.6), 0 5px 0 rgba(0, 0, 0, 0.35); }
+.pc-bolt.mine .pc-rift-name { color: #ffc800; text-shadow: 0 5px 0 #b87400; }
 
 .pc-rift-title { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; padding: 0 12%; }
-.pc-rift-title small { font-size: calc(var(--rx) * 0.075); font-weight: 900; letter-spacing: 0.3em; text-transform: uppercase; color: #cfe8ff; animation: rise 0.5s 0.1s both; }
+.pc-rift-title small { font-size: calc(var(--rx) * 0.075); font-weight: 900; letter-spacing: 0.3em; text-transform: uppercase; color: #ffc800; animation: rise 0.5s 0.1s both; }
 .pc-rift-title b {
   font-size: calc(var(--rx) * 0.62); font-weight: 900; font-style: italic; line-height: 0.85; letter-spacing: -0.05em; color: #fff;
-  text-shadow: 0 0 30px rgba(160, 215, 255, 0.95), 0 0 80px rgba(120, 190, 255, 0.55); animation: slam 0.65s 0.05s cubic-bezier(0.2, 1.4, 0.3, 1) both;
+  text-shadow: 0 6px 0 rgba(0, 0, 0, 0.35); animation: duo-pop 0.6s 0.05s cubic-bezier(0.2, 1.6, 0.4, 1) both;
 }
 .pc-rift-title span { font-size: calc(var(--rx) * 0.06); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.9; animation: rise 0.6s 0.35s both; }
 

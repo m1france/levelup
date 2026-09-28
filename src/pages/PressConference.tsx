@@ -158,8 +158,8 @@ function mixHex(a: string, b: string, t: number) {
 }
 
 /**
- * Éclair : deux décharges surgissent des bords de l'écran, se rejoignent au centre et ouvrent une brèche électrique ;
- * le contenu (photo en pied, prénom) apparaît dans la brèche au moment de la rencontre.
+ * Éclair façon Duolingo : il tombe au centre, s'y écrase et ouvre un cercle ;
+ * le contenu (photo en pied, prénom) apparaît dans le cercle au moment de l'impact.
  */
 function LightningReveal({ glow, onMeet, children, className }: { glow: string; onMeet?: () => void; children: ReactNode; className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -382,7 +382,7 @@ export function PressShow({ data, onClose, onStart }: { data: PressData; onClose
         const p = data.players[i];
         setIdx(i);
         setPhase('player');
-        // Les éclairs traversent l'écran (≈ 0,34 s), se rejoignent : impact, prénom.
+        // L'éclair tombe (≈ 0,34 s) et s'écrase : impact, prénom.
         a?.crackle(0.34);
         await wait(340);
         a?.stinger(Math.floor(i / 2));
