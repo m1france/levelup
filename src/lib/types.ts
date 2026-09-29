@@ -591,6 +591,25 @@ export interface Reveal {
   shareToken?: string | null;
 }
 
+/** Paquet de convocation : les cartes du groupe convoqué ; `opened` = les enfants dont on ouvre le paquet. */
+export interface Pack {
+  eventId: string;
+  date: string;
+  type: EventType;
+  title: string;
+  opponent: string;
+  venue: TeamEvent['venue'];
+  time: string;
+  meetTime: string;
+  location: string;
+  team: { category: string; color: string; logo?: string | null };
+  club: string;
+  /** Aperçu éducateur (la lecture n'est pas enregistrée). */
+  preview: boolean;
+  opened: string[];
+  cards: PlayerCard[];
+}
+
 /* ------------------------------------------------------------------ bulletins */
 
 export interface BulletinSnapshot {

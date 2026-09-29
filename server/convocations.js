@@ -311,7 +311,7 @@ function readToken(token) {
 
 /* ------------------------------------------------------------------ messages */
 
-const meetOf = (o) => o.data.meetTime || o.e.meetTime || '';
+export const meetOf = (o) => o.data.meetTime || o.e.meetTime || '';
 const bringOf = (o) => (o.data.bring ?? '') || o.settings.bring;
 
 function whereLine(o) {
@@ -809,9 +809,9 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
       sent += notify(parents, state === 'in'
         ? {
             kind: 'convoked',
-            title: `${change}✅ ${p.firstName} est dans le groupe ${shortDay(o.date)}`,
-            body: `${evTitle(o.e)} · ${whereLine(o)}${bringOf(o) ? `. ${bringOf(o)}` : ''}`,
-            url: matchUrl(o),
+            title: `${change}🎁 ${p.firstName} a reçu un paquet !`,
+            body: `${evTitle(o.e)} ${shortDay(o.date)} · Ouvrez-le ensemble pour découvrir sa carte de convoqué.`,
+            url: `${matchUrl(o)}/paquet`,
             tag: `conv-${o.e.id}-${o.date}-${p.id}`,
           }
         : {

@@ -16,6 +16,7 @@ import { Matches } from './pages/Matches';
 import { Messages } from './pages/Messages';
 import { MatchLive } from './pages/MatchLive';
 import { PublicReveal, RevealPage } from './pages/Reveal';
+import { PackPage } from './pages/Pack';
 import { Settings } from './pages/Admin';
 import { Invite, Login, Setup } from './pages/Auth';
 import { Dashboard } from './pages/Dashboard';
@@ -127,6 +128,7 @@ function AppRoutes() {
       {isStaff && <Route path="seances/:id/live" element={<Live />} />}
       {isStaff && <Route path="matchs/:eventId/:date/live" element={<MatchLive />} />}
       <Route path="matchs/:eventId/:date/cartes" element={<RevealPage />} />
+      <Route path="matchs/:eventId/:date/paquet" element={<PackPage />} />
       <Route path="bulletins/:id" element={<BulletinPage />} />
     </Routes>
   );

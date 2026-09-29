@@ -51,7 +51,7 @@ function layout(n: number) {
   return rows;
 }
 
-function Confetti({ count = 60, colors }: { count?: number; colors: string[] }) {
+export function Confetti({ count = 60, colors }: { count?: number; colors: string[] }) {
   const bits = useMemo(
     () =>
       Array.from({ length: count }, (_, i) => ({

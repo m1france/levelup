@@ -4,6 +4,12 @@ L'application du club : convocations et matchs, séances, suivi des joueurs, alb
 
 ## Fonctionnalités
 
+### V6 : le paquet de convocation
+
+- **Ouverture de paquet façon Ultimate Team** : à la publication, les parents d'un enfant convoqué reçoivent « 🎁 Léo a reçu un paquet ! ». La page du match s'ouvre d'abord sur le paquet aux couleurs du club (logo, catégorie, date). L'enfant tape trois fois dessus : il tremble, se fissure et s'illumine, puis se déchire dans un flash. Trois indices défilent dans le faisceau de lumière (poste, club, numéro), puis sa carte se retourne : « ✅ Convoqué ! », confettis, date, coup d'envoi, rendez-vous et lieu. « Mes coéquipiers » distribue ensuite les cartes du groupe (même couleur et même note pour tous, pas de classement). Sons synthétisés et vibrations, sans fichier à charger.
+- **Les non-retenus n'ont pas d'animation** : leur billet et leur notification l'annoncent simplement (« Les convocations tournent pour que chacun joue autant »).
+- Le billet du match propose « Revoir le paquet » ; l'éducateur a un « Aperçu du paquet » sur la page de convocation.
+
 ### V5 : catégories, diapositives et éditeur plus précis
 
 - **U8 / U9 séparés** : une équipe « U8/U9 » s'entraîne ensemble, mais chaque match, plateau ou tournoi appartient à une catégorie (choisie dans le calendrier). Convocations, disponibilités, temps de jeu, équité, covoiturage, billets des parents et cartes de match ne concernent que les enfants de cette catégorie (déduite de l'année de naissance et de la saison). La page Matchs a un sélecteur U8 / U9.

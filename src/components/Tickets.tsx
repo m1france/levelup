@@ -189,6 +189,17 @@ export function MatchTicket({ t, onChanged, showChild = true, carpool: carpoolOp
         )}
       </div>
 
+      {t.status === 'convoked' && !t.result && (
+        <div className="tk-action">
+          <Link to={`${matchPath(t.eventId, t.date)}/paquet`} className="pack-cta" style={{ ['--team' as string]: t.color || undefined }}>
+            <span className="grow">
+              <b>{t.read ? `Revoir le paquet de ${name}` : `${name} a reçu un paquet !`}</b>
+              <small>{t.read ? 'Sa carte de convoqué et le groupe du match' : 'Ouvrez-le ensemble pour découvrir sa carte'}</small>
+            </span>
+            <span className="pack-cta-go">🎁</span>
+          </Link>
+        </div>
+      )}
       {t.result && t.result.minutes !== null && (
         <div className="tk-action">
           <Link to={`${matchPath(t.eventId, t.date)}/cartes`} className="cards-cta">

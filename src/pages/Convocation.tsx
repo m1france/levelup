@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Link2, ListChecks, MapPin, Megaphone, MessageCircle,
+  ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Gift, Link2, ListChecks, MapPin, Megaphone, MessageCircle,
   Minus, Play, Send, TrendingDown, TrendingUp, Trophy, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -29,6 +29,17 @@ export function ConvocationPage() {
   const q = useAsync(() => api.get<Payload>(`/convocations/${eventId}/${date}`), [eventId, date]);
   const [params] = useSearchParams();
   useLive((m) => m.t === 'conv' && m.eventId === eventId && m.date === date && q.reload());
+  const nav = useNavigate();
+  // Parent d'un enfant convoqué : une convocation publiée pas encore vue s'ouvre d'abord sur le paquet (une fois par session).
+  // Les enfants non convoqués n'ont pas de paquet : leur billet l'annonce simplement.
+  const seenKey = `pack-seen:${eventId}:${date}`;
+  const packFirst =
+    q.data?.kind === 'parent' && !params.has('billet') && !sessionFlag(seenKey) && q.data.tickets.some((t) => t.status === 'convoked' && !t.read && !t.result);
+  useEffect(() => {
+    if (!packFirst) return;
+    sessionFlag(seenKey, true);
+    nav(`/matchs/${eventId}/${date}/paquet`, { replace: true });
+  }, [packFirst, seenKey, nav, eventId, date]);
   if (q.loading && !q.data) return <Spinner fill />;
   if (q.error || !q.data)
     return (
@@ -37,6 +48,7 @@ export function ConvocationPage() {
       </div>
     );
   if (q.data.kind === 'parent') {
+    if (packFirst) return <Spinner fill />;
     return (
       <div className="page narrow">
         <Link to="/matchs" className="back">
@@ -51,6 +63,16 @@ export function ConvocationPage() {
     );
   }
   return <StaffConvocation d={q.data} reload={q.reload} setData={(d) => q.setData({ kind: 'staff', ...d })} />;
+}
+
+/** Petit drapeau de session (stockage indisponible : considéré comme déjà vu). */
+function sessionFlag(key: string, set?: boolean) {
+  try {
+    if (set) sessionStorage.setItem(key, '1');
+    return sessionStorage.getItem(key) === '1';
+  } catch {
+    return true;
+  }
 }
 
 /* ------------------------------------------------------------------ frise des étapes */
@@ -419,6 +441,14 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
           </div>
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
+          <button
+            className="btn lg"
+            onClick={() => nav(`/matchs/${d.eventId}/${d.date}/paquet`)}
+            disabled={!sel.size}
+            title="Le paquet que les enfants convoqués ouvrent à la publication"
+          >
+            <Gift /> Aperçu du paquet
+          </button>
           {canEdit && (
             <button className="btn lg primary" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/live`)}>
               {played ? <Trophy /> : <Play fill="currentColor" />} {played ? 'Feuille de match' : 'Mode match'}
@@ -602,7 +632,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
               </p>
             )}
             <p className="small muted">
-              Les parents des non-retenus reçoivent un message bienveillant : « Les convocations tournent pour que chacun joue autant. »
+              Chaque enfant convoqué reçoit un paquet à ouvrir qui dévoile sa carte ; les parents des non-retenus reçoivent un message bienveillant : « Les convocations tournent pour que chacun joue autant. »
             </p>
             {!published && Date.now() > d.timeline.deadline && (
               <p className="form-error">La date limite ({momentLabel(d.timeline.deadline)}) est dépassée : la publication sera marquée en retard.</p>
