@@ -1,11 +1,10 @@
-import { Building2, Check, CalendarDays, CloudOff, Images, LayoutGrid, LogOut, Megaphone, MessageCircle, Settings, Trophy, UserRound, Users } from 'lucide-react';
+import { Building2, Check, CalendarDays, CloudOff, Images, LayoutGrid, LogOut, MessageCircle, Settings, Trophy, UserRound, Users } from 'lucide-react';
 import { useChatUnread } from '../pages/Messages';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { api, onOutboxChange } from '../lib/api';
 import { ROLE_LABELS, useApp } from '../lib/store';
 import type { Team } from '../lib/types';
-import { NotificationBell } from './Notifications';
 import { Avatar } from './ui';
 
 function useNetwork() {
@@ -65,7 +64,6 @@ function TeamMenu({ onClose }: { onClose: () => void }) {
   const { me, team, setTeamId, can, isStaff, isAdmin } = useApp();
   const links: { to: string; label: string; icon: ReactNode }[] = [
     ...(isStaff && (isAdmin || can('club.dashboard') || can('members.manage') || can('players.manage')) ? [{ to: '/club', label: 'Club', icon: <Building2 /> }] : []),
-    { to: '/annonces', label: 'Annonces', icon: <Megaphone /> },
     { to: '/parametres', label: 'Paramètres', icon: <Settings /> },
   ];
   return (
@@ -189,7 +187,6 @@ export function Layout() {
         <Outlet />
       </main>
       <NetworkPill />
-      <NotificationBell />
     </div>
   );
 }

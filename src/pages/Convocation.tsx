@@ -1,12 +1,14 @@
 import {
   ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Gift, Link2, ListChecks, MapPin, Megaphone, MessageCircle,
-  Minus, Play, Send, TrendingDown, TrendingUp, Trophy, X,
+  Minus, Play, Send, Share2, TrendingDown, TrendingUp, Trophy, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CarpoolPanel } from '../components/Carpool';
 import { MatchTicket } from '../components/Tickets';
 import { GamesResults } from '../components/Plateau';
+import { AWARDS, autoAwards } from '../lib/awards';
+import { AwardsPicker, matchSeconds } from './MatchLive';
 import { Empty, Field, Menu, Sheet, Spinner, useAsync, useToast } from '../components/ui';
 import { api } from '../lib/api';
 import { renderConvCard, shareCard } from '../lib/convCard';
@@ -427,6 +429,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
             {d.publishedLate && <span className="badge warn">Publiée après la date limite</span>}
           </div>
           <h1>{d.title}</h1>
+          {!played && (
           <div className="plan-meta">
             {d.time && (
               <span className="meta-pill">
@@ -439,7 +442,9 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
               </a>
             )}
           </div>
+          )}
         </div>
+        {!played && (
         <div className="row wrap" style={{ gap: 8 }}>
           <button
             className="btn lg"
@@ -451,15 +456,17 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
           </button>
           {canEdit && (
             <button className="btn lg primary" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/live`)}>
-              {played ? <Trophy /> : <Play fill="currentColor" />} {played ? 'Feuille de match' : 'Mode match'}
+              <Play fill="currentColor" /> Mode match
             </button>
           )}
         </div>
+        )}
       </div>
 
       {d.score?.games && (
         <div className="card pad" style={{ marginBottom: 16 }}>
           <GamesResults
+            cards={played}
             games={d.score.games.map((g) => ({ id: g.id, opponent: g.opponent, time: g.time, minutes: 0 }))}
             results={d.score.games.map((g) => (g.us === null || g.live ? undefined : { us: g.us, them: g.them! })) as { us: number; them: number }[]}
           />
@@ -477,6 +484,10 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
         </div>
       )}
 
+      {played ? (
+        <MatchReport d={d} canEdit={canEdit} />
+      ) : (
+      <>
       <Progress d={d} onRequest={request} busy={busy} />
 
       <div className="cv-layout">
@@ -594,6 +605,8 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
           )}
         </aside>
       </div>
+      </>
+      )}
 
       {publishing && (
         <Sheet
@@ -649,6 +662,220 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
           </div>
         </Sheet>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ match passé */
+
+const AVAIL_ICON = { yes: Check, maybe: CircleHelp, no: X, none: Minus } as const;
+
+/** Bilan d'un match joué : présences en un coup d'œil, temps de jeu et statistiques de chaque enfant, buts, récompenses. */
+function MatchReport({ d, canEdit }: { d: ConvDetail; canEdit: boolean }) {
+  const nav = useNavigate();
+  const toast = useToast();
+  const m = d.match;
+  const byId = Object.fromEntries(d.players.map((p) => [p.id, p]));
+  const squad = d.players.filter((p) => d.selection.includes(p.id));
+  const present = m ? squad.filter((p) => !m.absent.includes(p.id)) : squad;
+  const [awards, setAwards] = useState<Record<string, string>>(() =>
+    m ? { ...autoAwards(m, present.map((p) => p.id)), ...(d.awards ?? {}) } : {},
+  );
+  const [editAwards, setEditAwards] = useState(false);
+
+  const share = async () => {
+    try {
+      const r = await api.get<{ shareToken: string }>(`/convocations/${d.eventId}/${d.date}/reveal`);
+      const url = `${location.origin}/m/${r.shareToken}`;
+      if (navigator.share) await navigator.share({ title: `Les cartes du match · ${d.group ?? d.title}`, text: 'Retournez les cartes des joueurs 🃏', url }).catch(() => undefined);
+      else {
+        await navigator.clipboard.writeText(url);
+        toast('Lien des cartes copié');
+      }
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+
+  // Présences : convoqués d'abord, puis les autres ; l'icône dit la réponse des parents.
+  const roster = [...d.players].sort((a, b) => Number(d.selection.includes(b.id)) - Number(d.selection.includes(a.id)));
+  const presence = (
+    <div className="card pad">
+      <h3 style={{ marginBottom: 10 }}>Joueurs</h3>
+      <div className="av-chips">
+        {roster.map((p) => {
+          const a = p.availability?.status ?? 'none';
+          const Icon = AVAIL_ICON[a];
+          const convoked = d.selection.includes(p.id);
+          const absent = !!m?.absent.includes(p.id);
+          return (
+            <Link
+              key={p.id}
+              to={`/joueurs/${p.id}`}
+              className={`av-chip ${a}${convoked ? ' in' : ''}`}
+              title={`${playerName(p)} · ${AVAIL[a].label}${convoked ? (absent ? ' · convoqué, absent le jour J' : ' · convoqué') : ' · non convoqué'}`}
+            >
+              <i>
+                <Icon size={12} strokeWidth={3} />
+              </i>
+              {p.firstName}
+              {absent && <small>abs.</small>}
+            </Link>
+          );
+        })}
+      </div>
+      <div className="av-legend">
+        {(['yes', 'maybe', 'no', 'none'] as const).map((a) => {
+          const Icon = AVAIL_ICON[a];
+          return (
+            <span key={a} className={`av-chip ${a}`}>
+              <i>
+                <Icon size={12} strokeWidth={3} />
+              </i>
+              {AVAIL[a].short}
+            </span>
+          );
+        })}
+        <span className="muted">· en gras : convoqués</span>
+      </div>
+    </div>
+  );
+
+  if (!m) return presence;
+
+  const total = matchSeconds(d);
+  const goals = m.events.filter((e) => e.t === 'goal');
+  const count = (pid: string, key: 'pid' | 'assist') => goals.filter((g) => g[key] === pid).length;
+  const role = (pid: string) => Object.entries(m.roles?.[pid] ?? {}).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const mins = (pid: string) => Math.round((m.seconds[pid] ?? 0) / 60);
+  const avg = present.length ? Math.round(present.reduce((a, p) => a + mins(p.id), 0) / present.length) : 0;
+  const us = d.score?.us ?? m.score.us;
+  const them = d.score?.them ?? m.score.them;
+  const rows = [...squad].sort((a, b) => (m.seconds[b.id] ?? 0) - (m.seconds[a.id] ?? 0));
+  const stats = d.settings.stats;
+
+  return (
+    <div className="stack" style={{ gap: 16 }}>
+      <div className="kpis">
+        <div className="kpi" style={{ ['--c' as string]: '#2f9e44' }}>
+          <small>Buts marqués</small>
+          <b>{us}</b>
+          <span>{goals.filter((g) => g.pid).length ? `${new Set(goals.map((g) => g.pid).filter(Boolean)).size} buteur(s)` : '\u00a0'}</span>
+        </div>
+        <div className="kpi" style={{ ['--c' as string]: '#e03131' }}>
+          <small>Buts encaissés</small>
+          <b>{them}</b>
+          <span>{us > them ? 'Victoire' : us === them ? 'Nul' : 'Défaite'}</span>
+        </div>
+        <div className="kpi" style={{ ['--c' as string]: '#1c7ed6' }}>
+          <small>Joueurs présents</small>
+          <b>
+            {present.length}
+            <em>/{squad.length}</em>
+          </b>
+          <span>{m.absent.length ? `${m.absent.length} absent${m.absent.length > 1 ? 's' : ''} le jour J` : 'Tous présents'}</span>
+        </div>
+        <div className="kpi" style={{ ['--c' as string]: '#f08c00' }}>
+          <small>Temps de jeu moyen</small>
+          <b>
+            {avg}
+            <em>min</em>
+          </b>
+          <span>sur {Math.round(total / 60)} min de jeu</span>
+        </div>
+      </div>
+
+      <div className="reveal-cta" style={{ marginTop: 0 }}>
+        <button className="btn lime" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/cartes`)}>
+          🃏 Voir les cartes des joueurs
+        </button>
+        <button className="btn" onClick={share}>
+          <Share2 /> Partager le lien
+        </button>
+      </div>
+
+      <div className="mr-grid">
+        <div className="card pad">
+          <h3 style={{ marginBottom: 10 }}>Temps de jeu et statistiques</h3>
+          <div className={`mr-table${stats ? '' : ' nostats'}`}>
+            <div className="mr-row head">
+              <span>Joueur</span>
+              <span>Poste</span>
+              <span>Temps de jeu</span>
+              {stats && <span title="Buts">⚽</span>}
+              {stats && <span title="Passes décisives">🅰️</span>}
+            </div>
+            {rows.map((p) => {
+              const abs = m.absent.includes(p.id);
+              return (
+                <div key={p.id} className={`mr-row${abs ? ' abs' : ''}`}>
+                  <span className="ellipsis">
+                    <b>{p.firstName}</b>
+                    {m.starters.includes(p.id) && <small title="Titulaire"> · tit.</small>}
+                  </span>
+                  <span className="muted">{abs ? '—' : role(p.id) ?? '—'}</span>
+                  <span className="mr-time">
+                    <span className="min-bar">
+                      <i style={{ width: `${Math.min(100, ((m.seconds[p.id] ?? 0) / total) * 100)}%` }} />
+                    </span>
+                    <b>{abs ? 'abs.' : `${mins(p.id)}′`}</b>
+                  </span>
+                  {stats && <span>{count(p.id, 'pid') || ''}</span>}
+                  {stats && <span>{count(p.id, 'assist') || ''}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="stack" style={{ gap: 16 }}>
+          {presence}
+          {goals.length > 0 && stats && (
+            <div className="card pad">
+              <h3 style={{ marginBottom: 8 }}>
+                <Trophy size={16} style={{ verticalAlign: -2 }} /> Buts
+              </h3>
+              {goals.map((g) => (
+                <p key={g.id} className="small">
+                  ⚽ {g.pid ? byId[g.pid]?.firstName : 'But'}
+                  {g.assist ? ` (passe de ${byId[g.assist]?.firstName})` : ''} · {Math.floor(g.sec / 60) + 1}′
+                  {d.games?.[g.period - 1] ? ` · contre ${d.games[g.period - 1].opponent}` : ''}
+                </p>
+              ))}
+            </div>
+          )}
+          <div className="card pad">
+            <div className="row between" style={{ marginBottom: 10 }}>
+              <h3>Récompenses</h3>
+              {canEdit && (
+                <button
+                  className="btn sm"
+                  onClick={async () => {
+                    if (editAwards) {
+                      await api.put(`/convocations/${d.eventId}/${d.date}/awards`, { awards });
+                      toast('Récompenses enregistrées');
+                    }
+                    setEditAwards(!editAwards);
+                  }}
+                >
+                  {editAwards ? 'Enregistrer' : 'Modifier'}
+                </button>
+              )}
+            </div>
+            {editAwards ? (
+              <AwardsPicker players={present} value={awards} onChange={setAwards} />
+            ) : (
+              <div className="award-chips">
+                {present.map((p) => (
+                  <span key={p.id} className="chip">
+                    {AWARDS[awards[p.id]]?.emoji} {p.firstName} · {AWARDS[awards[p.id]]?.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

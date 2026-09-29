@@ -9,7 +9,6 @@ import { Album } from './pages/Album';
 import { AnnouncementPage, Announcements } from './pages/Announcements';
 import { CalendarPage } from './pages/CalendarPage';
 import { Club } from './pages/Club';
-import { BulletinPage } from './pages/BulletinPage';
 import { Answer } from './pages/Answer';
 import { ConvocationPage } from './pages/Convocation';
 import { Matches } from './pages/Matches';
@@ -31,7 +30,7 @@ import { TrainingPage } from './pages/TrainingPage';
 // Entrée sur le terrain : three.js n'est chargé qu'à l'ouverture du paquet.
 const PackPage = lazy(() => import('./pages/Walkout').then((m) => ({ default: m.PackPage })));
 const PlayerWalkoutPage = lazy(() => import('./pages/Walkout').then((m) => ({ default: m.PlayerWalkoutPage })));
-const walkout = (el: React.ReactNode) => <Suspense fallback={<div className="wk wk-loading" />}>{el}</Suspense>;
+const walkout = (el: React.ReactNode) => <Suspense fallback={<div className="fw fw-loading" />}>{el}</Suspense>;
 
 type Boot = { state: 'loading' } | { state: 'setup' } | { state: 'login'; clubName: string | null } | { state: 'ready'; me: Me };
 
@@ -134,7 +133,6 @@ function AppRoutes() {
       <Route path="matchs/:eventId/:date/cartes" element={<RevealPage />} />
       <Route path="matchs/:eventId/:date/paquet" element={walkout(<PackPage />)} />
       <Route path="joueurs/:id/entree" element={walkout(<PlayerWalkoutPage />)} />
-      <Route path="bulletins/:id" element={<BulletinPage />} />
     </Routes>
   );
 }

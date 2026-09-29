@@ -1,6 +1,6 @@
-import { AlertTriangle, ArrowLeft, ArrowLeftRight, Flag, Pause, Play, RotateCcw, Send, Share2, Trophy, UserX, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowLeftRight, Flag, Pause, Play, RotateCcw, Send, UserX, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Empty, Field, Sheet, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
 import { useApp } from '../lib/store';
@@ -150,7 +150,6 @@ function MatchBoard({ d }: { d: ConvDetail }) {
   const [, setTick] = useState(0);
   const [goal, setGoal] = useState(false);
   const [finish, setFinish] = useState(false);
-  const [summary, setSummary] = useState(d.summary?.text ?? '');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const players = useMemo(() => Object.fromEntries(d.players.map((p) => [p.id, p])), [d.players]);
@@ -321,7 +320,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
     }, true);
 
   const reset = async () => {
-    if (!(await confirm({ title: 'Recommencer la feuille de match ?', text: 'Chrono, temps de jeu, buts et changements seront remis à zéro.', confirm: 'Recommencer', danger: true }))) return;
+    if (!(await confirm({ title: 'Recommencer le match ?', text: 'Chrono, temps de jeu, buts et changements seront remis à zéro.', confirm: 'Recommencer', danger: true }))) return;
     const fresh = initial(d);
     setM(fresh);
     persist(fresh, true);
@@ -329,7 +328,8 @@ function MatchBoard({ d }: { d: ConvDetail }) {
 
   /* ---- rendu */
 
-  if (m.finished) return <MatchSheet d={d} m={m} summary={summary} team={d.group ?? team?.category ?? ''} onBack={() => nav(`/matchs/${d.eventId}/${d.date}`)} />;
+  // Match terminé : le bilan (scores, temps de jeu, récompenses) est sur la page du match.
+  if (m.finished) return <Navigate to={`/matchs/${d.eventId}/${d.date}`} replace />;
   const canUndo = m.events.some((e) => (e.t === 'goal' || e.t === 'against') && (!games || e.period === m.period));
 
   const Token = ({ pid, idx }: { pid: string | null; idx: number }) => {
@@ -534,7 +534,6 @@ function MatchBoard({ d }: { d: ConvDetail }) {
             try {
               const r = await api.post<{ sent: number }>(`/convocations/${d.eventId}/${d.date}/finish`, { match: next, text, publish, awards });
               localStorage.removeItem(storeKey(d.eventId, d.date));
-              setSummary(text);
               setM(next);
               setFinish(false);
               toast(publish ? `Résumé et cartes envoyés à ${r.sent} parent${r.sent > 1 ? 's' : ''}` : 'Match terminé');
@@ -550,7 +549,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
 }
 
 /** Durée totale de jeu : toutes les périodes, ou tous les matchs d'un plateau. */
-const matchSeconds = (d: ConvDetail) =>
+export const matchSeconds = (d: ConvDetail) =>
   Math.max(1, d.games?.length ? d.games.reduce((a, g) => a + g.minutes * 60, 0) : d.settings.periods * d.settings.periodMinutes * 60);
 
 function GoalSheet({ field, onClose, onGoal }: { field: ConvPlayer[]; onClose: () => void; onGoal: (pid?: string, assist?: string) => void }) {
@@ -575,7 +574,7 @@ function GoalSheet({ field, onClose, onGoal }: { field: ConvPlayer[]; onClose: (
 }
 
 /** Choix d'une récompense par enfant (pré-remplie d'après le match). */
-function AwardsPicker({ players, value, onChange }: { players: ConvPlayer[]; value: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
+export function AwardsPicker({ players, value, onChange }: { players: ConvPlayer[]; value: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
   const [open, setOpen] = useState<string | null>(null);
   return (
     <div className="award-list">
@@ -661,121 +660,5 @@ function FinishSheet({ d, m, onClose, onDone }: { d: ConvDetail; m: MatchState; 
         </div>
       )}
     </Sheet>
-  );
-}
-
-/** Feuille de match après le coup de sifflet final. */
-function MatchSheet({ d, m, team, summary, onBack }: { d: ConvDetail; m: MatchState; team: string; summary: string; onBack: () => void }) {
-  const nav = useNavigate();
-  const toast = useToast();
-  const byId = Object.fromEntries(d.players.map((p) => [p.id, p]));
-  const present = d.players.filter((p) => d.selection.includes(p.id) && !m.absent.includes(p.id));
-  const [awards, setAwards] = useState<Record<string, string>>(() => ({ ...autoAwards(m, present.map((p) => p.id)), ...(d.awards ?? {}) }));
-  const [editAwards, setEditAwards] = useState(false);
-  const share = async () => {
-    try {
-      const r = await api.get<{ shareToken: string }>(`/convocations/${d.eventId}/${d.date}/reveal`);
-      const url = `${location.origin}/m/${r.shareToken}`;
-      if (navigator.share) await navigator.share({ title: `Les cartes du match · ${team}`, text: 'Retournez les cartes des joueurs 🃏', url }).catch(() => undefined);
-      else {
-        await navigator.clipboard.writeText(url);
-        toast('Lien des cartes copié');
-      }
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-  const squad = d.players.filter((p) => d.selection.includes(p.id));
-  const goals = m.events.filter((e) => e.t === 'goal');
-  return (
-    <div className="page narrow">
-      <button className="back" onClick={onBack} style={{ border: 0, background: 'none', cursor: 'pointer' }}>
-        <ArrowLeft size={15} /> Convocation
-      </button>
-      {d.games?.length ? (
-        <div className="card pad" style={{ marginTop: 8 }}>
-          <GamesResults games={d.games} results={m.results ?? []} />
-          {summary && <p className="muted" style={{ marginTop: 10, textAlign: 'center' }}>« {summary} »</p>}
-        </div>
-      ) : (
-        <div className="cv-score" style={{ marginTop: 8 }}>
-          <b>{team}</b>
-          <span>
-            {m.score.us} – {m.score.them}
-          </span>
-          <b>{d.opponent || 'Adversaire'}</b>
-          {summary && <p>« {summary} »</p>}
-        </div>
-      )}
-      <div className="reveal-cta">
-        <button className="btn lime" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/cartes`)}>
-          🃏 Voir les cartes des joueurs
-        </button>
-        <button className="btn" onClick={share}>
-          <Share2 /> Partager le lien
-        </button>
-      </div>
-      <div className="card pad" style={{ marginTop: 16 }}>
-        <div className="row between" style={{ marginBottom: 10 }}>
-          <h3>Récompenses</h3>
-          <button
-            className="btn sm"
-            onClick={async () => {
-              if (editAwards) {
-                await api.put(`/convocations/${d.eventId}/${d.date}/awards`, { awards });
-                toast('Récompenses enregistrées');
-              }
-              setEditAwards(!editAwards);
-            }}
-          >
-            {editAwards ? 'Enregistrer' : 'Modifier'}
-          </button>
-        </div>
-        {editAwards ? (
-          <AwardsPicker players={present} value={awards} onChange={setAwards} />
-        ) : (
-          <div className="award-chips">
-            {present.map((p) => (
-              <span key={p.id} className="chip">
-                {AWARDS[awards[p.id]]?.emoji} {p.firstName} · {AWARDS[awards[p.id]]?.label}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-      {goals.length > 0 && d.settings.stats && (
-        <div className="card pad" style={{ marginTop: 16 }}>
-          <h3 style={{ marginBottom: 8 }}>
-            <Trophy size={16} style={{ verticalAlign: -2 }} /> Buts
-          </h3>
-          {goals.map((g) => (
-            <p key={g.id} className="small">
-              ⚽ {g.pid ? byId[g.pid]?.firstName : 'But'}
-              {g.assist ? ` (passe de ${byId[g.assist]?.firstName})` : ''} · {Math.floor(g.sec / 60) + 1}′
-            </p>
-          ))}
-        </div>
-      )}
-      <div className="card pad" style={{ marginTop: 16 }}>
-        <h3 style={{ marginBottom: 10 }}>Temps de jeu</h3>
-        <div className="minutes">
-          {squad
-            .sort((a, b) => (m.seconds[b.id] ?? 0) - (m.seconds[a.id] ?? 0))
-            .map((p) => (
-              <div key={p.id} className="min-row">
-                <span className="ellipsis">
-                  {p.firstName}
-                  {m.starters.includes(p.id) ? ' ·' : ''}
-                </span>
-                <span className="min-bar">
-                  <i style={{ width: `${Math.min(100, ((m.seconds[p.id] ?? 0) / matchSeconds(d)) * 100)}%` }} />
-                </span>
-                <b>{m.absent.includes(p.id) ? 'abs.' : `${Math.round((m.seconds[p.id] ?? 0) / 60)}′`}</b>
-              </div>
-            ))}
-        </div>
-        <p className="small muted" style={{ marginTop: 8 }}>· titulaire</p>
-      </div>
-    </div>
   );
 }

@@ -145,7 +145,7 @@ export function wallTexture(team: string, club: string, category: string) {
   ctx.fillRect(0, y0, W, y1 - y0);
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.fillRect(0, y0 + (y1 - y0) * 0.55, W, (y1 - y0) * 0.45);
-  ctx.fillStyle = '#f6d77a';
+  ctx.fillStyle = '#ff5a4f';
   ctx.fillRect(0, y0 - 7, W, 3);
   ctx.fillRect(0, y1 + 4, W, 3);
   ctx.font = font(900, (y1 - y0) * 0.62, true);
@@ -203,7 +203,7 @@ export function runnerTexture(team: string, club: string) {
   shade.addColorStop(1, 'rgba(0,0,0,0.45)');
   ctx.fillStyle = shade;
   ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = '#f6d77a';
+  ctx.fillStyle = '#ff5a4f';
   ctx.fillRect(10, 0, 6, H);
   ctx.fillRect(W - 16, 0, 6, H);
   ctx.save();
@@ -257,7 +257,7 @@ export function doorTexture(team: string, logo: HTMLImageElement | null, side: '
     ctx.fillStyle = 'rgba(255,255,255,0.95)';
     ctx.fill();
     ctx.lineWidth = 10;
-    ctx.strokeStyle = '#f6d77a';
+    ctx.strokeStyle = '#ff5a4f';
     ctx.stroke();
     ctx.clip();
     contain(ctx, logo, side === 'left' ? W : 0, H * 0.31, 400);
@@ -331,7 +331,7 @@ export function screenTexture(team: string, logo: HTMLImageElement | null, categ
     ctx.fillStyle = 'rgba(255,255,255,0.96)';
     ctx.fill();
     ctx.lineWidth = 12;
-    ctx.strokeStyle = '#f6d77a';
+    ctx.strokeStyle = '#ff5a4f';
     ctx.stroke();
     contain(ctx, logo, W / 2, H * 0.45, 290);
   }
@@ -339,15 +339,15 @@ export function screenTexture(team: string, logo: HTMLImageElement | null, categ
   ctx.textBaseline = 'middle';
   ctx.font = font(900, 150, true);
   const gold = ctx.createLinearGradient(0, H * 0.3, 0, H * 0.62);
-  gold.addColorStop(0, '#fff6d3');
-  gold.addColorStop(1, '#e8b945');
+  gold.addColorStop(0, '#ffe3e0');
+  gold.addColorStop(1, '#ff3b30');
   ctx.fillStyle = gold;
   ctx.fillText('CONVOQUÉ', W * 0.2, H * 0.46);
   ctx.fillText(category.toUpperCase() || 'MATCH', W * 0.8, H * 0.46);
   ctx.font = font(800, 58);
   ctx.fillStyle = 'rgba(255,255,255,0.88)';
   ctx.fillText(line.toUpperCase(), W / 2, H * 0.13);
-  ctx.fillStyle = '#f6d77a';
+  ctx.fillStyle = '#ff5a4f';
   ctx.fillRect(0, 26, W, 6);
   ctx.fillRect(0, H - 32, W, 6);
   // Trame de LED : chaque point lumineux est visible de près.
@@ -360,18 +360,5 @@ export function screenTexture(team: string, logo: HTMLImageElement | null, categ
   d.clearRect(1, 1, 6, 6);
   ctx.fillStyle = ctx.createPattern(dots, 'repeat')!;
   ctx.fillRect(0, 0, W, H);
-  return c;
-}
-
-/** Étiquette de lettre (« 1ʳᵉ LETTRE ») sous chaque révélation. */
-export function labelTexture(text: string) {
-  const W = 512;
-  const H = 96;
-  const { c, ctx } = make(W, H);
-  ctx.font = font(800, 54);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#f6d77a';
-  ctx.fillText(text.toUpperCase().split('').join(' '), W / 2, H / 2 + 3);
   return c;
 }

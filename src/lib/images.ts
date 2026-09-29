@@ -32,9 +32,51 @@ export async function preparePhoto(file: File) {
   return { image: full.data, thumb: thumb.data, width: full.w, height: full.h, takenAt: file.lastModified || Date.now() };
 }
 
-/** Portrait carré (photo de joueur), recadré au centre. */
+/** Zone non transparente d'une image, ou null si elle est entièrement opaque. */
+function alphaBounds(src: CanvasImageSource & { width: number; height: number }) {
+  const scale = Math.min(1, 400 / Math.max(src.width, src.height));
+  const w = Math.max(1, Math.round(src.width * scale));
+  const h = Math.max(1, Math.round(src.height * scale));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(src, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1, clear = 0;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const a = px[(y * w + x) * 4 + 3];
+      if (a < 250) clear++;
+      if (a > 16) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  // Moins de 2 % de pixels transparents : c'est une photo classique.
+  if (clear < w * h * 0.02 || x1 < 0) return null;
+  return { x: x0 / scale, y: y0 / scale, w: (x1 - x0 + 1) / scale, h: (y1 - y0 + 1) / scale };
+}
+
+/**
+ * Photo de joueur. Détourée (PNG transparent) : la transparence est gardée et l'image est recadrée au plus près du joueur.
+ * Sinon : portrait carré, recadré au centre.
+ */
 export async function preparePortrait(file: File, size = 640) {
   const src = await decode(file);
+  const box = alphaBounds(src);
+  if (box) {
+    const scale = Math.min(1, 900 / Math.max(box.w, box.h));
+    const c = document.createElement('canvas');
+    c.width = Math.round(box.w * scale);
+    c.height = Math.round(box.h * scale);
+    const ctx = c.getContext('2d')!;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  }
   const side = Math.min(src.width, src.height);
   const c = document.createElement('canvas');
   c.width = size;

@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarPlus, Pencil, Sparkles } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, Pencil } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Calendar } from '../components/Calendar';
@@ -25,7 +25,7 @@ function repeatLabel(e: TeamEvent) {
   return REPEAT[r.freq];
 }
 
-/** Calendrier en grand : le mois à gauche, les nouveautés (événements ajoutés ou modifiés) à droite. */
+/** Calendrier en grand : le mois à gauche, la vue d'ensemble des événements à droite. */
 export function CalendarPage() {
   const { team, can, isStaff } = useApp();
   const q = useAsync(async () => {
@@ -38,7 +38,7 @@ export function CalendarPage() {
   });
   const [jump, setJump] = useState<{ date: string; n: number } | null>(null);
 
-  // Fil : les événements les plus récemment ajoutés ou modifiés, avec leur prochaine date.
+  // Vue d'ensemble : les événements par date, du plus proche au plus lointain ; les événements passés à la fin.
   const feed = useMemo(() => {
     const today = toYMD(new Date());
     const far = toYMD(new Date(Date.now() + 365 * 864e5));
@@ -49,7 +49,12 @@ export function CalendarPage() {
         const updated = e.updatedAt ?? created;
         return { e, next, at: Math.max(created, updated), edited: updated - created > 60_000 };
       })
-      .sort((a, b) => b.at - a.at)
+      .sort((a, b) => {
+        if (!!a.next !== !!b.next) return a.next ? -1 : 1;
+        const ka = `${a.next ?? a.e.start}T${a.e.time || '00:00'}`;
+        const kb = `${b.next ?? b.e.start}T${b.e.time || '00:00'}`;
+        return a.next ? ka.localeCompare(kb) : kb.localeCompare(ka);
+      })
       .slice(0, 30);
   }, [q.data?.events]);
   // « Ajouté / modifié · il y a… » n'a de sens que dans les 2 heures qui suivent.
@@ -75,9 +80,7 @@ export function CalendarPage() {
             <Calendar big teamId={team.id} events={q.data.events} trainings={q.data.trainings} canEdit={isStaff && can('events.manage')} onChanged={q.reload} jump={jump} />
           </section>
           <aside className="cal-feed">
-            <h2>
-              <Sparkles size={17} /> Nouveautés
-            </h2>
+            <h2>Vue d’ensemble</h2>
             {!feed.length && <p className="muted small">Aucun événement pour l’instant.</p>}
             <ol>
               {feed.map(({ e, next, at, edited }) => {
@@ -106,7 +109,6 @@ export function CalendarPage() {
                         <small className="ellipsis">
                           {repeat ?? (next ? 'À venir' : 'Passé')}
                           {e.time && !e.allDay ? ` · ${formatTime(e.time)}` : ''}
-                          {e.location ? ` · ${e.location}` : ''}
                         </small>
                       </span>
                     </button>

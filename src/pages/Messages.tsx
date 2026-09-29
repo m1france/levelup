@@ -614,7 +614,7 @@ function Thread({ id, onBack, onRead, onRemove }: { id: string; onBack: () => vo
   if (!data) return <Spinner fill />;
   const t = data.thread;
   const others = data.members.filter((m) => m.id !== me.user.id);
-  const lastMine = [...data.messages].reverse().find((m) => m.mine && m.kind !== 'deleted');
+  const lastMine = [...data.messages].reverse().find((m) => m.mine && !m.deleted);
 
   // Regroupement : jour, puis messages consécutifs d'une même personne.
   const rows: ReactNode[] = [];
@@ -646,7 +646,11 @@ function Thread({ id, onBack, onRead, onRemove }: { id: string; onBack: () => vo
         menu={menu === m.id}
         onMenu={(open) => setMenu(open ? m.id : null)}
         onChange={replace}
-        onDelete={() => setData((x) => (x ? { ...x, messages: x.messages.map((y) => (y.id === m.id ? { ...y, kind: 'deleted', body: '' } : y)) } : x))}
+        onDelete={() =>
+          setData((x) =>
+            x && { ...x, messages: me.user.role === 'admin' ? x.messages.map((y) => (y.id === m.id ? { ...y, deleted: true } : y)) : x.messages.filter((y) => y.id !== m.id) },
+          )
+        }
         receipt={
           m.id === lastMine?.id ? (
             <button className="receipt" onClick={() => t.kind !== 'direct' && setReaders(m)}>
@@ -869,7 +873,7 @@ function Bubble({
   const [zoom, setZoom] = useState(false);
   const react = async (emoji: string) => {
     onMenu(false);
-    if (!canReact) return;
+    if (!canReact || m.deleted) return;
     onChange(await api.post<ChatMessage>(`/chat/messages/${m.id}/react`, { emoji }));
   };
   const counts = useMemo(() => {
@@ -882,9 +886,12 @@ function Bubble({
     }
     return Object.entries(c);
   }, [m.reactions]);
-  const rich = !['text', 'deleted'].includes(m.kind);
+  const rich = m.kind !== 'text';
   return (
-    <div className={`msg${m.mine ? ' mine' : ''}${first ? ' first' : ''}${last ? ' last' : ''}${rich ? ' rich' : ''}`}>
+    <div
+      className={`msg${m.mine ? ' mine' : ''}${first ? ' first' : ''}${last ? ' last' : ''}${rich ? ' rich' : ''}${m.deleted ? ' deleted' : ''}`}
+      title={m.deleted ? 'Message supprimé · visible seulement par les administrateurs' : undefined}
+    >
       {!m.mine && showAuthor && first && <span className="msg-author">{m.author}</span>}
       <div className="msg-line">
         {!m.mine && showAuthor && <span className="msg-av">{last && <Avatar name={m.author ?? '?'} size="sm" />}</span>}
@@ -896,14 +903,14 @@ function Bubble({
           onTouchMove={() => press.current && clearTimeout(press.current)}
           onDoubleClick={() => react('❤️')}
         >
-          {menu && (
+          {menu && !m.deleted && (
             <div className="tapback" onClick={(e) => e.stopPropagation()}>
               {canReact && TAPBACKS.map((e) => (
                 <button key={e} className={m.reactions.some((r) => r.mine && r.emoji === e) ? 'on' : ''} onClick={() => react(e)}>
                   {e}
                 </button>
               ))}
-              {(m.mine || canManage) && m.kind !== 'deleted' && (
+              {(m.mine || canManage) && (
                 <button
                   className="del"
                   onClick={async () => {
@@ -921,7 +928,6 @@ function Bubble({
             </div>
           )}
           {m.kind === 'text' && <div className="bubble">{m.body}</div>}
-          {m.kind === 'deleted' && <div className="bubble deleted">Message supprimé</div>}
           {m.kind === 'image' && (
             <>
               <img className="bubble-img" src={`/api/chat/images/${m.id}`} alt="" style={{ aspectRatio: `${m.data?.w ?? 4} / ${m.data?.h ?? 3}` }} onClick={() => setZoom(true)} />
@@ -1061,10 +1067,7 @@ function MatchCard({ m }: { m: ChatMessage }) {
         </span>
         <span className="grow">
           <b>{d.title}</b>
-          <small>
-            {d.meetTime ? `RDV ${formatTime(d.meetTime)} · ` : ''}
-            {d.time ? `coup d’envoi ${formatTime(d.time)}` : ''}
-          </small>
+          {d.meetTime && <small>RDV {formatTime(d.meetTime)}</small>}
           {d.location && <small>📍 {d.location}</small>}
         </span>
         <ChevronRight size={18} className="muted" />

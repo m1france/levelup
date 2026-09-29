@@ -80,6 +80,8 @@ export interface PlayerInfo {
   licence: { number: string; status: 'ok' | 'pending' | 'missing' };
   certificate: string | null;
   photoConsent: '' | 'yes' | 'no';
+  /** Ville de la famille. */
+  city?: string;
 }
 
 export interface FollowUp {
@@ -105,8 +107,10 @@ export interface Player {
   level?: 1 | 2 | 3;
   /** Version de la photo (horodatage), absente sans photo. */
   photo?: number;
-  /** Entrée sur le terrain : photo en pied (détourée si `alpha`) et vidéo de célébration (WebM et/ou MOV). */
-  walkout?: { photo?: { v: number; ext: 'png' | 'jpg'; alpha: boolean }; video?: { webm?: number; mov?: number } };
+  /** Photo détourée (PNG transparent). */
+  photoAlpha?: boolean;
+  /** Entrée sur le terrain : photo en pied (détourée si `alpha`). */
+  walkout?: { photo?: { v: number; ext: 'png' | 'jpg'; alpha: boolean } };
   profile?: PlayerProfile;
   info?: PlayerInfo;
   followUp?: FollowUp;
@@ -566,6 +570,8 @@ export interface PlayerCard {
   firstName: string;
   number?: number;
   photo: string | null;
+  /** Photo détourée : affichée sans fond, cadrée sur le joueur. */
+  cutout?: boolean;
   position: string;
   ovr: number;
   stats: [string, number][];
@@ -609,7 +615,7 @@ export interface Pack {
   /** Aperçu éducateur (la lecture n'est pas enregistrée). */
   preview: boolean;
   opened: string[];
-  /** Photo en pied et vidéo de célébration de chaque enfant dont on ouvre le paquet (null : rien d'enregistré). */
+  /** Photo en pied de chaque enfant dont on ouvre le paquet (null : rien d'enregistré). */
   heroes: Record<string, WalkoutHero | null>;
   cards: PlayerCard[];
 }
@@ -617,37 +623,9 @@ export interface Pack {
 export interface WalkoutHero {
   photo: string | null;
   alpha: boolean;
-  video: { webm?: string; mov?: string };
 }
 
 /* ------------------------------------------------------------------ bulletins */
-
-export interface BulletinSnapshot {
-  progress: { domain: DomainKey; before: number | null; now: number | null }[];
-  strengths: { skill: string; v: number }[];
-  attendance: { present: number; total: number };
-  matches: { played: number; opportunities: number; minutes: number; goals: number; assists: number };
-  awards: (Award & { date: string; title: string })[];
-  goals: { done: { title: string; domain: DomainKey | '' }[]; active: { title: string; domain: DomainKey | ''; progress: number }[] };
-  records: { key: string; best: number; first: number; count: number }[];
-  positions: string[];
-}
-
-export interface Bulletin {
-  id: string;
-  playerId: string;
-  period: string;
-  from: string;
-  to: string;
-  message: string;
-  authorName: string | null;
-  publishedAt: number | null;
-  createdAt: number;
-  snapshot: BulletinSnapshot;
-  player?: { id: string; firstName: string; lastName: string; number?: number; birthYear?: number; photo: string | null };
-  team?: { category: string; color: string };
-  club?: string;
-}
 
 /* ------------------------------------------------------------------ covoiturage */
 
@@ -726,9 +704,11 @@ export interface ChatMessage {
   userId: string | null;
   author: string | null;
   mine: boolean;
-  kind: 'text' | 'image' | 'carpool' | 'poll' | 'tasks' | 'match' | 'location' | 'deleted';
+  kind: 'text' | 'image' | 'carpool' | 'poll' | 'tasks' | 'match' | 'location';
   body: string;
   at: number;
+  /** Supprimé : seul l'administrateur le reçoit encore. */
+  deleted?: boolean;
   reactions: { emoji: string; mine: boolean; name: string }[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data?: any;

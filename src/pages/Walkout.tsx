@@ -14,8 +14,12 @@ import { longDate } from './Convocation';
 
 /**
  * Entrée sur le terrain (paquet de convocation) : l'enfant convoqué traverse le tunnel, les portes s'ouvrent,
- * les trois premières lettres de son prénom surgissent, puis il apparaît sur l'estrade à côté de sa carte.
+ * les lettres de son prénom surgissent une à une, puis il apparaît sur l'estrade à côté de sa carte.
+ * Tout est aux couleurs du club : le rouge du logo.
  */
+
+/** Rouge du logo du club : couleur dominante de l'entrée. */
+const CLUB_RED = '#d7141e';
 
 /** Depuis la notification ou le billet du match. */
 export function PackPage() {
@@ -46,18 +50,18 @@ export function PlayerWalkoutPage() {
 
 function WalkoutLoading({ error, onClose }: { error: string | null; onClose: () => void }) {
   return (
-    <div className="wk wk-loading">
-      <div className="wk-loader">
+    <div className="fw fw-loading">
+      <div className="fw-loader">
         {error ? (
           <>
             <h2>Paquet indisponible</h2>
             <p>{error}</p>
-            <button className="wk-btn" onClick={onClose}>
+            <button className="fw-btn" onClick={onClose}>
               Retour
             </button>
           </>
         ) : (
-          <span className="wk-pulse" />
+          <span className="fw-pulse" />
         )}
       </div>
     </div>
@@ -68,20 +72,12 @@ function WalkoutLoading({ error, onClose }: { error: string | null; onClose: () 
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Les trois premières lettres du prénom (accents conservés). */
-export function firstLetters(name: string, n = 3) {
-  return [...name.normalize('NFC')].filter((c) => /\p{L}/u.test(c)).slice(0, n).map((c) => c.toLocaleUpperCase('fr-FR'));
+/** Les lettres du prénom (accents conservés). */
+export function nameLetters(name: string) {
+  return [...name.normalize('NFC')].filter((c) => /\p{L}/u.test(c)).map((c) => c.toLocaleUpperCase('fr-FR'));
 }
 
-const isSafari = () => /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
-
-/** Vidéo à essayer d'abord : MOV (HEVC transparent) sur Safari, WebM (VP9 transparent) ailleurs. */
-function videoOrder(v: WalkoutHero['video']) {
-  const list = isSafari() ? [v.mov, v.webm] : [v.webm, v.mov];
-  return list.filter((x): x is string => !!x);
-}
-
-/** Le média a-t-il un fond transparent ? (on regarde les bords d'une image réduite) */
+/** La photo a-t-elle un fond transparent ? (on regarde les bords d'une image réduite) */
 function hasAlpha(src: CanvasImageSource, w: number, h: number) {
   try {
     const c = document.createElement('canvas');
@@ -158,13 +154,12 @@ function WalkoutExperience({ data, onClose, closeLabel }: { data: Pack; onClose:
   };
 
   return (
-    <div className={`wk phase-${phase}`} style={{ ['--team' as string]: data.team.color } as CSSProperties}>
+    <div className={`fw phase-${phase}`} style={{ ['--team' as string]: CLUB_RED } as CSSProperties}>
       <WalkoutStage
         key={`${k}:${run}`}
         data={data}
         card={card}
         hero={hero}
-        muted={muted}
         autoStart={run > 0}
         audio={audio}
         phase={phase}
@@ -176,13 +171,13 @@ function WalkoutExperience({ data, onClose, closeLabel }: { data: Pack; onClose:
         onNext={() => begin(k + 1)}
         onReplay={() => begin()}
       />
-      <div className="wk-top">
-        <button className="wk-icon" onClick={onClose} aria-label="Fermer">
+      <div className="fw-top">
+        <button className="fw-icon" onClick={onClose} aria-label="Fermer">
           <X />
         </button>
         <span className="grow" />
-        {data.preview && <span className="wk-tag">Aperçu</span>}
-        <button className="wk-icon" onClick={() => setMuted((m) => !m)} aria-label={muted ? 'Activer le son' : 'Couper le son'}>
+        {data.preview && <span className="fw-tag">Aperçu</span>}
+        <button className="fw-icon" onClick={() => setMuted((m) => !m)} aria-label={muted ? 'Activer le son' : 'Couper le son'}>
           {muted ? <VolumeX /> : <Volume2 />}
         </button>
       </div>
@@ -197,7 +192,6 @@ interface StageProps {
   data: Pack;
   card: PlayerCard;
   hero: WalkoutHero | null;
-  muted: boolean;
   autoStart: boolean;
   audio: React.RefObject<WalkoutAudio | null>;
   phase: Phase;
@@ -210,56 +204,22 @@ interface StageProps {
   onReplay: () => void;
 }
 
-function WalkoutStage({ data, card, hero, muted, autoStart, audio, phase, onStart, onPhase, onClose, closeLabel, nextName, onNext, onReplay }: StageProps) {
+function WalkoutStage({ data, card, hero, autoStart, audio, phase, onStart, onPhase, onClose, closeLabel, nextName, onNext, onReplay }: StageProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const heroEl = useRef<HTMLDivElement>(null);
-  const video = useRef<HTMLVideoElement>(null);
   const walkout = useRef<Walkout | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [shown, setShown] = useState(0);
   const [stage, setStage] = useState<'none' | 'stage' | 'card' | 'done'>('none');
-  const [media, setMedia] = useState<{ kind: 'video' | 'img'; src: string } | null>(null);
+  const [photo, setPhoto] = useState<string | null>(hero?.photo ?? null);
   const [framed, setFramed] = useState(false);
-  const letters = useMemo(() => firstLetters(card.firstName), [card.firstName]);
-  const more = firstLetters(card.firstName, 99).length > letters.length;
+  const letters = useMemo(() => nameLetters(card.firstName), [card.firstName]);
   const when = cap(longDate(data.date));
   const startedRef = useRef(false);
-  const mutedRef = useRef(muted);
-  mutedRef.current = muted;
-  useEffect(() => {
-    const v = video.current;
-    if (v && !v.paused) v.muted = muted;
-  }, [muted]);
-
-  // Média de l'enfant : vidéo (dans l'ordre préféré du navigateur), sinon photo en pied.
-  const sources = useMemo(() => {
-    const list: { kind: 'video' | 'img'; src: string }[] = [];
-    if (hero) {
-      for (const v of videoOrder(hero.video)) list.push({ kind: 'video', src: v });
-      if (hero.photo) list.push({ kind: 'img', src: hero.photo });
-    }
-    return list;
-  }, [hero]);
-  useEffect(() => setMedia(sources[0] ?? null), [sources]);
-  const fallback = () => setMedia((m) => sources[sources.findIndex((s) => s.src === m?.src) + 1] ?? null);
 
   const onEvent = useCallback(
     (e: WalkoutEvent) => {
-      if (e.type === 'letter') setShown(e.index + 1);
-      if (e.type === 'stage') {
-        setShown(99);
-        setStage('stage');
-      }
-      if (e.type === 'hero' && video.current) {
-        video.current.currentTime = 0;
-        video.current.muted = mutedRef.current;
-        void video.current.play().catch(() => {
-          if (!video.current) return;
-          video.current.muted = true;
-          void video.current.play().catch(() => undefined);
-        });
-      }
+      if (e.type === 'stage') setStage('stage');
       if (e.type === 'card') setStage('card');
       if (e.type === 'done') {
         setStage('done');
@@ -283,13 +243,13 @@ function WalkoutStage({ data, card, hero, muted, autoStart, audio, phase, onStar
           heroEl: heroEl.current,
           onEvent,
           input: {
-            team: { color: data.team.color, category: data.team.category },
+            team: { color: CLUB_RED, category: data.team.category },
             club: data.club,
             logo,
             letters,
             cardFront: drawCardFront(card, data.team, photo, logo),
-            cardBack: drawCardBack(data.team, logo),
-            hero: sources.length > 0,
+            cardBack: drawCardBack({ ...data.team, color: CLUB_RED }, logo),
+            hero: !!photo,
             screenLine: data.eventId ? `${when} · ${data.title}` : data.club,
           },
         });
@@ -315,12 +275,6 @@ function WalkoutStage({ data, card, hero, muted, autoStart, audio, phase, onStar
 
   const start = () => {
     if (startedRef.current) return;
-    // iOS : la vidéo doit être « débloquée » pendant le geste pour pouvoir jouer avec le son plus tard.
-    const v = video.current;
-    if (v) {
-      v.muted = true;
-      void v.play().then(() => v.pause()).catch(() => undefined);
-    }
     startedRef.current = true;
     walkout.current?.start(onStart());
   };
@@ -330,38 +284,22 @@ function WalkoutStage({ data, card, hero, muted, autoStart, audio, phase, onStar
 
   return (
     <>
-      <canvas ref={canvas} className={`wk-canvas${ready ? ' ready' : ''}`} />
-      {sources.length > 0 && (
-        <div ref={heroEl} className={`wk-hero${framed ? ' framed' : ''}`} aria-hidden>
-          {media?.kind === 'video' && (
-            <video
-              ref={video}
-              key={media.src}
-              src={media.src}
-              playsInline
-              loop
-              muted
-              preload="auto"
-              onError={fallback}
-              onLoadedData={(e) => setFramed(!hasAlpha(e.currentTarget, e.currentTarget.videoWidth, e.currentTarget.videoHeight))}
-            />
-          )}
-          {media?.kind === 'img' && (
-            <img
-              key={media.src}
-              src={media.src}
-              alt=""
-              onError={fallback}
-              onLoad={(e) => setFramed(!(hero?.alpha || hasAlpha(e.currentTarget, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)))}
-            />
-          )}
+      <canvas ref={canvas} className={`fw-canvas${ready ? ' ready' : ''}`} />
+      {photo && (
+        <div ref={heroEl} className={`fw-hero${framed ? ' framed' : ''}`} aria-hidden>
+          <img
+            src={photo}
+            alt=""
+            onError={() => setPhoto(null)}
+            onLoad={(e) => setFramed(!(hero?.alpha || hasAlpha(e.currentTarget, e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)))}
+          />
         </div>
       )}
 
       {/* Maintenir appuyé pour accélérer. */}
       {running && (
         <div
-          className="wk-hold"
+          className="fw-hold"
           onPointerDown={() => hold(true)}
           onPointerUp={() => hold(false)}
           onPointerCancel={() => hold(false)}
@@ -370,65 +308,50 @@ function WalkoutStage({ data, card, hero, muted, autoStart, audio, phase, onStar
       )}
 
       {phase === 'intro' && (
-        <div className="wk-intro">
-          <div className="wk-intro-card">
-            {data.team.logo && <img className="wk-intro-logo" src={data.team.logo} alt="" />}
-            <p className="wk-kicker">{data.club || 'Convocation'}</p>
-            <h1 className="wk-intro-title">
+        <div className="fw-intro">
+          <div className="fw-intro-card">
+            {data.team.logo && <img className="fw-intro-logo" src={data.team.logo} alt="" />}
+            <p className="fw-kicker">{data.club || 'Convocation'}</p>
+            <h1 className="fw-intro-title">
               Convocation <em>{data.team.category}</em>
             </h1>
-            <p className="wk-intro-sub">{data.eventId ? `${when} · ${data.title}` : 'Aperçu de l’entrée sur le terrain'}</p>
-            <button className="wk-go" onClick={start} disabled={!ready && !failed}>
+            <p className="fw-intro-sub">{data.eventId ? `${when} · ${data.title}` : 'Aperçu de l’entrée sur le terrain'}</p>
+            <button className="fw-go" onClick={start} disabled={!ready && !failed}>
               <span>{ready || failed ? 'Entrer sur le terrain' : 'Préparation…'}</span>
             </button>
-            <p className="wk-intro-hint">Monte le son 🔊</p>
-          </div>
-        </div>
-      )}
-
-      {phase === 'run' && stage === 'none' && (
-        <div className="wk-hud">
-          <p className="wk-question">Qui est convoqué ?</p>
-          <div className="wk-slots">
-            {letters.map((l, i) => (
-              <span key={i} className={`wk-slot${i < shown ? ' on' : ''}`}>
-                <b>{i < shown ? l : ''}</b>
-              </span>
-            ))}
-            {more && <span className="wk-more">…</span>}
+            <p className="fw-intro-hint">Monte le son 🔊</p>
           </div>
         </div>
       )}
 
       {(stage === 'card' || stage === 'done') && (
-        <div className="wk-name">
+        <div className="fw-name">
           <h2 data-text={card.firstName}>{card.firstName}</h2>
-          <span className="wk-pill">
+          <span className="fw-pill">
             <i>✓</i> Convoqué{data.team.category ? ` · ${data.team.category}` : ''}
           </span>
         </div>
       )}
 
       {running && stage === 'none' && (
-        <div className="wk-run-foot">
-          <span className="wk-hint">Maintiens l’écran pour accélérer</span>
-          <button className="wk-skip" onClick={() => walkout.current?.skip()}>
+        <div className="fw-run-foot">
+          <span className="fw-hint">Maintiens l’écran pour accélérer</span>
+          <button className="fw-skip" onClick={() => walkout.current?.skip()}>
             Passer <FastForward size={16} />
           </button>
         </div>
       )}
 
       {(phase === 'final' || phase === 'squad') && (
-        <div className="wk-final">
+        <div className="fw-final">
           {failed && (
-            <div className="wk-fallback-card">
+            <div className="fw-fallback-card">
               <FutCard card={card} team={data.team} size={180} />
-              {media?.kind === 'video' && <video src={media.src} autoPlay loop muted playsInline onError={fallback} />}
-              {media?.kind === 'img' && <img src={media.src} alt="" onError={fallback} />}
+              {photo && <img src={photo} alt="" onError={() => setPhoto(null)} />}
             </div>
           )}
           {data.eventId ? (
-            <div className="wk-info">
+            <div className="fw-info">
               <b>
                 {when}
                 {data.time ? ` · ${formatTime(data.time)}` : ''}
@@ -440,27 +363,27 @@ function WalkoutStage({ data, card, hero, muted, autoStart, audio, phase, onStar
               {data.location && <small>{data.location}</small>}
             </div>
           ) : (
-            <div className="wk-info">
+            <div className="fw-info">
               <b>Aperçu de l’entrée</b>
               <span>C’est ce que verra la famille à chaque convocation.</span>
             </div>
           )}
-          <div className="wk-actions">
+          <div className="fw-actions">
             {nextName ? (
-              <button className="wk-btn primary" onClick={onNext}>
+              <button className="fw-btn primary" onClick={onNext}>
                 Paquet de {nextName} <ChevronRight size={18} />
               </button>
             ) : (
               data.cards.length > 1 && (
-                <button className="wk-btn primary" onClick={() => onPhase('squad')}>
+                <button className="fw-btn primary" onClick={() => onPhase('squad')}>
                   <Users size={18} /> Mes coéquipiers
                 </button>
               )
             )}
-            <button className="wk-btn" onClick={onClose}>
+            <button className="fw-btn" onClick={onClose}>
               {closeLabel}
             </button>
-            <button className="wk-btn icon" onClick={onReplay} aria-label="Revoir l’entrée">
+            <button className="fw-btn icon" onClick={onReplay} aria-label="Revoir l’entrée">
               <RotateCcw size={18} />
             </button>
           </div>
@@ -483,23 +406,23 @@ function Squad({ data, onBack, onClose, closeLabel }: { data: Pack; onBack: () =
   const size = Math.round(Math.max(90, Math.min(160, (Math.min(w, 1040) - 32 - (cols - 1) * 12) / cols)));
   const ordered = [...data.cards.filter((c) => c.mine), ...data.cards.filter((c) => !c.mine)];
   return (
-    <div className="wk-squad">
-      <div className="wk-squad-inner">
-        <p className="wk-kicker">{cap(longDate(data.date))}</p>
+    <div className="fw-squad">
+      <div className="fw-squad-inner">
+        <p className="fw-kicker">{cap(longDate(data.date))}</p>
         <h2>Le groupe {data.team.category}</h2>
-        <p className="wk-squad-sub">{data.cards.length} joueurs convoqués</p>
-        <div className="wk-grid">
+        <p className="fw-squad-sub">{data.cards.length} joueurs convoqués</p>
+        <div className="fw-grid">
           {ordered.map((c, i) => (
-            <div key={c.id} className={`wk-mini${c.mine ? ' mine' : ''}`} style={{ ['--i' as string]: i } as CSSProperties}>
+            <div key={c.id} className={`fw-mini${c.mine ? ' mine' : ''}`} style={{ ['--i' as string]: i } as CSSProperties}>
               <FutCard card={c} team={data.team} size={size} foot={<span>{c.number != null ? `#${c.number}` : data.team.category}</span>} />
             </div>
           ))}
         </div>
-        <div className="wk-actions">
-          <button className="wk-btn" onClick={onBack}>
+        <div className="fw-actions">
+          <button className="fw-btn" onClick={onBack}>
             Retour
           </button>
-          <button className="wk-btn primary" onClick={onClose}>
+          <button className="fw-btn primary" onClick={onClose}>
             {closeLabel}
           </button>
         </div>

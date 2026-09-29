@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, ChevronRight, Copy, Download, Magnet, Maximize2, Minus, MoreHorizontal, MousePointer2,
+  ArrowLeft, ChevronRight, Copy, Download, Maximize2, Minus, MoreHorizontal, MousePointer2,
   NotebookPen, PanelRight, Pause, PenLine, Play, Plus, Proportions, Redo2, RotateCcw, RotateCw, Trash2, Undo2, Users, X,
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
@@ -19,7 +19,7 @@ import {
 } from '../pitch/editing';
 import { canExportVideo, exportVideo, shareOrDownload } from '../pitch/export';
 import {
-  COLORS, ITEM_LABELS, PLAYER_COLORS, PRESETS, colorHex, computeView, dist, equipmentOf, itemUnit, pluralize, type Vec, type View,
+  COLORS, ITEM_LABELS, PLAYER_COLORS, PRESETS, colorHex, computeView, dist, equipmentOf, isBlankExercise, itemUnit, pluralize, type Vec, type View,
 } from '../pitch/geometry';
 import { FONT, PATH_STYLE, TEXT_SIZE, drawScene, itemScale } from '../pitch/render';
 import { fitCanvas, usePlayback, useSize } from '../pitch/usePitch';
@@ -269,7 +269,6 @@ function Editor({ initial }: { initial: Exercise }) {
   const [circleCount, setCircleCount] = useState(8);
   const [slalomCount, setSlalomCount] = useState(6);
   const [gridStep, setGridStep] = useState(5);
-  const [snap, setSnap] = useState(true);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [draft, setDraft] = useState<{ path?: ExerciseData['paths'][number]; items?: ExerciseData['items']; rect?: [Vec, Vec] } | null>(null);
   const [panel, setPanel] = useState<PanelKey | null>(null);
@@ -362,7 +361,9 @@ function Editor({ initial }: { initial: Exercise }) {
 
   useEffect(
     () => () => {
-      if (saveTimer.current) void api.put(`/exercises/${exRef.current.id}`, exRef.current);
+      // Créé puis laissé tel quel : l'exercice vide n'encombre pas la bibliothèque.
+      if (isBlankExercise(exRef.current) && !peersRef.current.some((p) => p.editor)) void api.post(`/exercises/${exRef.current.id}/discard`).catch(() => undefined);
+      else if (saveTimer.current) void api.put(`/exercises/${exRef.current.id}`, exRef.current);
     },
     [],
   );
@@ -519,7 +520,7 @@ function Editor({ initial }: { initial: Exercise }) {
     return v.rot ? [(sy - v.oy) / v.s, v.fh - (sx - v.ox) / v.s] : [(sx - v.ox) / v.s, (sy - v.oy) / v.s];
   };
 
-  const snapP = (p: Vec) => snapV(clampToField(exRef.current, p), snap);
+  const snapP = (p: Vec) => snapV(clampToField(exRef.current, p), true);
 
   /* ---------------------------------------------------------------- gestes */
 
@@ -650,7 +651,7 @@ function Editor({ initial }: { initial: Exercise }) {
         d.moved = true;
         const kk = d.base ? 0 : frame;
         // Un groupe se déplace d'un bloc : on aimante le décalage, pas chaque élément.
-        const step = snapV(delta, snap && (d.ids.length + d.paths.size > 1 || d.ids.length === 0));
+        const step = snapV(delta, d.ids.length + d.paths.size > 1 || d.ids.length === 0);
         mutate((draft) => {
           for (const id of d.ids) {
             const o = d.orig.get(id)!;
@@ -1090,9 +1091,6 @@ function Editor({ initial }: { initial: Exercise }) {
         <button className="btn icon ghost hide-mobile" onClick={redo} disabled={!future.current.length} aria-label="Rétablir">
           <Redo2 />
         </button>
-        <button className={`btn icon ${snap ? '' : 'ghost'} hide-mobile`} onClick={() => setSnap((s) => !s)} title="Aimanter à la grille (0,5 m)">
-          <Magnet />
-        </button>
         <button className="btn hide-mobile" onClick={() => setPresent(true)}>
           <Maximize2 /> Présenter
         </button>
@@ -1121,9 +1119,6 @@ function Editor({ initial }: { initial: Exercise }) {
               )}
               <button onClick={() => (close(), void doDuplicate())}>
                 <Copy /> Dupliquer
-              </button>
-              <button onClick={() => (close(), setSnap((s) => !s))} className="only-mobile">
-                <Magnet /> Aimanter : {snap ? 'oui' : 'non'}
               </button>
               <button onClick={() => (close(), void doDelete())} style={{ color: 'var(--danger)' }}>
                 <Trash2 /> Supprimer

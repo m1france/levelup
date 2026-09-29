@@ -1,14 +1,14 @@
-import { Check, Copy, Download, FileUp, Mail, Megaphone, Phone, Search, Upload, Users } from 'lucide-react';
+import { Check, Copy, Download, Mail, Phone, Search, Upload, Users } from 'lucide-react';
 import { useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { TeamBadge } from '../components/Layout';
-import { Empty, Field, Seg, Spinner, useAsync, useToast } from '../components/ui';
+import { Empty, Field, Seg, Sheet, Spinner, useAsync, useToast } from '../components/ui';
 import { api } from '../lib/api';
 import { useApp } from '../lib/store';
 import type { ClubTeamStats, RosterRow } from '../lib/types';
 import { Gauge } from './Convocation';
 
-type Tab = 'vue' | 'effectif' | 'import';
+type Tab = 'vue' | 'effectif';
 
 export function Club() {
   const { can, isAdmin, me } = useApp();
@@ -17,7 +17,6 @@ export function Club() {
   const tabs: { value: Tab; label: string }[] = [
     ...(dash ? [{ value: 'vue' as Tab, label: 'Vue d’ensemble' }] : []),
     { value: 'effectif', label: 'Effectif' },
-    ...(can('players.manage') ? [{ value: 'import' as Tab, label: 'Import SportEasy' }] : []),
   ];
   const tab = tabs.find((t) => t.value === params.get('vue'))?.value ?? tabs[0].value;
   return (
@@ -27,18 +26,10 @@ export function Club() {
           <h1>{me.club?.name ?? 'Club'}</h1>
           <div className="sub">Tableau de bord du club</div>
         </div>
-        <div className="row wrap" style={{ gap: 8 }}>
-          <Seg value={tab} onChange={(v) => setParams(v === tabs[0].value ? {} : { vue: v })} options={tabs} />
-          {can('announcements.send') && (
-            <Link to="/annonces" className="btn primary">
-              <Megaphone /> Annonce
-            </Link>
-          )}
-        </div>
+        {tabs.length > 1 && <Seg value={tab} onChange={(v) => setParams(v === tabs[0].value ? {} : { vue: v })} options={tabs} />}
       </div>
       {tab === 'vue' && <Overview />}
       {tab === 'effectif' && <Roster />}
-      {tab === 'import' && <Import />}
     </div>
   );
 }
@@ -106,8 +97,6 @@ function Overview() {
               <th>Joueurs</th>
               <th>Présence</th>
               <th className="hide-mobile">Tendance</th>
-              <th>Convoc. à l’heure</th>
-              <th className="hide-mobile">Réponses</th>
               <th>Équité</th>
               <th className="hide-mobile">Licences</th>
             </tr>
@@ -125,19 +114,13 @@ function Overview() {
                   </span>
                 </td>
                 <td>
-                  <b>{x.players}</b> <small className="muted">· {x.parents} parents</small>
+                  <b>{x.players}</b>
                 </td>
                 <td>
-                  <Pct v={x.attendance} /> <small className="muted">{x.trainings} séances</small>
+                  <Pct v={x.attendance} />
                 </td>
                 <td className="hide-mobile">
                   <Spark values={x.attendanceTrend} />
-                </td>
-                <td>
-                  <Pct v={x.onTime} good={90} ok={70} /> <small className="muted">{x.matches} matchs</small>
-                </td>
-                <td className="hide-mobile">
-                  <Pct v={x.responseRate} />
                 </td>
                 <td>
                   <Gauge value={x.equity} size={40} />
@@ -150,23 +133,22 @@ function Overview() {
           </tbody>
         </table>
       </div>
-      <p className="small muted">
-        Présence : part des joueurs présents aux séances dont l’appel a été fait. Convocations à l’heure : publiées avant la date limite fixée pour chaque match. Équité : répartition des matchs joués entre les enfants.
-      </p>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ effectif */
 
-const LIC = { ok: { label: 'Validée', tone: 'green' }, pending: { label: 'En cours', tone: 'warn' }, missing: { label: 'À faire', tone: 'red' } } as const;
+const LIC = { ok: { label: 'Validée', tone: 'green' }, pending: { label: 'En cours', tone: 'warn' }, missing: { label: 'Pas de licence', tone: 'red' } } as const;
 
 function csvCell(v: string) {
   return /[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 
 function Roster() {
-  const { me } = useApp();
+  const { me, can } = useApp();
+  const file = useRef<HTMLInputElement>(null);
+  const [csv, setCsv] = useState<string | null>(null);
   const q = useAsync(() => api.get<RosterRow[]>('/club/roster'), []);
   const [search, setSearch] = useState('');
   const [team, setTeam] = useState<string>('');
@@ -209,10 +191,33 @@ function Roster() {
             </option>
           ))}
         </select>
-        <button className="btn" onClick={exportCsv}>
-          <Download /> Exporter
-        </button>
+        <div className="row" style={{ gap: 6 }}>
+          <button className="btn icon" onClick={exportCsv} data-tip="Exporter en CSV" aria-label="Exporter en CSV">
+            <Download />
+          </button>
+          {can('players.manage') && (
+            <button className="btn icon" onClick={() => file.current?.click()} data-tip="Importer un fichier CSV" aria-label="Importer un fichier CSV">
+              <Upload />
+            </button>
+          )}
+        </div>
+        <input
+          ref={file}
+          type="file"
+          accept=".csv,text/csv,.txt"
+          hidden
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) setCsv(await f.text());
+          }}
+        />
       </div>
+      {csv !== null && (
+        <Sheet title="Importer des joueurs" wide onClose={() => setCsv(null)}>
+          <Import text={csv} onDone={q.reload} />
+        </Sheet>
+      )}
       <p className="small muted">
         {rows.length} joueur{rows.length > 1 ? 's' : ''}
       </p>
@@ -226,7 +231,7 @@ function Roster() {
                   {r.lastName.toUpperCase()} {r.firstName}
                 </b>
                 <small>
-                  {r.birthYear ?? '—'}
+                  {r.licence.number ? <span className="mono">{r.licence.number}</span> : 'Licence non renseignée'}
                   {r.number !== null ? ` · n° ${r.number}` : ''}
                   {r.allergies ? ` · ⚠️ ${r.allergies}` : ''}
                 </small>
@@ -234,7 +239,6 @@ function Roster() {
             </Link>
             <div className="roster-admin">
               <span className={`badge ${LIC[r.licence.status].tone}`}>{LIC[r.licence.status].label}</span>
-              {r.licence.number && <small className="mono">{r.licence.number}</small>}
               {r.photoConsent === 'no' && <span className="badge red">🚫 Photos</span>}
             </div>
             <div className="roster-parents">
@@ -273,7 +277,7 @@ function Roster() {
   );
 }
 
-/* ------------------------------------------------------------------ import SportEasy */
+/* ------------------------------------------------------------------ import CSV */
 
 const FIELDS = [
   { key: 'firstName', label: 'Prénom', test: /pr[ée]nom|first/i },
@@ -318,38 +322,35 @@ function parseCsv(text: string) {
   return rows;
 }
 
-function Import() {
-  const { me } = useApp();
+function detectColumns(h: string[]) {
+  const m: Record<string, number> = {};
+  // Les colonnes les plus spécifiques d'abord (« E-mail du responsable » est un e-mail, pas un nom).
+  const order = ['firstName', 'lastName', 'licence', 'parentEmail', 'parentPhone', 'birthDate', 'parentName', 'number'];
+  for (const f of [...FIELDS].sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))) {
+    const i = h.findIndex((c, idx) => f.test.test(c) && !Object.values(m).includes(idx));
+    if (i >= 0) m[f.key] = i;
+  }
+  return m;
+}
+
+function Import({ text, onDone }: { text: string; onDone: () => void }) {
+  const { me, team } = useApp();
   const toast = useToast();
-  const file = useRef<HTMLInputElement>(null);
-  const [teamId, setTeamId] = useState(me.teams[0]?.id ?? '');
-  const [raw, setRaw] = useState('');
-  const [map, setMap] = useState<Record<string, number>>({});
+  const [teamId, setTeamId] = useState(team?.id ?? me.teams[0]?.id ?? '');
+  const raw = text.replace(/^\uFEFF/, '');
+  const [map, setMap] = useState<Record<string, number>>(() => detectColumns(parseCsv(raw)[0] ?? []));
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ created: number; updated: number; linked: number; invited: number; skipped: number; invites: { email: string; name: string; token: string }[] } | null>(null);
-  const table = useMemo(() => parseCsv(raw.replace(/^﻿/, '')), [raw]);
+  const table = useMemo(() => parseCsv(raw), [raw]);
   const header = table[0] ?? [];
   const body = table.slice(1);
-
-  const load = (text: string) => {
-    setRaw(text);
-    setResult(null);
-    const h = parseCsv(text.replace(/^﻿/, ''))[0] ?? [];
-    const m: Record<string, number> = {};
-    // Les colonnes les plus spécifiques d'abord (« E-mail du responsable » est un e-mail, pas un nom).
-    const order = ['firstName', 'lastName', 'licence', 'parentEmail', 'parentPhone', 'birthDate', 'parentName', 'number'];
-    for (const f of [...FIELDS].sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))) {
-      const i = h.findIndex((c, idx) => f.test.test(c) && !Object.values(m).includes(idx));
-      if (i >= 0) m[f.key] = i;
-    }
-    setMap(m);
-  };
   const rows = body.map((r) => Object.fromEntries(FIELDS.map((f) => [f.key, map[f.key] !== undefined ? r[map[f.key]] ?? '' : ''])));
   const go = async () => {
     setBusy(true);
     try {
       setResult(await api.post('/club/import', { teamId, rows }));
       toast('Import terminé');
+      onDone();
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
@@ -358,46 +359,21 @@ function Import() {
   };
 
   return (
-    <div className="stack" style={{ gap: 16, maxWidth: 900 }}>
-      <div className="card pad import-hero">
-        <span className="import-ic">
-          <FileUp />
-        </span>
-        <div className="grow">
-          <b>Migrer depuis SportEasy en 2 minutes</b>
-          <p className="small muted">
-            Dans SportEasy : <b>Équipe › Effectif › Exporter</b> (fichier Excel ou CSV). Enregistrez-le en CSV puis déposez-le ici, ou copiez-collez les lignes du tableur. Les parents
-            déjà inscrits sont rattachés automatiquement (un seul compte pour les frères et sœurs), les autres reçoivent une invitation.
-          </p>
-        </div>
-      </div>
-      <div className="row wrap" style={{ gap: 10 }}>
-        <Field label="Équipe">
-          <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-            {me.teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.category}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <span className="grow" />
-        <button className="btn" style={{ alignSelf: 'flex-end' }} onClick={() => file.current?.click()}>
-          <Upload /> Choisir un fichier CSV
-        </button>
-        <input
-          ref={file}
-          type="file"
-          accept=".csv,text/csv,.txt"
-          hidden
-          onChange={async (e) => {
-            const f = e.target.files?.[0];
-            e.target.value = '';
-            if (f) load(await f.text());
-          }}
-        />
-      </div>
-      <textarea className="textarea mono" rows={raw ? 4 : 7} placeholder={'Prénom;Nom;Date de naissance;Email;Téléphone;N° licence\nLéo;Martin;12/03/2018;parent@mail.fr;06 12 34 56 78;2548796541'} value={raw} onChange={(e) => load(e.target.value)} />
+    <div className="stack" style={{ gap: 16 }}>
+      <p className="small muted">
+        Vérifiez la correspondance des colonnes avant d’importer. Les parents déjà inscrits sont rattachés automatiquement (un seul compte pour les frères et sœurs), les autres reçoivent
+        une invitation.
+      </p>
+      <Field label="Équipe">
+        <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+          {me.teams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.category}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {!header.length && <Empty title="Fichier vide" text="Aucune ligne n’a pu être lue dans ce fichier." />}
 
       {header.length > 0 && (
         <>
