@@ -26,6 +26,17 @@ const addDays = (d: Date, n: number) => {
   return r;
 };
 
+/** Décale une date AAAA-MM-JJ de `n` jours. */
+export function shiftYMD(ymd: string, n: number) {
+  return toYMD(addDays(fromYMD(ymd), n));
+}
+
+/** Lundi de la semaine d'une date (AAAA-MM-JJ). */
+export function mondayOf(ymd: string) {
+  const d = fromYMD(ymd);
+  return toYMD(addDays(d, -((d.getDay() + 6) % 7)));
+}
+
 /** Dates (AAAA-MM-JJ) d'un événement comprises entre from et to inclus. */
 export function occurrences(e: TeamEvent, from: string, to: string): string[] {
   const r = e.recurrence ?? { freq: 'none', interval: 1, days: [], until: null, count: null };

@@ -46,15 +46,15 @@ export function ConvocationPage() {
   if (q.error || !q.data)
     return (
       <div className="page">
-        <Empty title="Match introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/matchs">Retour</Link>} />
+        <Empty title="Match introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/">Retour au calendrier</Link>} />
       </div>
     );
   if (q.data.kind === 'parent') {
     if (packFirst) return <Spinner fill />;
     return (
       <div className="page narrow">
-        <Link to="/matchs" className="back">
-          <ArrowLeft size={15} /> Matchs
+        <Link to="/" className="back">
+          <ArrowLeft size={15} /> Calendrier
         </Link>
         <div className="stack" style={{ gap: 18 }}>
           {q.data.tickets.map((t) => (
@@ -398,8 +398,8 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
 
   return (
     <div className={`page wide${played ? ' played-page' : ''}`}>
-      <Link to="/matchs" className="back">
-        <ArrowLeft size={15} /> Matchs
+      <Link to="/" className="back">
+        <ArrowLeft size={15} /> Calendrier
       </Link>
       <div className="cv-head">
         <div className="tk-date big">

@@ -1,27 +1,17 @@
-import { CalendarPlus, ChevronRight, Megaphone, Plus, Trophy } from 'lucide-react';
+import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { PushCard } from '../components/Notifications';
-import { MatchTicket } from '../components/Tickets';
-import { Empty, Seg, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Seg, Spinner, useAsync } from '../components/ui';
 import { TeamBadge } from '../components/Layout';
 import { api } from '../lib/api';
 import { PHASE, countdown, matchPath, momentLabel } from '../lib/convocations';
-import { EventForm } from '../components/Calendar';
-import { MatchActions, useMatchMenu, type MatchRef } from '../components/MatchActions';
-import { MONTHS_TILE, formatTime, fromYMD, toYMD } from '../lib/events';
+import { useMatchMenu } from '../components/MatchActions';
+import { MONTHS_TILE, formatTime, fromYMD } from '../lib/events';
 import { useLive } from '../lib/live';
 import { playerName, useApp } from '../lib/store';
-import type { ConvSnapshot, TeamEvent, TeamStats, Ticket } from '../lib/types';
+import type { ConvSnapshot, TeamStats, Ticket } from '../lib/types';
 import { Gauge } from './Convocation';
-import { MatchShowcase } from '../components/MatchShowcase';
-import { WeekTimeline } from '../components/WeekTimeline';
 import { groupsOf } from '../lib/groups';
-
-export function Matches() {
-  const { isStaff } = useApp();
-  return isStaff ? <StaffMatches /> : <ParentMatches />;
-}
 
 /* ------------------------------------------------------------------ parents */
 
@@ -31,64 +21,7 @@ export function useTickets() {
   return q;
 }
 
-function ParentMatches() {
-  const q = useTickets();
-  const now = Date.now();
-  const isPast = (t: Ticket) => !!t.result || t.timeline.start + 3 * 3600e3 <= now;
-  const upcoming = (q.data ?? []).filter((t) => !isPast(t));
-  const past = (q.data ?? []).filter(isPast).sort((a, b) => b.date.localeCompare(a.date));
-  const pastGroups = Object.entries(past.reduce<Record<string, Ticket[]>>((groups, t) => {
-    const key = new Set(past.filter((x) => x.result).map((x) => `${x.eventId}:${x.date}`)).size > 3 ? t.date.slice(0, 7) : 'all';
-    (groups[key] ??= []).push(t); return groups;
-  }, {}));
-  const multi = new Set((q.data ?? []).map((t) => t.child.id)).size > 1;
-  // Un match par diapositive, même si plusieurs enfants y sont attendus.
-  const showcase = [...new Map(upcoming.map((t) => [`${t.eventId}:${t.date}`, t])).values()].slice(0, 5);
-  return (
-    <div className="page narrow">
-      <div className="page-head">
-        <h1>Matchs</h1>
-      </div>
-      <MatchShowcase matches={showcase} />
-      <div style={{ marginBottom: 18 }}>
-        <PushCard compact />
-      </div>
-      {q.loading && !q.data ? (
-        <Spinner fill />
-      ) : upcoming.length ? (
-        <div className="stack" style={{ gap: 18 }}>
-          {upcoming.map((t) => (
-            <MatchTicket key={t.key} t={t} onChanged={q.reload} showChild={multi} />
-          ))}
-        </div>
-      ) : (
-        <div className="card">
-          <Empty icon={<Trophy />} title="Pas de match prévu" text="Les prochains matchs apparaîtront ici dès que l’éducateur les aura programmés." />
-        </div>
-      )}
-      {past.length > 0 && (
-        <>
-          <div className="section-title" style={{ marginTop: 32 }}>
-            Derniers matchs
-          </div>
-          <div className="stack" style={{ gap: 18 }}>
-            {pastGroups.map(([month, matches]) => <section className="match-month" key={month}>
-              {month !== 'all' && <h3>{new Date(`${month}-01T12:00:00`).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</h3>}
-              <div className="stack">{matches.map((t) => <Link className="conv-card phase-played" key={t.key} to={matchPath(t.eventId, t.date)}>
-                <div className="grow"><b>{t.title}</b><small className="muted">{fromYMD(t.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}{multi ? ` · ${t.child.firstName}` : ''}</small></div>
-                <div className="conv-card-side match-card-scores">{t.result?.games?.length ? t.result.games.map((g) => <strong key={g.id} title={g.opponent}>{g.us === null ? '–' : `${g.us}-${g.them}`}</strong>) : <strong>{t.result ? `${t.result.us}-${t.result.them}` : '–'}</strong>}</div>
-              </Link>)}</div>
-            </section>)}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ éducateurs */
-
-type Tab = 'matchs' | 'equite';
 
 /** Équipe U8/U9 : la catégorie affichée (dans l'adresse, ?cat=U9). */
 function useGroup() {
@@ -107,102 +40,37 @@ function useGroup() {
 
 const withGroup = (url: string, group: string | null) => (group ? `${url}${url.includes('?') ? '&' : '?'}group=${group}` : url);
 
-function StaffMatches() {
-  const { team, can } = useApp();
-  const toast = useToast();
-  const confirm = useConfirm();
-  const [params, setParams] = useSearchParams();
+/** Temps de jeu : équité des convocations et minutes jouées, par catégorie (U8, U9…). */
+export function PlayingTime() {
+  const { team } = useApp();
   const { groups, group, setGroup } = useGroup();
-  const tabs: { value: Tab; label: string }[] = [
-    { value: 'matchs', label: 'Convocations' },
-    { value: 'equite', label: 'Temps de jeu' },
-  ];
-  const tab = tabs.find((t) => t.value === params.get('vue'))?.value ?? 'matchs';
-  const canEdit = can('events.manage');
-  // Formulaire ouvert : nouveau match, ou match existant (clic droit › Modifier).
-  const [form, setForm] = useState<{ event?: TeamEvent; date: string } | null>(null);
-  // Recharge les listes après une création, une modification ou une suppression.
-  const [version, setVersion] = useState(0);
-  const refresh = () => setVersion((v) => v + 1);
-
-  const eventOf = async (m: MatchRef) => {
-    const list = await api.get<TeamEvent[]>(`/teams/${team!.id}/events`);
-    const e = list.find((x) => x.id === m.eventId);
-    if (!e) throw new Error('Match introuvable');
-    return e;
-  };
-  const actions = {
-    edit: async (m: MatchRef) => {
-      try {
-        setForm({ event: await eventOf(m), date: m.date });
-      } catch (e) {
-        toast((e as Error).message, true);
-      }
-    },
-    remove: async (m: MatchRef) => {
-      try {
-        const e = await eventOf(m);
-        if (e.recurrence.freq !== 'none') {
-          const onlyThis = await confirm({ title: 'Match récurrent', text: 'Supprimer uniquement cette date, ou toute la série ?', confirm: 'Cette date seulement' });
-          if (onlyThis) await api.put(`/events/${e.id}`, { ...e, exdates: [...e.exdates, m.date] });
-          else if (await confirm({ title: 'Supprimer toute la série ?', confirm: 'Supprimer la série', danger: true })) await api.del(`/events/${e.id}`);
-          else return;
-        } else {
-          if (!(await confirm({ title: 'Supprimer ce match ?', text: 'La convocation et les réponses des parents seront effacées.', confirm: 'Supprimer', danger: true }))) return;
-          await api.del(`/events/${e.id}`);
-        }
-        toast('Match supprimé');
-        refresh();
-      } catch (e) {
-        toast((e as Error).message, true);
-      }
-    },
-  };
-
   return (
-    <MatchActions.Provider value={canEdit && team ? actions : null}>
-      <div className="page">
-        <div className="page-head">
-          <div>
-            <h1>Matchs</h1>
-            <div className="sub">{groups.length ? `${team?.category} · matchs, convocations et statistiques séparés par catégorie` : team?.category}</div>
-          </div>
-          <div className="actions">
-            {groups.length > 0 && <Seg value={group!} onChange={setGroup} options={groups.map((g) => ({ value: g, label: g }))} />}
-            <Seg
-              value={tab}
-              onChange={(v) => setParams(() => {
-                const n = new URLSearchParams();
-                if (v !== 'matchs') n.set('vue', v);
-                if (group) n.set('cat', group);
-                return n;
-              })}
-              options={tabs}
-            />
-            {canEdit && team && (
-              <button className="btn primary" onClick={() => setForm({ date: toYMD(new Date()) })}>
-                <Plus /> Nouveau match
-              </button>
-            )}
-          </div>
+    <div className="page">
+      <Link to="/" className="back">
+        <ArrowLeft size={15} /> Calendrier
+      </Link>
+      <div className="page-head">
+        <div>
+          <h1>Temps de jeu</h1>
+          <div className="sub">{team?.category}{groups.length ? ' · statistiques séparées par catégorie' : ''} · équité des convocations et minutes jouées</div>
         </div>
-        {tab === 'matchs' && <ConvList key={`${group ?? ''}:${version}`} group={group} />}
-        {tab === 'equite' && <Equity key={`${group ?? ''}:${version}`} group={group} />}
+        {groups.length > 0 && (
+          <div className="actions">
+            <Seg value={group!} onChange={setGroup} options={groups.map((g) => ({ value: g, label: g }))} />
+          </div>
+        )}
       </div>
-      {form && team && (
-        <EventForm
-          teamId={team.id}
-          date={form.date}
-          event={form.event}
-          occurrence={form.event ? form.date : undefined}
-          initialType="match"
-          initialGroup={group}
-          onClose={() => setForm(null)}
-          onSaved={() => (setForm(null), refresh())}
-        />
-      )}
-    </MatchActions.Provider>
+      <Equity key={group ?? ''} group={group} />
+    </div>
   );
+}
+
+/** Ancienne page Matchs : tout est désormais dans le calendrier (le temps de jeu a sa page). */
+export function MatchesRedirect() {
+  const [params] = useSearchParams();
+  const cat = params.get('cat');
+  if (params.get('vue') === 'equite') return <Navigate to={`/temps-de-jeu${cat ? `?cat=${cat}` : ''}`} replace />;
+  return <Navigate to="/" replace />;
 }
 
 function DateTile({ date }: { date: string }) {
@@ -273,74 +141,6 @@ export function ConvCard({ c, showTeam }: { c: ConvSnapshot; showTeam?: boolean 
       <ChevronRight className="hide-mobile" color="var(--ink-3)" />
     </button>
     </>
-  );
-}
-
-function ConvList({ group }: { group: string | null }) {
-  const { team } = useApp();
-  const q = useAsync(() => (team ? api.get<ConvSnapshot[]>(withGroup(`/teams/${team.id}/convocations`, group)) : Promise.resolve([])), [team?.id, group]);
-  // La frise remonte au début de la saison pour retrouver le dernier match joué.
-  const season = useAsync(() => (team ? api.get<ConvSnapshot[]>(withGroup(`/teams/${team.id}/convocations?past=1`, group)) : Promise.resolve([])), [team?.id, group]);
-  useLive((m) => m.t === 'conv' && (q.reload(), season.reload()));
-  const now = Date.now();
-  const list = q.data ?? [];
-  const todo = list.filter((c) => c.timeline.start > now && ['collecting', 'late', 'upcoming'].includes(c.phase));
-  const ready = list.filter((c) => c.timeline.start > now && c.phase === 'published');
-  const past = (season.data ?? list).filter((c) => c.timeline.start <= now || c.phase === 'played').sort((a, b) => b.date.localeCompare(a.date));
-  const pastGroups = Object.entries(past.reduce<Record<string, ConvSnapshot[]>>((groups, c) => { const month = past.filter((x) => x.phase === 'played').length > 3 ? c.date.slice(0, 7) : 'all'; (groups[month] ??= []).push(c); return groups; }, {}));
-  const coming = list.filter((c) => c.timeline.start > now && c.phase !== 'played').slice(0, 5);
-  if (q.loading && !q.data) return <Spinner fill />;
-  if (!list.length)
-    return (
-      <div className="card">
-        <Empty
-          icon={<Megaphone />}
-          title={group ? `Aucun match ${group} programmé` : 'Aucun match programmé'}
-          text="Ajoutez un match, un plateau ou un tournoi dans le calendrier : la convocation se prépare toute seule (disponibilités, relances, date limite)."
-          action={
-            <Link className="btn primary" to="/">
-              <CalendarPlus /> Ouvrir le calendrier
-            </Link>
-          }
-        />
-      </div>
-    );
-  return (
-    <div className="stack" style={{ gap: 28 }}>
-      <MatchShowcase matches={coming} />
-      <WeekTimeline list={season.data ?? list} />
-      {todo.length > 0 && (
-        <section>
-          <div className="section-title">À préparer</div>
-          <div className="stack" style={{ gap: 10 }}>
-            {todo.map((c) => (
-              <ConvCard key={`${c.eventId}:${c.date}`} c={c} />
-            ))}
-          </div>
-        </section>
-      )}
-      {ready.length > 0 && (
-        <section>
-          <div className="section-title">Convocations publiées</div>
-          <div className="stack" style={{ gap: 10 }}>
-            {ready.map((c) => (
-              <ConvCard key={`${c.eventId}:${c.date}`} c={c} />
-            ))}
-          </div>
-        </section>
-      )}
-      {past.length > 0 && (
-        <section>
-          <div className="section-title">Joués</div>
-          <div className="stack" style={{ gap: 10 }}>
-            {pastGroups.map(([month, matches]) => <section className="match-month" key={month}>
-              {month !== 'all' && <h3>{new Date(`${month}-01T12:00:00`).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</h3>}
-              <div className="match-card-grid">{matches!.map((c) => <ConvCard key={`${c.eventId}:${c.date}`} c={c} />)}</div>
-            </section>)}
-          </div>
-        </section>
-      )}
-    </div>
   );
 }
 

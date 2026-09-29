@@ -5,7 +5,6 @@ import { MONTHS_LONG, formatTime, fromYMD, relativeDay } from '../lib/events';
 import { useApp } from '../lib/store';
 import type { ConvEventInfo } from '../lib/types';
 import { useMatchMenu } from './MatchActions';
-import { Showcase } from './Showcase';
 
 const WD = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 
@@ -48,17 +47,24 @@ export function Crest({ name, color }: { name: string; color?: string }) {
   );
 }
 
-type MatchInfo = Pick<ConvEventInfo, 'eventId' | 'date' | 'teamId' | 'title' | 'time' | 'location' | 'group' | 'organizer' | 'logo' | 'venue' | 'opponent'>;
+export type MatchInfo = Pick<ConvEventInfo, 'eventId' | 'date' | 'teamId' | 'title' | 'time' | 'location' | 'group' | 'organizer' | 'logo' | 'venue' | 'opponent'>;
 
-/** Diapositive d'un match : titre et lieu à gauche, logo du club organisateur à droite, fondus l'un dans l'autre. */
-function MatchSlide({ m }: { m: MatchInfo }) {
-  const nav = useNavigate();
+/** Club organisateur d'un match, son logo (ou celui du club à domicile) et la couleur de l'écusson de repli. */
+export function useMatchCrest(m: Pick<MatchInfo, 'teamId' | 'venue' | 'organizer' | 'opponent' | 'logo'>) {
   const { me } = useApp();
   const team = me.teams.find((t) => t.id === m.teamId);
   const home = m.venue === 'home';
   const organizer = m.organizer || (home ? me.club?.name ?? '' : m.opponent) || '';
   const logo = m.logo ?? (home ? me.club?.logo ?? null : null);
   const crestColor = home ? team?.color : undefined;
+  const halo = logo ? null : `radial-gradient(closest-side, ${crestColor ?? `hsl(${hue(organizer || 'Club')} 55% 42%)`}, transparent)`;
+  return { organizer, logo, crestColor, halo, fallback: organizer || team?.category || 'Club' };
+}
+
+/** Diapositive d'un match : titre et lieu à gauche, logo du club organisateur à droite, fondus l'un dans l'autre. */
+export function MatchSlide({ m, eyebrow, action }: { m: MatchInfo; /** Remplace la date en tête (accueil). */ eyebrow?: React.ReactNode; action?: string }) {
+  const nav = useNavigate();
+  const { organizer, logo, crestColor, halo, fallback } = useMatchCrest(m);
   const open = () => nav(matchPath(m.eventId, m.date));
   const { bind, menu } = useMatchMenu(m);
 
@@ -68,8 +74,12 @@ function MatchSlide({ m }: { m: MatchInfo }) {
       <div className="hero2-text">
         <div className="hs-eyebrow">
           {m.group && <b className="ms-group">{m.group}</b>}
-          {dayLine(m.date)}
-          {m.time ? ` · ${formatTime(m.time)}` : ''}
+          {eyebrow ?? (
+            <>
+              {dayLine(m.date)}
+              {m.time ? ` · ${formatTime(m.time)}` : ''}
+            </>
+          )}
         </div>
         <h1 onClick={open} style={{ cursor: 'pointer' }}>
           {m.title}
@@ -81,7 +91,7 @@ function MatchSlide({ m }: { m: MatchInfo }) {
             </span>
           )}
           <button className="btn lime" onClick={open}>
-            Plus d’infos
+            {action ?? 'Plus d’infos'}
           </button>
         </div>
       </div>
@@ -89,21 +99,10 @@ function MatchSlide({ m }: { m: MatchInfo }) {
         {/* Halo : le logo agrandi et flouté (ou la couleur de l'écusson) teinte le côté droit et se fond dans le texte. */}
         <div
           className="ms-halo"
-          style={logo ? { backgroundImage: `url(${logo})` } : { background: `radial-gradient(closest-side, ${crestColor ?? `hsl(${hue(organizer || 'Club')} 55% 42%)`}, transparent)` }}
+          style={logo ? { backgroundImage: `url(${logo})` } : { background: halo! }}
         />
-        <div className="ms-logo">{logo ? <img src={logo} alt={organizer} /> : <Crest name={organizer || team?.category || 'Club'} color={crestColor} />}</div>
+        <div className="ms-logo">{logo ? <img src={logo} alt={organizer} /> : <Crest name={fallback} color={crestColor} />}</div>
       </div>
     </div>
-  );
-}
-
-/** Prochains matchs en diapositives. */
-export function MatchShowcase({ matches }: { matches: MatchInfo[] }) {
-  if (!matches.length) return null;
-  return (
-    <Showcase
-      className="match-showcase"
-      slides={matches.map((m) => ({ key: `${m.eventId}:${m.date}`, node: <MatchSlide m={m} /> }))}
-    />
   );
 }

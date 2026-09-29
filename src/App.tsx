@@ -7,11 +7,10 @@ import { AppProvider, useApp } from './lib/store';
 import type { Me } from './lib/types';
 import { Album } from './pages/Album';
 import { AnnouncementPage, Announcements } from './pages/Announcements';
-import { CalendarPage } from './pages/CalendarPage';
 import { Club } from './pages/Club';
 import { Answer } from './pages/Answer';
 import { ConvocationPage } from './pages/Convocation';
-import { Matches } from './pages/Matches';
+import { MatchesRedirect, PlayingTime } from './pages/Matches';
 import { Messages } from './pages/Messages';
 import { MatchLive } from './pages/MatchLive';
 import { PublicReveal, RevealPage } from './pages/Reveal';
@@ -23,7 +22,6 @@ import { Library } from './pages/Library';
 import { Live } from './pages/Live';
 import { PlayerPage } from './pages/PlayerPage';
 import { Players } from './pages/Players';
-import { SessionsPage } from './pages/Sessions';
 import { PublicTraining } from './pages/PublicTraining';
 import { TrainingPage } from './pages/TrainingPage';
 
@@ -104,14 +102,15 @@ function AppRoutes() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
-        <Route path="seances" element={<SessionsPage />} />
+        {/* Séances, matchs et calendrier sont réunis dans le calendrier de l'accueil. */}
+        <Route path="seances" element={<Navigate to="/" replace />} />
         <Route path="album" element={<Album />} />
-        <Route path="calendrier" element={<CalendarPage />} />
+        <Route path="calendrier" element={<Navigate to="/?vue=mois" replace />} />
         <Route path="seances/:id" element={<TrainingPage />} />
         <Route path="parametres" element={<Settings />} />
         <Route path="compte" element={<Navigate to="/parametres" replace />} />
         <Route path="exercices" element={<Library />} />
-        <Route path="matchs" element={<Matches />} />
+        <Route path="matchs" element={<MatchesRedirect />} />
         <Route path="messages" element={<Messages />} />
         <Route path="annonces" element={<Announcements />} />
         <Route path="annonces/:id" element={<AnnouncementPage />} />
@@ -121,6 +120,7 @@ function AppRoutes() {
           <>
             <Route path="joueurs" element={<Players />} />
             <Route path="club" element={<Club />} />
+            <Route path="temps-de-jeu" element={<PlayingTime />} />
             <Route path="admin" element={<Navigate to="/parametres?tab=membres" replace />} />
           </>
         )}

@@ -1,4 +1,4 @@
-import { Building2, Check, CalendarDays, CloudOff, Images, LayoutGrid, LogOut, MessageCircle, Settings, Trophy, UserRound, Users } from 'lucide-react';
+import { Building2, Check, CalendarDays, CloudOff, Images, LayoutGrid, LogOut, MessageCircle, Settings, UserRound, Users } from 'lucide-react';
 import { useChatUnread } from '../pages/Messages';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
@@ -122,7 +122,7 @@ function DockLink({ to, tip, icon, active, badge }: { to: string; tip: string; i
   );
 }
 
-/** Barre d'outils flottante : Équipe | Séances · Exercices · Joueurs | Album souvenir. */
+/** Barre d'outils flottante : Équipe | Calendrier · Exercices · Joueurs · Messages | Album souvenir. */
 function Dock() {
   const { me, team, isStaff } = useApp();
   const loc = useLocation();
@@ -141,7 +141,8 @@ function Dock() {
     };
   }, [open]);
 
-  const onSessions = loc.pathname === '/' || loc.pathname.startsWith('/seances');
+  // Le calendrier réunit séances et matchs : il reste allumé sur leurs pages.
+  const onCalendar = loc.pathname === '/' || ['/seances', '/matchs', '/temps-de-jeu'].some((p) => loc.pathname.startsWith(p));
   const unread = useChatUnread();
   const messages = <DockLink to="/messages" tip="Messages" icon={<MessageCircle />} active={loc.pathname.startsWith('/messages') || loc.pathname.startsWith('/annonces')} badge={unread} />;
   const child = me.children.find((c) => c.teamId === team?.id) ?? me.children[0];
@@ -155,17 +156,15 @@ function Dock() {
       </div>
       {open && <TeamMenu onClose={() => setOpen(false)} />}
       <div className="dock-group">
-        <DockLink to="/" tip="Séances" icon={<CalendarDays />} active={onSessions} />
+        <DockLink to="/" tip="Calendrier" icon={<CalendarDays />} active={onCalendar} />
         {isStaff ? (
           <>
             <DockLink to="/exercices" tip="Exercices" icon={<LayoutGrid />} active={loc.pathname.startsWith('/exercices')} />
-            <DockLink to="/matchs" tip="Matchs" icon={<Trophy />} active={loc.pathname.startsWith('/matchs')} />
             <DockLink to="/joueurs" tip="Joueurs" icon={<Users />} active={loc.pathname.startsWith('/joueurs')} />
             {messages}
           </>
         ) : (
           <>
-            <DockLink to="/matchs" tip="Matchs" icon={<Trophy />} active={loc.pathname.startsWith('/matchs')} />
             <DockLink to="/exercices" tip="Exercices" icon={<LayoutGrid />} active={loc.pathname.startsWith('/exercices')} />
             {child && <DockLink to={`/joueurs/${child.id}`} tip={child.firstName} icon={<UserRound />} />}
             {messages}

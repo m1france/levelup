@@ -3,7 +3,7 @@ import {
   Play, Plus, Printer, RefreshCw, Repeat, Snowflake, Swords, Target, Trash2, X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ItemIcon } from '../components/ItemIcon';
 import { ExercisePlayer, LivePitch, Presenter, SceneThumb } from '../components/Pitch';
 import { Empty, Menu, Seg, Sheet, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
@@ -64,7 +64,7 @@ export function TrainingPage() {
   if (q.error || !q.data)
     return (
       <div className="page">
-        <Empty title="Séance introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/">Retour à l’accueil</Link>} />
+        <Empty title="Séance introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/">Retour au calendrier</Link>} />
       </div>
     );
   return planner ? <Planner key={q.data.training.id} data={q.data} /> : <TrainingView data={q.data} />;
@@ -79,7 +79,7 @@ export function TrainingView({ data, publicView }: { data: TrainingPayload; publ
     <div className={publicView ? 'public-wrap' : 'page'}>
       {!publicView && (
         <Link to="/" className="back">
-          <ArrowLeft size={15} /> Séances
+          <ArrowLeft size={15} /> Calendrier
         </Link>
       )}
       <div className="page-head">
@@ -173,7 +173,13 @@ function Planner({ data }: { data: TrainingPayload }) {
   const { can } = useApp();
   const [t, setT] = useState<Training>(data.training);
   const [exercises, setExercises] = useState<Record<string, Exercise>>(data.exercises);
-  const [picker, setPicker] = useState<Slot | 'new' | null>(null);
+  const loc = useLocation();
+  // Séance tout juste préparée depuis le calendrier : on arrive directement sur le choix des exercices.
+  const [picker, setPicker] = useState<Slot | 'new' | null>(() => ((loc.state as { pick?: boolean } | null)?.pick && !data.training.blocks.length ? 'new' : null));
+  useEffect(() => {
+    if ((loc.state as { pick?: boolean } | null)?.pick) nav(loc.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [present, setPresent] = useState<Exercise | null>(null);
   const [saving, setSaving] = useState<'saved' | 'saving' | 'error'>('saved');
   const [creating, setCreating] = useState(false);
@@ -320,7 +326,7 @@ function Planner({ data }: { data: TrainingPayload }) {
     <div className="page planner">
       <div className="row between no-print" style={{ marginBottom: 6 }}>
         <Link to="/" className="back" style={{ margin: 0 }}>
-          <ArrowLeft size={15} /> Séances
+          <ArrowLeft size={15} /> Calendrier
         </Link>
         <span className={`save-dot ${saving}`} title={saving === 'saving' ? 'Enregistrement…' : saving === 'error' ? 'Erreur d’enregistrement' : 'Enregistré'} />
       </div>
@@ -403,9 +409,14 @@ function Planner({ data }: { data: TrainingPayload }) {
 
       {empty ? (
         <div className="plan-empty">
-          <button className="btn primary lg" onClick={() => createAndEdit()} disabled={creating}>
-            <Plus /> Créer un exercice
-          </button>
+          <div className="plan-empty-actions">
+            <button className="btn primary lg" onClick={() => setPicker('new')}>
+              <LayoutGrid /> Choisir des exercices
+            </button>
+            <button className="btn lg" onClick={() => createAndEdit()} disabled={creating}>
+              <Plus /> Créer un exercice
+            </button>
+          </div>
         </div>
       ) : (
         <div className="plan-grid">

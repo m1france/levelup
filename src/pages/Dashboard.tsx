@@ -1,22 +1,26 @@
-import { CalendarClock, CalendarDays, Car, Check, ChevronRight, Eye, Megaphone, Play, Plus } from 'lucide-react';
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Car, Eye, Megaphone, Play, Plus, Timer } from 'lucide-react';
+import { Fragment, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LivePitch, SceneThumb, coverToExercise } from '../components/Pitch';
-import { Calendar, hasConv, usePrepareSession } from '../components/Calendar';
+import { LivePitch, coverToExercise } from '../components/Pitch';
+import { hasConv, usePrepareSession } from '../components/Calendar';
+import {
+  AgendaBoard, AgendaHistory, AgendaMatchActions, PlannedCard, SessionCard, useAgendaActions, useAgendaPrefs, type AgendaData,
+} from '../components/Agenda';
 import { PHASE, matchPath } from '../lib/convocations';
 import { GlassArt, HeroSlide, Showcase, type ShowcaseSlide } from '../components/Showcase';
+import { MatchSlide } from '../components/MatchShowcase';
 import { PlayerAvatar } from '../components/PlayerAvatar';
 import { PushCard } from '../components/Notifications';
 import { TicketRail } from '../components/Tickets';
-import { Spinner, useAsync, useToast } from '../components/ui';
-import { nextStep, useTickets } from './Matches';
+import { Spinner, useAsync } from '../components/ui';
+import { ConvCard, nextStep, useTickets } from './Matches';
 import { api } from '../lib/api';
+import { groupsOf } from '../lib/groups';
 import { useLive } from '../lib/live';
-import { MONTHS_LONG, MONTHS_TILE, agenda, formatTime, fromYMD, relativeDay, toYMD, type Agenda } from '../lib/events';
-import { dateTile, relative, todayISO, useApp } from '../lib/store';
+import { MONTHS_TILE, agenda, formatTime, fromYMD, relativeDay, toYMD } from '../lib/events';
+import { relative, todayISO, useApp } from '../lib/store';
 import type { Carpool, ConvSnapshot, ExerciseData, TeamEvent, Ticket, Training } from '../lib/types';
 import { HERO_PALETTE } from '../pitch/render';
-import { createTraining, totalMinutes } from './Trainings';
 
 /** Visuel de repli quand aucune séance n'existe encore : un « passe et suis » animé. */
 const DEMO: ExerciseData = {
@@ -75,113 +79,6 @@ function GlassDate({ date }: { date: string }) {
   );
 }
 
-export function SessionCard({ t, past, onClick }: { t: Training; past?: boolean; onClick: () => void }) {
-  const tile = dateTile(t.date);
-  const cover = useMemo(() => (t.cover ? coverToExercise(t.cover) : null), [t.cover]);
-  const done = !!t.attendance?.length;
-  return (
-    <div className={`s-card${past ? ' past' : ''}`} onClick={onClick}>
-      <div className="cover">
-        {cover ? <SceneThumb ex={cover} /> : <div className="cover-empty" />}
-        <span className="date-chip">
-          {tile.weekday} {tile.day} {tile.month}
-        </span>
-        {done && (
-          <span className="done-chip" title={`${t.attendance!.length} présents`}>
-            <Check size={14} strokeWidth={3} /> {t.attendance!.length}
-          </span>
-        )}
-      </div>
-      <b className="s-title">{t.title}</b>
-      <span className="s-meta">{totalMinutes(t)} min</span>
-    </div>
-  );
-}
-
-/** Séances regroupées par mois, en accordéon : le mois à gauche, une ligne pleine largeur avec ses séances. */
-export function MonthAccordion({
-  list, onOpen, wrap = (_, card) => card,
-}: {
-  list: Training[]; onOpen: (t: Training) => void;
-  /** Habille chaque carte (ex. menu contextuel de la page Séances). */
-  wrap?: (t: Training, card: ReactNode) => ReactNode;
-}) {
-  const groups = useMemo(() => {
-    const m = new Map<string, Training[]>();
-    for (const t of [...list].sort((a, b) => b.date.localeCompare(a.date))) {
-      const k = t.date.slice(0, 7);
-      m.set(k, [...(m.get(k) ?? []), t]);
-    }
-    return [...m];
-  }, [list]);
-  const current = todayISO().slice(0, 7);
-  const [open, setOpen] = useState<Set<string>>(() => new Set([groups.find(([k]) => k === current)?.[0] ?? groups[0]?.[0]].filter(Boolean) as string[]));
-  const today = todayISO();
-  return (
-    <div className="months">
-      {groups.map(([k, items]) => {
-        const [y, m] = k.split('-').map(Number);
-        const isOpen = open.has(k);
-        return (
-          <div key={k} className={`month-row${isOpen ? ' open' : ''}`}>
-            <button
-              className="month-head"
-              onClick={() => setOpen((o) => {
-                const n = new Set(o);
-                if (n.has(k)) n.delete(k);
-                else n.add(k);
-                return n;
-              })}
-              aria-expanded={isOpen}
-            >
-              <ChevronRight className="chev" />
-              <b>{MONTHS_LONG[m - 1].replace(/^./, (c) => c.toUpperCase())}</b>
-              <small>{y}</small>
-              <span className="rule" />
-              <small className="count">{items.length}</small>
-            </button>
-            {isOpen && (
-              <div className="month-line">
-                {items.map((t) => (
-                  <Fragment key={t.id}>{wrap(t, <SessionCard t={t} past={t.date.slice(0, 10) < today} onClick={() => onOpen(t)} />)}</Fragment>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Entraînement programmé dont la séance n'est pas encore préparée : la date est connue de tous, le contenu viendra. */
-export function PlannedCard({
-  it, canPrepare, onPrepare, meta = true,
-}: { it: Agenda; canPrepare: boolean; onPrepare: () => void; /** Heure et lieu sous le titre. */ meta?: boolean }) {
-  const tile = dateTile(`${it.date}T${it.time || '12:00'}`);
-  return (
-    <div className={`s-card planned${canPrepare ? '' : ' readonly'}`} onClick={canPrepare ? onPrepare : undefined} role={canPrepare ? 'button' : undefined}>
-      <div className="cover">
-        <div className="cover-planned">
-          <CalendarClock />
-          <span>{canPrepare ? 'Préparer la séance' : 'Séance bientôt en ligne'}</span>
-        </div>
-        <span className="date-chip">
-          {tile.weekday} {tile.day} {tile.month}
-        </span>
-      </div>
-      <b className="s-title">{it.event?.title || 'Entraînement'}</b>
-      {meta && (
-        <span className="s-meta">
-          {it.time ? formatTime(it.time) : 'Journée'}
-          {it.event?.endTime && it.time ? ` – ${formatTime(it.event.endTime)}` : ''}
-          {it.event?.location ? ` · ${it.event.location}` : ''}
-        </span>
-      )}
-    </div>
-  );
-}
-
 /** Prochain événement (calendrier ou séance) à partir de maintenant. */
 function nextItem(events: TeamEvent[], trainings: Training[]) {
   const now = new Date();
@@ -191,16 +88,20 @@ function nextItem(events: TeamEvent[], trainings: Training[]) {
   return agenda(events, trainings, from, to).find((it) => it.date > from || !it.time || it.time >= hm) ?? null;
 }
 
+/**
+ * Calendrier (accueil) : les diapositives de ce qui compte maintenant, puis le calendrier de l'équipe
+ * qui réunit entraînements, séances et matchs, les prochaines séances, les convocations et l'historique.
+ */
 export function Dashboard() {
   const { team, can, isStaff, me } = useApp();
   const nav = useNavigate();
-  const toast = useToast();
   const q = useAsync(async () => {
     if (!team) return null;
     const [trainings, events, convs] = await Promise.all([
       api.get<Training[]>(`/teams/${team.id}/trainings`),
       api.get<TeamEvent[]>(`/teams/${team.id}/events`),
-      isStaff ? api.get<ConvSnapshot[]>(`/teams/${team.id}/convocations`).catch(() => []) : Promise.resolve([] as ConvSnapshot[]),
+      // Toute la saison : les matchs joués rejoignent l'historique du calendrier.
+      isStaff ? api.get<ConvSnapshot[]>(`/teams/${team.id}/convocations?past=1`).catch(() => []) : Promise.resolve([] as ConvSnapshot[]),
     ]);
     return { trainings, events, convs };
   }, [team?.id]);
@@ -209,24 +110,23 @@ export function Dashboard() {
   const carpools = useAsync(() => api.get<Carpool[]>('/carpool-upcoming').catch(() => [] as Carpool[]), []);
   // Annonces du club non lues (salon Annonces de la messagerie).
   const freshAnns = (anns.data?.messages ?? []).filter((a) => a.unread).slice(0, 3);
-  // Séances créées ou modifiées par les autres éducateurs, et exercices de couverture.
+  // Séances créées ou modifiées par les autres éducateurs, exercices de couverture, matchs et convocations.
   useLive((m) => {
     if ((m.t === 'training' || m.t === 'exercise') && m.teamId === team?.id) q.reload();
-    if (m.t === 'conv' && isStaff) q.reload();
+    if (m.t === 'conv') q.reload();
     if (m.t === 'carpool') carpools.reload();
     if (m.t === 'chat' && m.threadId === anns.data?.threadId) anns.reload();
   });
 
-  const newTraining = async () => {
-    if (!team) return;
-    try {
-      nav(`/seances/${(await createTraining(team.id)).id}`);
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-
   const d = q.data;
+  const data = useMemo<AgendaData | null>(
+    () => (d ? { events: d.events, trainings: d.trainings, convs: d.convs, tickets: (tickets.data ?? []).filter((t) => t.teamId === team?.id) } : null),
+    [d, tickets.data, team?.id],
+  );
+  const prefs = useAgendaPrefs(groupsOf(team?.category));
+  const actions = useAgendaActions(team?.id ?? '', data, q.reload);
+  const prepare = usePrepareSession(team?.id ?? '');
+
   const { hero, upcoming } = pickHero(d?.trainings ?? []);
   const canPlan = isStaff && can('trainings.manage');
   const next = d ? nextItem(d.events, d.trainings) : null;
@@ -234,17 +134,16 @@ export function Dashboard() {
   const planned = d
     ? agenda(d.events.filter((e) => e.type === 'training'), d.trainings, todayISO(), toYMD(new Date(Date.now() + 28 * 864e5))).filter((it) => it.event && !it.training).slice(0, 8)
     : [];
-  const prepare = usePrepareSession(team?.id ?? '');
   const now = Date.now();
   // Éducateur : convocations à préparer dans les 10 prochains jours, en tête d'accueil.
-  const todo = (d?.convs ?? []).filter((c) => c.timeline.start > now && c.timeline.start - now < 10 * 864e5 && c.phase !== 'published');
+  const todo = (d?.convs ?? []).filter((c) => c.timeline.start > now && c.timeline.start - now < 10 * 864e5 && c.phase !== 'published' && c.phase !== 'played');
   // Parent : billets des prochains matchs (et le dernier résultat de moins de 2 jours).
   // Ce qui demande une action d'abord (répondre), puis les prochains matchs, puis les résultats récents.
   const rank = (t: Ticket) => (t.result ? 2 : t.status === 'to_answer' ? 0 : 1);
   const myTickets = (tickets.data ?? [])
     .filter((t) => t.timeline.start + 2 * 864e5 > now)
     .sort((a, b) => rank(a) - rank(b) || a.timeline.start - b.timeline.start)
-    .slice(0, 6);
+    .slice(0, 12);
 
   const action = hero ? (
     canPlan ? (
@@ -256,8 +155,8 @@ export function Dashboard() {
         <Eye /> Voir la séance
       </button>
     )
-  ) : canPlan ? (
-    <button className="btn lime" onClick={newTraining}>
+  ) : canPlan && actions.create ? (
+    <button className="btn lime" onClick={() => actions.create!(todayISO(), 'training')}>
       <Plus /> Créer une séance
     </button>
   ) : null;
@@ -266,6 +165,8 @@ export function Dashboard() {
   // le covoiturage d'un match juste après la diapositive de ce match.
   const when = (date: string, time?: string | null) => new Date(`${date.slice(0, 10)}T${time || '12:00'}`).getTime();
   const slides: (ShowcaseSlide & { at: number })[] = [];
+  /** Matchs qui ont déjà leur diapositive (convocation à préparer, réponse attendue). */
+  const covered = new Set<string>();
   for (const a of freshAnns) {
     const [first, ...rest] = a.preview.split('\n');
     const open = () => nav(`/messages/${anns.data?.threadId}`);
@@ -292,6 +193,7 @@ export function Dashboard() {
     const answered = c.counts.yes + c.counts.maybe + c.counts.no;
     const urgent = c.phase === 'late' || (c.phase === 'collecting' && c.timeline.deadline - now < 24 * 3600e3);
     const open = () => nav(matchPath(c.eventId, c.date));
+    covered.add(`${c.eventId}:${c.date}`);
     slides.push({
       at: when(c.date, c.time),
       key: `conv:${c.eventId}:${c.date}`,
@@ -336,6 +238,7 @@ export function Dashboard() {
   }
   for (const t of myTickets.filter((t) => t.status === 'to_answer' && t.timeline.start > now).slice(0, 2)) {
     const open = () => nav(matchPath(t.eventId, t.date));
+    covered.add(`${t.eventId}:${t.date}`);
     slides.push({
       at: when(t.date, t.time),
       key: `ticket:${t.key}`,
@@ -360,6 +263,18 @@ export function Dashboard() {
         />
       ),
     });
+  }
+  // Prochains matchs en grand, avec le logo du club organisateur (ceux qui n'ont pas déjà leur diapositive).
+  const comingMatches = [
+    ...new Map(
+      (isStaff ? (d?.convs ?? []).filter((c) => c.phase !== 'played') : myTickets.filter((t) => !t.result))
+        .filter((m) => m.timeline.start > now && !covered.has(`${m.eventId}:${m.date}`))
+        .sort((a, b) => a.timeline.start - b.timeline.start)
+        .map((m) => [`${m.eventId}:${m.date}`, m] as const),
+    ).values(),
+  ].slice(0, 2);
+  for (const m of comingMatches) {
+    slides.push({ at: when(m.date, m.time), key: `match:${m.eventId}:${m.date}`, node: <MatchSlide m={m} /> });
   }
   // Covoiturage : seulement quand une voiture est proposée ou qu'une famille cherche une place.
   // Les matchs déjà passés n'apparaissent pas dans les diapositives.
@@ -418,107 +333,142 @@ export function Dashboard() {
     ),
   });
 
+  // Convocations en cours (éducateurs), dans la catégorie choisie dans le calendrier.
+  const inGroup = (c: ConvSnapshot) => !prefs.group || !c.group || c.group === prefs.group;
+  const convTodo = (d?.convs ?? []).filter((c) => c.timeline.start > now && ['collecting', 'late', 'upcoming'].includes(c.phase) && inGroup(c));
+  const convReady = (d?.convs ?? []).filter((c) => c.timeline.start > now && c.phase === 'published' && inGroup(c));
+
+  const sessions = [
+    ...upcoming.map((t) => ({
+      at: t.date,
+      key: t.id,
+      node: actions.wrap(actions.itemOfTraining(t), <SessionCard t={t} onClick={() => nav(`/seances/${t.id}`)} />),
+    })),
+    ...planned.map((it) => ({
+      at: `${it.date}T${it.time || '12:00'}`,
+      key: it.key,
+      node: actions.wrap(it, <PlannedCard it={it} canPrepare={canPlan} onPrepare={() => void prepare(it)} />),
+    })),
+  ]
+    .sort((a, b) => a.at.localeCompare(b.at))
+    .slice(0, 8);
+
   return (
-    <div className="page home">
-      <div className="home-head">
-        <h1>Bonjour {me.user.name.split(' ')[0]}</h1>
-        {next && (
-          <button
-            className="next-ev"
-            onClick={() => (next.training ? nav(`/seances/${next.training.id}`) : next.event && hasConv(next.event) && nav(matchPath(next.event.id, next.date)))}
-          >
-            <i style={{ background: next.color }} />
-            <span>
-              <b>{relativeDay(next.date)}{next.time ? ` · ${formatTime(next.time)}` : ''}</b> : {next.title}
-            </span>
-          </button>
-        )}
-      </div>
-      {q.loading && !d ? (
-        <Spinner fill />
-      ) : (
-        <>
-          <Showcase slides={[...slides].sort((a, b) => a.at - b.at)} />
-          {!isStaff && me.children.length > 1 && (
-            <div className="family-strip">
-              {me.children.map((c) => {
-                const t = me.teams.find((x) => x.id === c.teamId);
-                return (
-                  <button key={c.id} onClick={() => nav(`/joueurs/${c.id}`)}>
-                    <PlayerAvatar player={c} size={40} />
-                    <span>
-                      <b>{c.firstName}</b>
-                      <small>{t?.category}</small>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+    <AgendaMatchActions actions={actions}>
+      <div className="page wide home">
+        <div className="home-head">
+          <h1>Bonjour {me.user.name.split(' ')[0]}</h1>
+          {next && (
+            <button
+              className="next-ev"
+              onClick={() => (next.training ? nav(`/seances/${next.training.id}`) : next.event && hasConv(next.event) && nav(matchPath(next.event.id, next.date)))}
+            >
+              <i style={{ background: next.color }} />
+              <span>
+                <b>{relativeDay(next.date)}{next.time ? ` · ${formatTime(next.time)}` : ''}</b> : {next.title}
+              </span>
+            </button>
           )}
-          {!isStaff && (
-            <section className="home-matches">
-              <PushCard compact />
-              {myTickets.length > 0 && (
-                <>
-                  <div className="sec-head">
-                    <h2>Prochains matchs</h2>
-                    <button className="plain-toggle" onClick={() => nav('/matchs')}>
-                      Tout voir
+        </div>
+        {q.loading && !d ? (
+          <Spinner fill />
+        ) : (
+          <>
+            <Showcase slides={[...slides].sort((a, b) => a.at - b.at)} />
+            {!isStaff && me.children.length > 1 && (
+              <div className="family-strip">
+                {me.children.map((c) => {
+                  const t = me.teams.find((x) => x.id === c.teamId);
+                  return (
+                    <button key={c.id} onClick={() => nav(`/joueurs/${c.id}`)}>
+                      <PlayerAvatar player={c} size={40} />
+                      <span>
+                        <b>{c.firstName}</b>
+                        <small>{t?.category}</small>
+                      </span>
                     </button>
-                  </div>
-                  <TicketRail tickets={myTickets} onChanged={tickets.reload} />
-                </>
-              )}
-            </section>
-          )}
-
-          {team && d && (
-            <section>
-              <Calendar teamId={team.id} events={d.events} trainings={d.trainings} canEdit={isStaff && can('events.manage')} onChanged={q.reload} onExpand={() => nav('/calendrier')} />
-            </section>
-          )}
-
-          <section>
-            <div className="sec-head">
-              <h2>Séances</h2>
-              <div className="row" style={{ gap: 4 }}>
-                <button className="plain-toggle hide-mobile" onClick={() => nav('/seances')} title="Toutes les séances, semaine par semaine, y compris les anciennes">
-                  <CalendarDays size={15} /> Toutes les séances
-                </button>
-                <button className="btn icon sm only-mobile" onClick={() => nav('/seances')} aria-label="Toutes les séances">
-                  <CalendarDays />
-                </button>
-                {canPlan && (
-                  <button className="btn icon sm only-mobile" onClick={newTraining} aria-label="Nouvelle séance">
-                    <Plus />
-                  </button>
-                )}
+                  );
+                })}
               </div>
-            </div>
-            {!upcoming.length && !planned.length && !canPlan && <p className="muted small">Aucune séance à venir pour l’instant.</p>}
-            {/* 2 lignes sur ordinateur (8 cases, carte d'ajout comprise), 3 lignes de 2 sur téléphone (CSS). */}
-            <div className={`s-grid${canPlan ? ' has-new' : ''}`}>
-              {canPlan && (
-                <button className="s-card s-new hide-mobile" onClick={newTraining} aria-label="Nouvelle séance">
-                  <div className="cover">
-                    <Plus />
-                  </div>
-                </button>
+            )}
+            {!isStaff && (
+              <section className="home-matches">
+                <PushCard compact />
+                {myTickets.length > 0 && (
+                  <>
+                    <div className="sec-head">
+                      <h2>Prochains matchs</h2>
+                    </div>
+                    <TicketRail tickets={myTickets} onChanged={tickets.reload} />
+                  </>
+                )}
+              </section>
+            )}
+
+            {team && data && <AgendaBoard teamId={team.id} data={data} prefs={prefs} actions={actions} onChanged={q.reload} />}
+
+            <section className="reveal">
+              <div className="sec-head">
+                <h2>Prochaines séances</h2>
+              </div>
+              {!sessions.length && (
+                <p className="muted small">
+                  {canPlan ? 'Aucune séance programmée. Cliquez sur un jour du calendrier pour ajouter un entraînement.' : 'Aucune séance à venir pour l’instant.'}
+                </p>
               )}
-              {[
-                ...upcoming.map((t) => ({ at: t.date, node: <SessionCard key={t.id} t={t} onClick={() => nav(`/seances/${t.id}`)} /> })),
-                ...planned.map((it) => ({
-                  at: `${it.date}T${it.time || '12:00'}`,
-                  node: <PlannedCard key={it.key} it={it} canPrepare={canPlan} onPrepare={() => void prepare(it)} />,
-                })),
-              ]
-                .sort((a, b) => a.at.localeCompare(b.at))
-                .slice(0, canPlan ? 7 : 8)
-                .map((x) => x.node)}
-            </div>
-          </section>
-        </>
-      )}
-    </div>
+              {/* 2 lignes sur ordinateur, 3 lignes de 2 sur téléphone (CSS). */}
+              <div className="s-grid">
+                {sessions.map((x) => (
+                  <Fragment key={x.key}>{x.node}</Fragment>
+                ))}
+              </div>
+            </section>
+
+            {isStaff && (
+              <section className="reveal home-convs">
+                <div className="sec-head">
+                  <h2>Convocations{prefs.group ? ` · ${prefs.group}` : ''}</h2>
+                  <button className="plain-toggle" onClick={() => nav(`/temps-de-jeu${prefs.group ? `?cat=${prefs.group}` : ''}`)} title="Équité des convocations et minutes jouées">
+                    <Timer size={15} /> Temps de jeu
+                  </button>
+                </div>
+                {convTodo.length || convReady.length ? (
+                  <div className="conv-cols">
+                    {convTodo.length > 0 && (
+                      <div>
+                        <div className="section-title">À préparer</div>
+                        <div className="stack" style={{ gap: 10 }}>
+                          {convTodo.map((c) => (
+                            <ConvCard key={`${c.eventId}:${c.date}`} c={c} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {convReady.length > 0 && (
+                      <div>
+                        <div className="section-title">Convocations publiées</div>
+                        <div className="stack" style={{ gap: 10 }}>
+                          {convReady.map((c) => (
+                            <ConvCard key={`${c.eventId}:${c.date}`} c={c} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="muted small">
+                    Aucune convocation en cours. Ajoutez un match, un plateau ou un tournoi en cliquant sur un jour du calendrier : la convocation se prépare toute seule
+                    (disponibilités, relances, date limite).
+                  </p>
+                )}
+              </section>
+            )}
+
+            {data && <AgendaHistory data={data} actions={actions} group={prefs.group} />}
+          </>
+        )}
+        {team && actions.sheets}
+      </div>
+    </AgendaMatchActions>
   );
 }

@@ -4,6 +4,18 @@ L'application du club : convocations et matchs, séances, suivi des joueurs, alb
 
 ## Fonctionnalités
 
+### V7 : un seul calendrier pour les séances et les matchs
+
+- **Calendrier** remplace Séances, Matchs et l'ancien grand calendrier dans le menu : les diapositives de ce qui compte maintenant (annonces, convocations à préparer, réponse attendue, prochains matchs avec le logo du club organisateur, covoiturage, séance du jour), puis le calendrier de l'équipe.
+- **Semaine ou mois**, au choix (mémorisé sur l'appareil). En semaine, entraînements programmés, séances préparées, matchs, plateaux, tournois et réunions partagent les mêmes colonnes ; en mois, la grille et la vue d'ensemble des événements.
+- **Créer, c'est cliquer sur un jour** : le formulaire s'ouvre à cette date (entraînement, match, plateau, tournoi, réunion, répétition chaque semaine…). Les boutons « Programmer » et « Nouvelle séance » disparaissent.
+- **Filtres** Tout · Séances · Matchs (avec le nombre de la période) et catégorie U8 / U9 pour les matchs ; flèches ← → du clavier pour changer de semaine ou de mois, « T » pour revenir à aujourd'hui.
+- **Cartes de match** dans la semaine : type, heure, écusson, et l'état en un coup d'œil (réponses reçues, convoqués, score ; côté parent « À répondre », « Convoqué »…).
+- **De l'entraînement aux exercices en un geste** : « Préparer la séance » crée la séance et ouvre directement le choix des exercices ; « Lancer » depuis la vignette d'une séance prête.
+- Clic droit (ou appui long) sur n'importe quelle carte : **Modifier / Supprimer**, pour une date ou toute la série.
+- En dessous : **Prochaines séances**, **Convocations** (à préparer et publiées, lien vers le **Temps de jeu**) et un **Historique** mois par mois qui réunit séances passées et matchs joués avec leur score.
+- Les anciennes adresses (`/seances`, `/matchs`, `/calendrier`) redirigent vers le calendrier ; le temps de jeu a sa page (`/temps-de-jeu`).
+
 ### V6 : l'entrée sur le terrain (convocation façon FIFA)
 
 - **Seuls les enfants convoqués vivent l'animation** : à la publication, leurs parents reçoivent « 🎁 Adam a reçu un paquet ! ». Les non-retenus reçoivent une simple annonce bienveillante, sans animation.

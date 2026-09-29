@@ -26,7 +26,7 @@ const dayTitle = (ymd: string) => {
 
 /** Calendrier mensuel minimaliste : points de couleur par événement, un jour = un clic. */
 export function Calendar({
-  teamId, events, trainings, canEdit, onChanged, big, onExpand, jump,
+  teamId, events, trainings, canEdit, onChanged, big, onExpand, jump, month: monthProp, onMonth, bare, initialType, initialGroup,
 }: {
   teamId: string; events: TeamEvent[]; trainings: Training[]; canEdit: boolean; onChanged: () => void;
   /** Grand calendrier (page Calendrier) : plusieurs événements écrits dans chaque case. */
@@ -35,11 +35,21 @@ export function Calendar({
   onExpand?: () => void;
   /** Ouvre un jour donné depuis l'extérieur (fil des nouveautés) ; `n` change à chaque demande. */
   jump?: { date: string; n: number } | null;
+  /** Mois affiché, piloté de l'extérieur (agenda : la navigation est dans son en-tête). */
+  month?: Date;
+  onMonth?: (month: Date) => void;
+  /** Sans en-tête (mois, flèches) : l'agenda l'affiche lui-même. */
+  bare?: boolean;
+  /** Nouvel événement : type et catégorie proposés (filtres de l'agenda). */
+  initialType?: EventType;
+  initialGroup?: string | null;
 }) {
-  const [month, setMonth] = useState(() => {
+  const [monthState, setMonthState] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1, 12);
   });
+  const month = monthProp ?? monthState;
+  const setMonth = (m: Date) => (onMonth ?? setMonthState)(m);
   const [day, setDay] = useState<string | null>(null);
   const today = toYMD(new Date());
   useEffect(() => {
@@ -65,11 +75,12 @@ export function Calendar({
     return m;
   }, [items]);
 
-  const shift = (n: number) => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + n, 1, 12));
+  const shift = (n: number) => setMonth(new Date(month.getFullYear(), month.getMonth() + n, 1, 12));
   const monthIdx = month.getMonth();
 
   return (
     <div className={`cal${big ? ' big' : ''}`}>
+      {!bare && (
       <div className="cal-head">
         <h2>
           {cap(MONTHS_LONG[monthIdx])} <span className="muted">{month.getFullYear()}</span>
@@ -91,6 +102,7 @@ export function Calendar({
           </button>
         </div>
       </div>
+      )}
       <div className="cal-grid">
         {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((d) => (
           <span key={d} className="cal-dow">
@@ -132,14 +144,22 @@ export function Calendar({
           );
         })}
       </div>
-      {day && <DaySheet teamId={teamId} date={day} items={byDay.get(day) ?? []} canEdit={canEdit} onClose={() => setDay(null)} onChanged={onChanged} />}
+      {day && (
+        <DaySheet
+          teamId={teamId} date={day} items={byDay.get(day) ?? []} canEdit={canEdit} initialType={initialType} initialGroup={initialGroup}
+          onClose={() => setDay(null)} onChanged={onChanged}
+        />
+      )}
     </div>
   );
 }
 
 function DaySheet({
-  teamId, date, items, canEdit, onClose, onChanged,
-}: { teamId: string; date: string; items: Agenda[]; canEdit: boolean; onClose: () => void; onChanged: () => void }) {
+  teamId, date, items, canEdit, initialType, initialGroup, onClose, onChanged,
+}: {
+  teamId: string; date: string; items: Agenda[]; canEdit: boolean; initialType?: EventType; initialGroup?: string | null;
+  onClose: () => void; onChanged: () => void;
+}) {
   const nav = useNavigate();
   const { can, isStaff } = useApp();
   const prepare = usePrepareSession(teamId);
@@ -151,6 +171,8 @@ function DaySheet({
         date={date}
         event={edit.event}
         occurrence={edit.occurrence}
+        initialType={edit.event ? undefined : initialType}
+        initialGroup={edit.event ? undefined : initialGroup}
         onClose={() => (items.length ? setEdit(null) : onClose())}
         onSaved={() => {
           onChanged();
@@ -216,7 +238,8 @@ export function usePrepareSession(teamId: string) {
   return async (it: Pick<Agenda, 'date' | 'time' | 'event'>) => {
     try {
       const t = await createTraining(teamId, `${it.date}T${it.time || it.event?.time || '14:00'}`, it.event?.title || 'Entraînement');
-      nav(`/seances/${t.id}`);
+      // La séance s'ouvre directement sur le choix des exercices.
+      nav(`/seances/${t.id}`, { state: { pick: true } });
     } catch (e) {
       toast((e as Error).message, true);
     }
@@ -442,7 +465,7 @@ function ClassicEventForm({
       if (logo.logo && isMatch) await api.post(`/events/${id}/logo`, { image: logo.logo });
       if (prepare && !event) {
         const t = await createTraining(teamId, `${e.start}T${e.time || '14:00'}`, e.title || 'Entraînement');
-        nav(`/seances/${t.id}`);
+        nav(`/seances/${t.id}`, { state: { pick: true } });
       }
       toast(event ? 'Événement modifié' : 'Événement ajouté');
       onSaved(body);

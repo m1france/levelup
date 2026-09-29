@@ -95,7 +95,7 @@ export function MatchLive() {
   if (q.error || !q.data || q.data.kind !== 'staff')
     return (
       <div className="page">
-        <Empty title="Match introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/matchs">Retour</Link>} />
+        <Empty title="Match introuvable" text={q.error ?? undefined} action={<Link className="btn" to="/">Retour au calendrier</Link>} />
       </div>
     );
   // Sans convocation publiée (test avant l'heure), tous les joueurs disponibles sont dans le groupe.
