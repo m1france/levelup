@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
@@ -28,10 +28,6 @@ import { SessionsPage } from './pages/Sessions';
 import { PublicTraining } from './pages/PublicTraining';
 import { TrainingPage } from './pages/TrainingPage';
 
-// Conférence de presse : three.js n'est chargé qu'à l'ouverture de la cinématique.
-const PressPage = lazy(() => import('./pages/PressConference').then((m) => ({ default: m.PressPage })));
-const PublicPress = lazy(() => import('./pages/PressConference').then((m) => ({ default: m.PublicPress })));
-
 type Boot = { state: 'loading' } | { state: 'setup' } | { state: 'login'; clubName: string | null } | { state: 'ready'; me: Me };
 
 export function App() {
@@ -48,15 +44,6 @@ export function App() {
       <Routes>
         <Route path="/m/:token" element={<PublicReveal />} />
       </Routes>
-    );
-  }
-  if (loc.pathname.startsWith('/c/')) {
-    return (
-      <Suspense fallback={<Spinner fill />}>
-        <Routes>
-          <Route path="/c/:token" element={<PublicPress />} />
-        </Routes>
-      </Suspense>
     );
   }
   if (loc.pathname.startsWith('/r/')) {
@@ -140,14 +127,6 @@ function AppRoutes() {
       {isStaff && <Route path="seances/:id/live" element={<Live />} />}
       {isStaff && <Route path="matchs/:eventId/:date/live" element={<MatchLive />} />}
       <Route path="matchs/:eventId/:date/cartes" element={<RevealPage />} />
-      <Route
-        path="matchs/:eventId/:date/conference"
-        element={
-          <Suspense fallback={<Spinner fill />}>
-            <PressPage />
-          </Suspense>
-        }
-      />
       <Route path="bulletins/:id" element={<BulletinPage />} />
     </Routes>
   );

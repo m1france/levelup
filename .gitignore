@@ -8,4 +8,3 @@ data
 tsconfig.tsbuildinfo
 .env
 .env.*
-!.env.example

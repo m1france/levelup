@@ -105,10 +105,6 @@ export interface Player {
   level?: 1 | 2 | 3;
   /** Version de la photo (horodatage), absente sans photo. */
   photo?: number;
-  /** Version de la photo en pied (conférence de presse), absente sans photo. */
-  fullPhoto?: number;
-  /** Conférence de presse : prononciation du prénom. */
-  press?: { say?: string };
   profile?: PlayerProfile;
   info?: PlayerInfo;
   followUp?: FollowUp;
@@ -532,8 +528,6 @@ export interface Ticket extends ConvEventInfo {
   availability: { status: Availability; note: string; at: number; by: string | null } | null;
   timeline: { request: number | null; answerBy: number | null; deadline: number; start: number };
   publishedAt: number | null;
-  /** Conférence de presse activée (cinématique de la convocation). */
-  press?: boolean;
   read: boolean;
   squad: { id: string; firstName: string; number?: number }[];
   result: { us: number; them: number; minutes: number | null; goals: number | null; summary: string; games?: GameResult[] | null } | null;
@@ -769,77 +763,4 @@ export interface RosterRow {
   contacts: EmergencyContact[];
   allergies: string;
   parents: { id: string; name: string; email: string; phone: string; status: string }[];
-}
-
-/* ------------------------------------------------------------------ conférence de presse (convocation en cinématique) */
-
-export type HairStyle = 'cap' | 'fringe' | 'short' | 'curly' | 'long' | 'bald';
-
-/** Points du visage détectés sur la photo (MediaPipe) : [x, y, z]. */
-export interface PressPresenter {
-  id: string;
-  name: string;
-  role: string;
-  groups: string[];
-  style: HairStyle;
-  hair: string;
-  cap: string;
-}
-
-/**
- * Joueur annoncé : `photo` est la photo en pied (sinon le portrait), affichée dans l'éclair ;
- * `card` sa carte façon Ultimate Team pour l'écran final (portrait carré).
- */
-export interface PressPlayer {
-  id: string;
-  firstName: string;
-  number: number | null;
-  photo: string | null;
-  full: boolean;
-  voice: string;
-  mine: boolean;
-  card: PlayerCard;
-}
-
-export interface PressSpeech { text: string; url: string }
-
-export interface PressData {
-  eventId: string;
-  date: string;
-  type: EventType;
-  title: string;
-  opponent: string;
-  venue: string;
-  location: string;
-  time: string;
-  meetTime: string;
-  bring: string;
-  message: string;
-  group: string;
-  team: { category: string; color: string };
-  club: { name: string; logo: string | null };
-  published: boolean;
-  preview: boolean;
-  hold: number;
-  /** Synthèse vocale Fish Audio configurée sur le serveur. */
-  tts: boolean;
-  speech: { intro: PressSpeech; outro: PressSpeech | null };
-  presenters: PressPresenter[];
-  speaker: number;
-  players: PressPlayer[];
-  shareToken?: string | null;
-}
-
-/** Réglages de la conférence de presse (paramètres). */
-export interface PressSettings {
-  enabled: boolean;
-  intro: string;
-  outro: string;
-  hold: number;
-  tts: boolean;
-  voices: { id: string; label: string }[];
-  presenters: (PressPresenter & {
-    sampleUrl: string | null;
-    voice: { id: string; sample: { v: number; type: string } | null; transcript: string };
-  })[];
 }

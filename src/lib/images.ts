@@ -47,12 +47,6 @@ export async function preparePortrait(file: File, size = 640) {
   return c.toDataURL('image/jpeg', 0.86);
 }
 
-/** Photo en pied (conférence de presse) : proportions d'origine, 1400 px de haut au plus. */
-export async function prepareFullPhoto(file: File, max = 1400) {
-  const src = await decode(file);
-  return render(src, max, 0.86).data;
-}
-
 /** Logo de club : PNG (transparence conservée), 512 px au plus. */
 export async function prepareLogo(file: File, max = 512) {
   const src = await decode(file);
