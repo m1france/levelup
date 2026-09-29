@@ -4,15 +4,11 @@ L'application du club : convocations et matchs, séances, suivi des joueurs, alb
 
 ## Fonctionnalités
 
-### V6 : la convocation en conférence de presse
+### V6 : le paquet de convocation
 
-- **Cinématique 3D** (three.js, chargée seulement à l'ouverture) : à la publication d'une convocation, toutes les familles reçoivent « 🎙️ Conférence de presse : la convocation U8 est tombée », qui ouvre une vraie conférence de presse. La salle est entièrement générée : mur de logos du club, estrade, table nappée « Convocation U8 », micros, chevalets, écran LED, journalistes, photographes qui mitraillent et caméras de télévision. Éclairage d'environnement avec contre-jour, ombres douces, occlusion ambiante, profondeur de champ sur les gros plans, anticrénelage, halo des lumières et grain de pellicule. La couleur vient automatiquement du logo du club.
-- **Présentateurs réalistes, entièrement sculptés** (`src/press/sdf.ts`, `head.ts`, `body.ts`) : têtes et corps sont des volumes anatomiques fondus entre eux (champs de distance) puis maillés finement, dans des workers en parallèle, aux proportions d'un homme adulte. Visage : crâne, arcades, pommettes, nez aux narines creusées, lèvres, menton, oreilles et cou ; peau peinte sommet par sommet (teint, rougeurs, lèvres, barbe naissante, cernes) avec occlusion ambiante et pores ; yeux avec iris fibreux, cornée transparente et cils ; sourcils poil à poil. La mâchoire s'ouvre au rythme de la voix, les paupières clignent, le regard suit la caméra. Corps : **veste de survêtement noire** au col montant, fermeture éclair, **logo du club brodé sur le cœur**, pantalon noir, mains détaillées posées sur la table. Coiffure au choix : casquette (logo du club), frange, court, bouclé, long, sans cheveux. Le public est sculpté de la même façon, en plus grossier.
-- **Voix Fish Audio** (modèle `fish-audio/s2.1-pro-free:free` via OpenRouter) : « Nous sommes heureux de vous annoncer notre sélection pour ce match. Alors, voici la convocation des U8 ! », puis chaque prénom, avec un ton d'annonce. Chaque présentateur a une voix française de la bibliothèque Fish Audio, ou **sa propre voix clonée** à partir d'un échantillon de 15 à 30 s lu dans les paramètres. Les phrases sont générées une seule fois (cache dans `data/uploads/tts/`), dès la publication.
-- **Chaque joueur convoqué surgit dans un éclair** (`src/press/lightning.ts`) : deux décharges jaillissent des bords gauche et droit de l'écran, se rejoignent au centre dans un flash et ouvrent une brèche électrique crépitante où apparaissent sa **photo en pied** et son prénom, prononcé par le coach ; 2 secondes à l'écran (réglable) avant le suivant. Le parent voit « ⭐ Votre enfant est convoqué ! » au passage de son enfant. On termine sur la date (« Samedi à 9h30 »), les **cartes façon Ultimate Team** des convoqués et une phrase de conclusion ; « Revoir » et « Voir la convocation » en bas de l'écran.
-- **Fiche joueur** : sa photo en pied (celle de l'éclair) et la prononciation de son prénom (« Ka-isse »), à écouter avec la voix du coach de sa catégorie.
-- **Paramètres › Conférence de presse** : les deux présentateurs (prénom, rôle, catégories annoncées, coiffure et couleurs, voix, clonage), les textes (`{groupe}`, `{adversaire}`, `{rendezvous}`, `{lieu}`, `{club}`, `{match}`), la durée par joueur, et un aperçu 3D de la salle en direct.
-- L'éducateur prévisualise la cinématique depuis la page du match avant de publier, et partage un **lien public** (`/c/…`) après publication. Sans clé OpenRouter ou sans son, les sous-titres suivent le rythme de la lecture ; sans WebGL, les animations restent jouées sur un fond aux couleurs du club.
+- **Ouverture de paquet façon Ultimate Team** : à la publication, les parents d'un enfant convoqué reçoivent « 🎁 Léo a reçu un paquet ! ». La page du match s'ouvre d'abord sur le paquet aux couleurs du club (logo, catégorie, date). L'enfant tape trois fois dessus : il tremble, se fissure et s'illumine, puis se déchire dans un flash. Trois indices défilent dans le faisceau de lumière (poste, club, numéro), puis sa carte se retourne : « ✅ Convoqué ! », confettis, date, coup d'envoi, rendez-vous et lieu. « Mes coéquipiers » distribue ensuite les cartes du groupe (même couleur et même note pour tous, pas de classement). Sons synthétisés et vibrations, sans fichier à charger.
+- **Les non-retenus n'ont pas d'animation** : leur billet et leur notification l'annoncent simplement (« Les convocations tournent pour que chacun joue autant »).
+- Le billet du match propose « Revoir le paquet » ; l'éducateur a un « Aperçu du paquet » sur la page de convocation.
 
 ### V5 : catégories, diapositives et éditeur plus précis
 
@@ -105,8 +101,6 @@ npm install
 npm run dev
 ```
 
-Pour les voix de la conférence de presse, copiez `.env.example` en `.env` et renseignez `OPENROUTER_API_KEY` (le fichier `.env` n'est jamais versionné).
-
 Ouvrez http://localhost:5173. Au premier lancement, vous créez le club et votre compte administrateur. La case « équipe d'exemple » ajoute un groupe U8/U9 de 18 joueurs et une séance prête à lancer.
 
 ## Production
@@ -144,7 +138,6 @@ src/
   pitch/       moteur terrain : géométrie, rendu canvas, animation, édition, export vidéo
   pages/       écrans (éditeur, séances, live, joueurs, admin…)
   lib/         API (file d'attente hors-ligne), contexte, types
-  press/       conférence de presse : scène three.js, personnages sculptés (workers), éclair, textures dessinées, son et voix
 ```
 
 Les identifiants sont générés côté client et les écritures sont des `PUT` idempotents : une modification faite hors ligne peut être rejouée sans risque de doublon.
@@ -154,4 +147,4 @@ Les identifiants sont générés côté client et les écritures sont des `PUT` 
 - Une remarque reste privée aux éducateurs, sauf si elle est explicitement marquée « Partagée avec les parents ».
 - Le niveau d'aisance (qui sert à équilibrer les groupes) n'est jamais envoyé aux parents.
 - Le lien public d'une séance ne contient ni présences, ni groupes, ni notes des éducateurs.
-- Le lien public d'une conférence de presse ne montre la photo d'un enfant (portrait ou photo en pied) que si l'autorisation photo est « oui ». Dans l'app, elle est masquée si l'autorisation est « non ». Les photos d'un enfant sont supprimées avec sa fiche.
+- Les photos d'un enfant sont supprimées avec sa fiche.

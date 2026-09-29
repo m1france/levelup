@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { get, parse, UPLOADS, clubLogoUrl } from './db.js';
 import { childIdsFor, isStaff, need, needTeam, HttpError } from './auth.js';
-import { occ, saveData, evTitle, gameResults } from './convocations.js';
+import { occ, occPlayers, saveData, evTitle, gameResults, meetOf } from './convocations.js';
 import { eventGroup } from './groups.js';
 import { sign, verify } from './tokens.js';
 import { toTeam } from './live.js';
@@ -109,18 +109,6 @@ function card(p, m, awardKey, totalSec, photoUrl) {
   };
 }
 
-/**
- * Cartes du groupe convoqué (conférence de presse), hors match : statistiques d'après les évaluations, sans récompense.
- * Comme en fin de match, tout le monde reçoit la même note générale (pas de classement entre les enfants).
- * `list` : [{ p (joueur), photo (URL du portrait ou null), mine }].
- */
-export function squadCards(list) {
-  const cards = list.map(({ p, photo, mine }) => ({ ...card(p, {}, null, 1, photo), award: { key: 'squad', label: '', emoji: '', tier: 'gold' }, mine: !!mine }));
-  const ovr = cards.length ? clamp(cards.reduce((a, c) => a + c.ovr, 0) / cards.length + 2) : 80;
-  for (const c of cards) c.ovr = ovr;
-  return cards;
-}
-
 /** Cartes d'un match terminé. `publicToken` : lien sans compte (photos seulement si l'autorisation a été donnée). */
 export function revealPayload(o, { user = null, publicToken = null } = {}) {
   const m = o.data.match;
@@ -204,6 +192,49 @@ function teamOcc(req) {
 revealApi.get('/convocations/:eventId/:date/reveal', (req, res) => {
   const o = teamOcc(req);
   res.json({ ...revealPayload(o, { user: req.user }), shareToken: isStaff(req.user) ? revealLink(o.e.id, o.date) : null });
+});
+
+/**
+ * Paquet de convocation : l'enfant convoqué ouvre un paquet façon Ultimate Team et découvre sa carte.
+ * Seuls les parents d'un enfant convoqué y ont accès (les autres reçoivent une simple annonce) ;
+ * l'éducateur en voit un aperçu, pour le joueur `?player=` ou le premier de la sélection.
+ * Toutes les cartes du groupe ont la même couleur et la même note : pas de classement entre les enfants.
+ */
+revealApi.get('/convocations/:eventId/:date/pack', (req, res) => {
+  const o = teamOcc(req);
+  const staff = isStaff(req.user);
+  const sel = new Set(o.data.selection || []);
+  if (!staff && !o.row?.published_at) throw new HttpError(404, 'La convocation n’est pas encore publiée');
+  const squad = occPlayers(o).filter((p) => sel.has(p.id));
+  const kids = staff ? [] : childIdsFor(req.user);
+  const opened = staff ? squad.filter((p) => p.id === req.query.player).concat(squad).slice(0, 1) : squad.filter((p) => kids.includes(p.id));
+  if (!opened.length) throw new HttpError(404, staff ? 'Sélectionnez au moins un joueur' : 'Aucun paquet pour ce match');
+  const ids = new Set(opened.map((p) => p.id));
+  const cards = squad.map((p) => {
+    const url = p.photo && p.info?.photoConsent !== 'no' ? `/api/players/${p.id}/photo?v=${p.photo}` : null;
+    return { ...card(p, {}, null, 1, url), award: { key: 'squad', label: 'Convoqué', emoji: '✅', tier: 'totw' }, mine: ids.has(p.id) };
+  });
+  const ovr = cards.length ? clamp(cards.reduce((a, c) => a + c.ovr, 0) / cards.length + 2) : 80;
+  for (const c of cards) c.ovr = ovr;
+  const team = get('SELECT category, color FROM teams WHERE id = ?', o.e.teamId) ?? { category: '', color: '#1f7a4f' };
+  if (eventGroup(o.e)) team.category = eventGroup(o.e);
+  team.logo = clubLogoUrl();
+  res.json({
+    eventId: o.e.id,
+    date: o.date,
+    type: o.e.type,
+    title: evTitle(o.e),
+    opponent: o.e.opponent || '',
+    venue: o.e.venue,
+    time: o.e.allDay ? '' : o.e.time || '',
+    meetTime: meetOf(o),
+    location: o.e.location || '',
+    team,
+    club: get('SELECT name FROM club WHERE id = 1')?.name ?? '',
+    preview: staff,
+    opened: opened.map((p) => p.id),
+    cards,
+  });
 });
 
 revealApi.put('/convocations/:eventId/:date/awards', (req, res) => {

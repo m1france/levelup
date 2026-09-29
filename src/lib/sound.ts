@@ -65,3 +65,82 @@ export function beep() {
     /* pas de son */
   }
 }
+
+/* ------------------------------------------------------------------ ouverture du paquet de convocation */
+
+/** Bruit blanc filtré : souffle, déchirure, foule. */
+function noise(a: AudioContext, t0: number, dur: number, { from = 800, to = 800, q = 1, vol = 0.3, type = 'bandpass' as BiquadFilterType } = {}) {
+  const buf = a.createBuffer(1, Math.ceil(a.sampleRate * dur), a.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const src = a.createBufferSource();
+  src.buffer = buf;
+  const f = a.createBiquadFilter();
+  f.type = type;
+  f.Q.value = q;
+  f.frequency.setValueAtTime(from, t0);
+  f.frequency.exponentialRampToValueAtTime(to, t0 + dur);
+  const g = a.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + Math.min(0.05, dur / 3));
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(f).connect(g).connect(a.destination);
+  src.start(t0);
+  src.stop(t0 + dur);
+}
+
+function tone(a: AudioContext, t0: number, freq: number, dur: number, { vol = 0.2, type = 'sine' as OscillatorType, to = freq } = {}) {
+  const o = a.createOscillator();
+  const g = a.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, t0);
+  if (to !== freq) o.frequency.exponentialRampToValueAtTime(to, t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(a.destination);
+  o.start(t0);
+  o.stop(t0 + dur);
+}
+
+const play = (fn: (a: AudioContext, t: number) => void) => {
+  try {
+    const a = audio();
+    fn(a, a.currentTime);
+  } catch {
+    /* pas de son */
+  }
+};
+
+/** Tape sur le paquet : un choc de plus en plus aigu à chaque coup (`level` de 1 à 3). */
+export const packTap = (level: number) => {
+  play((a, t) => {
+    tone(a, t, 90 + level * 40, 0.25, { vol: 0.45, to: 50 });
+    noise(a, t, 0.12, { from: 1800 + level * 900, to: 900, vol: 0.18 });
+  });
+  navigator.vibrate?.(30 + level * 25);
+};
+
+/** Le paquet se déchire et la lumière jaillit. */
+export const packBurst = () => {
+  play((a, t) => {
+    noise(a, t, 0.35, { from: 3000, to: 500, q: 0.7, vol: 0.35 });
+    tone(a, t, 70, 0.9, { vol: 0.55, to: 38 });
+    tone(a, t + 0.05, 440, 1.2, { vol: 0.06, type: 'triangle', to: 1760 });
+  });
+  navigator.vibrate?.([60, 40, 120]);
+};
+
+/** Un indice passe à l'écran (poste, club, numéro). */
+export const whoosh = () => play((a, t) => noise(a, t, 0.45, { from: 400, to: 3200, q: 2, vol: 0.22 }));
+
+/** La carte se retourne : impact grave, accord qui monte et clameur de la foule. */
+export const cardReveal = () => {
+  play((a, t) => {
+    tone(a, t, 110, 0.7, { vol: 0.5, to: 45 });
+    noise(a, t, 0.25, { from: 5000, to: 1200, vol: 0.2, type: 'highpass' });
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(a, t + 0.12 + i * 0.09, f, 0.9, { vol: 0.09, type: 'triangle' }));
+    noise(a, t + 0.15, 2.6, { from: 900, to: 700, q: 0.4, vol: 0.12 });
+  });
+  navigator.vibrate?.([80, 60, 160]);
+};

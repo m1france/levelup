@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
@@ -16,6 +16,7 @@ import { Matches } from './pages/Matches';
 import { Messages } from './pages/Messages';
 import { MatchLive } from './pages/MatchLive';
 import { PublicReveal, RevealPage } from './pages/Reveal';
+import { PackPage } from './pages/Pack';
 import { Settings } from './pages/Admin';
 import { Invite, Login, Setup } from './pages/Auth';
 import { Dashboard } from './pages/Dashboard';
@@ -27,10 +28,6 @@ import { Players } from './pages/Players';
 import { SessionsPage } from './pages/Sessions';
 import { PublicTraining } from './pages/PublicTraining';
 import { TrainingPage } from './pages/TrainingPage';
-
-// Conférence de presse : three.js n'est chargé qu'à l'ouverture de la cinématique.
-const PressPage = lazy(() => import('./pages/PressConference').then((m) => ({ default: m.PressPage })));
-const PublicPress = lazy(() => import('./pages/PressConference').then((m) => ({ default: m.PublicPress })));
 
 type Boot = { state: 'loading' } | { state: 'setup' } | { state: 'login'; clubName: string | null } | { state: 'ready'; me: Me };
 
@@ -48,15 +45,6 @@ export function App() {
       <Routes>
         <Route path="/m/:token" element={<PublicReveal />} />
       </Routes>
-    );
-  }
-  if (loc.pathname.startsWith('/c/')) {
-    return (
-      <Suspense fallback={<Spinner fill />}>
-        <Routes>
-          <Route path="/c/:token" element={<PublicPress />} />
-        </Routes>
-      </Suspense>
     );
   }
   if (loc.pathname.startsWith('/r/')) {
@@ -140,14 +128,7 @@ function AppRoutes() {
       {isStaff && <Route path="seances/:id/live" element={<Live />} />}
       {isStaff && <Route path="matchs/:eventId/:date/live" element={<MatchLive />} />}
       <Route path="matchs/:eventId/:date/cartes" element={<RevealPage />} />
-      <Route
-        path="matchs/:eventId/:date/conference"
-        element={
-          <Suspense fallback={<Spinner fill />}>
-            <PressPage />
-          </Suspense>
-        }
-      />
+      <Route path="matchs/:eventId/:date/paquet" element={<PackPage />} />
       <Route path="bulletins/:id" element={<BulletinPage />} />
     </Routes>
   );

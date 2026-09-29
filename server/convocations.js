@@ -16,7 +16,6 @@ import { toTeam } from './live.js';
 import { publicKey, saveSubscription } from './push.js';
 import { AWARDS, autoAwards } from './reveal.js';
 import { eventGroup, inGroup, teamInfo } from './groups.js';
-import { pressSettings, warmPress } from './press.js';
 
 export const CONV_TYPES = ['match', 'plateau', 'tournament'];
 
@@ -313,7 +312,7 @@ function readToken(token) {
 /* ------------------------------------------------------------------ messages */
 
 export const meetOf = (o) => o.data.meetTime || o.e.meetTime || '';
-export const bringOf = (o) => (o.data.bring ?? '') || o.settings.bring;
+const bringOf = (o) => (o.data.bring ?? '') || o.settings.bring;
 
 function whereLine(o) {
   const meet = meetOf(o);
@@ -590,7 +589,6 @@ function ticket(o, child, user) {
     availability: avail,
     timeline: { request: o.t.request, answerBy: o.t.answerBy, deadline: o.t.deadline, start: o.t.start },
     publishedAt: o.row?.published_at ?? null,
-    press: pressSettings().enabled,
     read: published ? !!get('SELECT 1 FROM conv_reads WHERE event_id = ? AND date = ? AND user_id = ?', o.e.id, o.date, user.id) : false,
     squad: players.map((p) => ({ id: p.id, firstName: p.firstName, number: p.number })),
     result: m?.finished
@@ -798,10 +796,6 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
   const first = !o.row?.published_at;
   const notified = { ...(o.data.notified || {}) };
   let sent = 0;
-  // Toutes les familles reçoivent la même notification : elle ouvre la conférence de presse, qui annonce le groupe.
-  // Le prénom convoqué (ou non) n'est jamais écrit dans la notification : la cinématique garde la surprise.
-  const press = pressSettings().enabled;
-  const group = eventGroup(o.e) ?? get('SELECT category FROM teams WHERE id = ?', o.e.teamId)?.category ?? '';
   tx(() => {
     for (const p of players) {
       const state = sel.has(p.id) ? 'in' : 'out';
@@ -812,18 +806,18 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
       for (const uid of parents) run('DELETE FROM conv_reads WHERE event_id = ? AND date = ? AND user_id = ?', o.e.id, o.date, uid);
       if (!parents.length || o.e.parents === false) continue;
       const change = !first ? 'Mise à jour : ' : '';
-      sent += notify(parents, press
+      sent += notify(parents, state === 'in'
         ? {
-            kind: 'convocation',
-            title: `${change}🎙️ Conférence de presse : la convocation ${group} est tombée`,
-            body: `${evTitle(o.e)} ${shortDay(o.date)} · Lancez la vidéo pour découvrir le groupe !`,
-            url: `${matchUrl(o)}/conference`,
+            kind: 'convoked',
+            title: `${change}🎁 ${p.firstName} a reçu un paquet !`,
+            body: `${evTitle(o.e)} ${shortDay(o.date)} · Ouvrez-le ensemble pour découvrir sa carte de convoqué.`,
+            url: `${matchUrl(o)}/paquet`,
             tag: `conv-${o.e.id}-${o.date}-${p.id}`,
           }
         : {
-            kind: 'convocation',
-            title: `${change}📣 La convocation ${group} est tombée`,
-            body: `${evTitle(o.e)} ${shortDay(o.date)} · Découvrez le groupe.`,
+            kind: 'not_selected',
+            title: `${change}${p.firstName} n'est pas dans le groupe ${shortDay(o.date)}`,
+            body: `${evTitle(o.e)} : pas dans le groupe pour ce match. Les convocations tournent pour que chacun joue autant.`,
             url: matchUrl(o),
             tag: `conv-${o.e.id}-${o.date}-${p.id}`,
           });
@@ -833,8 +827,6 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
     o.row = convRow(o.e.id, o.date);
   });
   toTeam(o.e.teamId, { t: 'conv', eventId: o.e.id, date: o.date });
-  // Les voix de la conférence de presse se génèrent maintenant : les familles qui ouvrent la notification n'attendent pas.
-  warmPress(o);
   res.json({ ...detail(o), sent });
 });
 
