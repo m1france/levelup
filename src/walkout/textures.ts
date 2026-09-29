@@ -300,8 +300,8 @@ export function signTexture(text: string) {
   return c;
 }
 
-/** Écran géant derrière l'estrade : logo, « CONVOQUÉ », catégorie, trame de LED. */
-export function screenTexture(team: string, logo: HTMLImageElement | null, category: string, line: string) {
+/** Écran géant derrière l'estrade : logo, « CONVOQUÉ », prénom du joueur, trame de LED. */
+export function screenTexture(team: string, logo: HTMLImageElement | null, name: string, line: string) {
   const W = 2048;
   const H = 640;
   const { c, ctx } = make(W, H);
@@ -343,7 +343,11 @@ export function screenTexture(team: string, logo: HTMLImageElement | null, categ
   gold.addColorStop(1, '#ff3b30');
   ctx.fillStyle = gold;
   ctx.fillText('CONVOQUÉ', W * 0.2, H * 0.46);
-  ctx.fillText(category.toUpperCase() || 'MATCH', W * 0.8, H * 0.46);
+  // Prénom à droite du logo : réduit s'il est long, pour ne jamais mordre sur le logo.
+  const label = name.toLocaleUpperCase('fr-FR') || 'CONVOQUÉ';
+  let size = 150;
+  while (size > 70 && ctx.measureText(label).width > W * 0.34) ctx.font = font(900, (size -= 6), true);
+  ctx.fillText(label, W * 0.8, H * 0.46);
   ctx.font = font(800, 58);
   ctx.fillStyle = 'rgba(255,255,255,0.88)';
   ctx.fillText(line.toUpperCase(), W / 2, H * 0.13);

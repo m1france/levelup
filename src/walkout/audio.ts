@@ -1,6 +1,6 @@
 /**
  * Bande-son de l'entrée sur le terrain, entièrement synthétisée (aucun fichier) :
- * foule étouffée dans le tunnel puis ouverte, crampons sur le béton, néons qui s'allument,
+ * crampons sur le béton, néons qui s'allument,
  * grondement derrière la porte, impacts sur chaque lettre, beat d'hymne, feux d'artifice.
  */
 
@@ -61,9 +61,6 @@ export class WalkoutAudio {
   private white: AudioBuffer;
   private pink: AudioBuffer;
   private brown: AudioBuffer;
-  private crowdGain: GainNode;
-  private crowdFilter: BiquadFilterNode;
-  private crowdSources: AudioBufferSourceNode[] = [];
   private musicGain: GainNode;
   private padFilter: BiquadFilterNode;
   private timer = 0;
@@ -95,36 +92,6 @@ export class WalkoutAudio {
     this.white = noiseBuffer(ctx, 2, 'white');
     this.pink = noiseBuffer(ctx, 4, 'pink');
     this.brown = noiseBuffer(ctx, 4, 'brown');
-
-    // Foule : bruit rose filtré, étouffé tant qu'on est dans le tunnel.
-    this.crowdFilter = ctx.createBiquadFilter();
-    this.crowdFilter.type = 'lowpass';
-    this.crowdFilter.frequency.value = 320;
-    this.crowdGain = ctx.createGain();
-    this.crowdGain.gain.value = 0;
-    this.crowdFilter.connect(this.crowdGain).connect(this.bus);
-    for (const [f, q, g] of [[480, 0.7, 1], [1250, 1.2, 0.55], [2600, 1.6, 0.25]] as const) {
-      const src = ctx.createBufferSource();
-      src.buffer = this.pink;
-      src.loop = true;
-      src.loopStart = Math.random();
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = f;
-      bp.Q.value = q;
-      const gain = ctx.createGain();
-      gain.gain.value = g;
-      // Vagues de la foule : un LFO lent par bande.
-      const lfo = ctx.createOscillator();
-      lfo.frequency.value = 0.12 + Math.random() * 0.2;
-      const depth = ctx.createGain();
-      depth.gain.value = g * 0.35;
-      lfo.connect(depth).connect(gain.gain);
-      lfo.start();
-      src.connect(bp).connect(gain).connect(this.crowdFilter);
-      src.start(0, Math.random() * 3);
-      this.crowdSources.push(src);
-    }
 
     this.musicGain = ctx.createGain();
     this.musicGain.gain.value = 0.8;
@@ -236,15 +203,13 @@ export class WalkoutAudio {
     this.noise(t + dur * 0.4, dur * 0.6 + 0.3, { type: 'bandpass', f0: 400, f1: 5000, q: 1.4, vol: 0.18, attack: dur * 0.55 });
   }
 
-  /** La porte s'ouvre : choc, souffle d'air et la foule qui éclate. */
+  /** La porte s'ouvre : choc et souffle d'air. */
   doorOpen() {
     const t = this.now;
     this.kick(t, 1);
     this.tone(t, 1.6, { f0: 55, f1: 30, vol: 0.7 });
     this.noise(t, 1.4, { type: 'lowpass', f0: 400, f1: 9000, vol: 0.5, verb: 0.8 });
     this.noise(t, 2.5, { type: 'highpass', f0: 5000, vol: 0.18, verb: 1 });
-    this.crowd(0.42, 5200, 0.35);
-    this.crowdGain.gain.setTargetAtTime(0.24, t + 2.2, 1.2);
   }
 
   /** Lettre révélée : coup de grosse caisse, souffle et scintillement. */
@@ -255,8 +220,6 @@ export class WalkoutAudio {
     this.noise(t, 0.35, { type: 'lowpass', f0: 1800, f1: 300, vol: 0.4, verb: 0.7 });
     const base = [1760, 1975.5, 2349.3][i % 3];
     for (const [k, d] of [[1, 1.4], [1.5, 1.1], [2, 0.9], [3.01, 0.7]] as const) this.tone(t + 0.01, d, { f0: base * k, type: 'sine', vol: 0.05, verb: 1.2 });
-    this.crowd(0.34, 5200, 0.05);
-    this.crowdGain.gain.setTargetAtTime(0.24, t + 0.5, 0.6);
   }
 
   /** Accélération : souffle qui balaie de gauche à droite. */
@@ -299,8 +262,6 @@ export class WalkoutAudio {
     this.tone(t, 2.2, { f0: 48, f1: 30, vol: 0.8 });
     this.noise(t, 3, { type: 'highpass', f0: 4000, vol: 0.28, verb: 1 });
     for (const n of CHORDS[0]) this.tone(t, 2.6, { f0: midi(n + 12), type: 'sawtooth', vol: 0.03, verb: 0.8, dest: this.padFilter });
-    this.crowd(0.55, 6500, 0.1);
-    this.crowdGain.gain.setTargetAtTime(0.3, t + 2.5, 1.5);
   }
 
   /** La carte tourbillonne. */
@@ -320,8 +281,6 @@ export class WalkoutAudio {
     this.noise(t + 0.05, 1.6, { type: 'highpass', f0: 2700, vol: 0.2, attack: 0.05, pan: 0.5 });
     this.noise(t + 0.05, 1.2, { buf: this.brown, type: 'lowpass', f0: 200, vol: 0.4, attack: 0.03 });
     this.fireworks(t + 0.5);
-    this.crowd(0.6, 7000, 0.08);
-    this.crowdGain.gain.setTargetAtTime(0.28, t + 3, 2);
   }
 
   /** Bouquet de feux d'artifice : détonations puis crépitements. */
@@ -333,13 +292,6 @@ export class WalkoutAudio {
       this.noise(t, 0.25, { type: 'lowpass', f0: 2400, f1: 300, vol: 0.35, pan, verb: 0.9 });
       for (let k = 0; k < 18; k++) this.noise(t + 0.25 + Math.random() * 1.1, 0.012, { type: 'highpass', f0: 4000 + Math.random() * 4000, vol: 0.06 + Math.random() * 0.06, pan: pan + (Math.random() - 0.5) * 0.4, verb: 0.5 });
     }
-  }
-
-  /** Niveau de la foule et ouverture du filtre (tunnel : étouffée). */
-  crowd(level: number, cutoff: number, time = 0.4) {
-    const t = this.now;
-    this.crowdGain.gain.setTargetAtTime(level, t, time);
-    this.crowdFilter.frequency.setTargetAtTime(cutoff, t, time);
   }
 
   /* ------------------------------------------------------------------ musique */
@@ -364,7 +316,7 @@ export class WalkoutAudio {
     this.timer = window.setInterval(tick, 40);
   }
 
-  /** La musique s'efface en douceur (la foule reste). */
+  /** La musique s'efface en douceur. */
   fadeMusic(after = 8) {
     const t = this.now + after;
     this.musicGain.gain.setTargetAtTime(0.0001, t, 1.2);
@@ -394,13 +346,6 @@ export class WalkoutAudio {
     this.closed = true;
     window.clearInterval(this.timer);
     this.out.gain.setTargetAtTime(0, this.now, 0.08);
-    for (const s of this.crowdSources) {
-      try {
-        s.stop(this.now + 0.4);
-      } catch {
-        /* déjà arrêtée */
-      }
-    }
     window.setTimeout(() => void this.ctx.close().catch(() => undefined), 600);
   }
 }
