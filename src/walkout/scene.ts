@@ -128,8 +128,6 @@ const VIEW = 9.5;
 /** L'estrade, juste derrière les portes. */
 const STAGE_GAP = 60;
 const BEAT = 0.6;
-/** Paysage : largeur (px) laissée à droite au tableau des convoqués (voir `.fw-roster`). */
-const ROSTER_PX = 300;
 
 /** Emplacements : une lettre tous les `gap` mètres dans le couloir, puis la porte, puis l'estrade. */
 function plan(n: number) {
@@ -1076,7 +1074,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
   /* ---------------------------------------------------------------- cadrage final */
 
   let tl = timeline(P, STAGE_Z + 9);
-  const final = { y: 1.7, look: new THREE.Vector3(0, 1.7, STAGE_Z), z: STAGE_Z + 9, fov: 45 };
+  const final = { x: 0, y: 1.7, look: new THREE.Vector3(0, 1.7, STAGE_Z), z: STAGE_Z + 9, fov: 45 };
   let wideFov = 60;
   const layout = () => {
     const w = canvas.clientWidth || window.innerWidth;
@@ -1092,20 +1090,20 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     camera.aspect = aspect;
     const portrait = aspect < 0.9;
     final.fov = portrait ? 50 : 34;
-    // L'estrade occupe la bande au-dessus des infos du match (et, en portrait, du tableau des convoqués).
-    const top = portrait ? 0.12 : 0.17;
-    const bottom = portrait ? 0.56 : 0.72;
-    // Paysage : la colonne de droite est laissée au tableau des convoqués, l'estrade se centre sur le reste.
-    const reserve = portrait ? 0 : clamp(ROSTER_PX / w, 0, 0.4);
+    // L'estrade occupe la bande entre le prénom (en haut) et les infos du match (en bas).
+    const top = portrait ? 0.2 : 0.31;
+    const bottom = portrait ? 0.66 : 0.71;
     const box = input.hero ? { x0: -2.1, x1: 2.45, y0: 0.45, y1: 3.4 } : { x0: -1.3, x1: 1.3, y0: 0.45, y1: 3.6 };
     const tv = Math.tan(THREE.MathUtils.degToRad(final.fov / 2));
-    const fw = portrait ? 0.97 : 0.66 * (1 - reserve);
+    const fw = portrait ? 0.97 : 0.62;
     const d = clamp(Math.max((box.x1 - box.x0) / (2 * fw * tv * aspect), (box.y1 - box.y0) / (2 * (bottom - top) * tv)), 5.5, 24);
     const cy = (box.y0 + box.y1) / 2;
-    const cx = (box.x0 + box.x1) / 2 + reserve * d * tv * aspect;
+    const cx = (box.x0 + box.x1) / 2;
     // Le centre de l'écran vise yAim : le contenu se retrouve dans la bande [top, bottom].
     const yAim = cy - (1 - (top + bottom)) * d * tv;
     final.z = STAGE_Z + d;
+    // La caméra se décale un peu à droite en visant toujours le centre : la carte, à gauche, est vue de biais.
+    final.x = cx + d * (portrait ? 0.06 : 0.12);
     final.y = Math.max(0.9, yAim);
     final.look.set(cx, yAim, STAGE_Z);
     tl = timeline(P, final.z);
@@ -1419,7 +1417,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     const yBase = lerp(1.65, 2.05, reveal);
     const orbit = smooth(tl.done - 0.8, tl.done + 1.5, T);
     camera.position.set(
-      lerp(Math.sin(clock * 0.37) * 0.04, final.look.x + Math.sin(clock * 0.22) * 0.35 * orbit, end) + (Math.random() - 0.5) * shake,
+      lerp(Math.sin(clock * 0.37) * 0.04, final.x + Math.sin(clock * 0.22) * 0.35 * orbit, end) + (Math.random() - 0.5) * shake,
       lerp(yBase + bob, final.y + Math.sin(clock * 0.3) * 0.05 * orbit, end) + (Math.random() - 0.5) * shake,
       zCam,
     );

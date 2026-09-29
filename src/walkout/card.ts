@@ -168,15 +168,16 @@ export function drawCardFront(card: PlayerCard, team: { category: string; color:
   ctx.font = font(800, 25);
   ctx.fillStyle = ink;
   ctx.fillText(card.position, 55, 124);
-  ctx.beginPath();
-  ctx.arc(55, 150, 19, 0, Math.PI * 2);
-  ctx.fillStyle = logo ? 'rgba(255,255,255,0.94)' : team.color;
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  ctx.stroke();
-  if (logo) drawContain(ctx, logo, 55, 150, 29);
+  // Logo du club seul, sur fond transparent ; sans logo, la catégorie dans une pastille aux couleurs de l'équipe.
+  if (logo) drawContain(ctx, logo, 55, 150, 38);
   else {
+    ctx.beginPath();
+    ctx.arc(55, 150, 19, 0, Math.PI * 2);
+    ctx.fillStyle = team.color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.stroke();
     ctx.fillStyle = '#fff';
     ctx.font = font(800, 11);
     ctx.fillText(team.category.replace(/\s+/g, '').slice(0, 5), 55, 154);
