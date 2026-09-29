@@ -1,5 +1,5 @@
 import { CalendarClock, CalendarDays, Car, Check, ChevronRight, Eye, Megaphone, Play, Plus } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LivePitch, SceneThumb, coverToExercise } from '../components/Pitch';
 import { Calendar, hasConv, usePrepareSession } from '../components/Calendar';
@@ -99,7 +99,13 @@ export function SessionCard({ t, past, onClick }: { t: Training; past?: boolean;
 }
 
 /** Séances regroupées par mois, en accordéon : le mois à gauche, une ligne pleine largeur avec ses séances. */
-export function MonthAccordion({ list, onOpen }: { list: Training[]; onOpen: (t: Training) => void }) {
+export function MonthAccordion({
+  list, onOpen, wrap = (_, card) => card,
+}: {
+  list: Training[]; onOpen: (t: Training) => void;
+  /** Habille chaque carte (ex. menu contextuel de la page Séances). */
+  wrap?: (t: Training, card: ReactNode) => ReactNode;
+}) {
   const groups = useMemo(() => {
     const m = new Map<string, Training[]>();
     for (const t of [...list].sort((a, b) => b.date.localeCompare(a.date))) {
@@ -119,7 +125,7 @@ export function MonthAccordion({ list, onOpen }: { list: Training[]; onOpen: (t:
         return (
           <div key={k} className={`month-row${isOpen ? ' open' : ''}`}>
             <button
-              className="month-label"
+              className="month-head"
               onClick={() => setOpen((o) => {
                 const n = new Set(o);
                 if (n.has(k)) n.delete(k);
@@ -129,22 +135,17 @@ export function MonthAccordion({ list, onOpen }: { list: Training[]; onOpen: (t:
               aria-expanded={isOpen}
             >
               <ChevronRight className="chev" />
-              <span>
-                <b>{MONTHS_LONG[m - 1].replace(/^./, (c) => c.toUpperCase())}</b>
-                <small>{y}</small>
-              </span>
+              <b>{MONTHS_LONG[m - 1].replace(/^./, (c) => c.toUpperCase())}</b>
+              <small>{y}</small>
+              <span className="rule" />
+              <small className="count">{items.length}</small>
             </button>
-            {isOpen ? (
+            {isOpen && (
               <div className="month-line">
                 {items.map((t) => (
-                  <SessionCard key={t.id} t={t} past={t.date.slice(0, 10) < today} onClick={() => onOpen(t)} />
+                  <Fragment key={t.id}>{wrap(t, <SessionCard t={t} past={t.date.slice(0, 10) < today} onClick={() => onOpen(t)} />)}</Fragment>
                 ))}
               </div>
-            ) : (
-              <button className="month-rule" onClick={() => setOpen((o) => new Set(o).add(k))}>
-                <span />
-                <small>{items.length}</small>
-              </button>
             )}
           </div>
         );
@@ -154,7 +155,9 @@ export function MonthAccordion({ list, onOpen }: { list: Training[]; onOpen: (t:
 }
 
 /** Entraînement programmé dont la séance n'est pas encore préparée : la date est connue de tous, le contenu viendra. */
-export function PlannedCard({ it, canPrepare, onPrepare }: { it: Agenda; canPrepare: boolean; onPrepare: () => void }) {
+export function PlannedCard({
+  it, canPrepare, onPrepare, meta = true,
+}: { it: Agenda; canPrepare: boolean; onPrepare: () => void; /** Heure et lieu sous le titre. */ meta?: boolean }) {
   const tile = dateTile(`${it.date}T${it.time || '12:00'}`);
   return (
     <div className={`s-card planned${canPrepare ? '' : ' readonly'}`} onClick={canPrepare ? onPrepare : undefined} role={canPrepare ? 'button' : undefined}>
@@ -168,11 +171,13 @@ export function PlannedCard({ it, canPrepare, onPrepare }: { it: Agenda; canPrep
         </span>
       </div>
       <b className="s-title">{it.event?.title || 'Entraînement'}</b>
-      <span className="s-meta">
-        {it.time ? formatTime(it.time) : 'Journée'}
-        {it.event?.endTime && it.time ? ` – ${formatTime(it.event.endTime)}` : ''}
-        {it.event?.location ? ` · ${it.event.location}` : ''}
-      </span>
+      {meta && (
+        <span className="s-meta">
+          {it.time ? formatTime(it.time) : 'Journée'}
+          {it.event?.endTime && it.time ? ` – ${formatTime(it.event.endTime)}` : ''}
+          {it.event?.location ? ` · ${it.event.location}` : ''}
+        </span>
+      )}
     </div>
   );
 }
