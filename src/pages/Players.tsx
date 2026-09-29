@@ -1,13 +1,15 @@
-import { AlertCircle, FileWarning, Plus, Search, Target, Users } from 'lucide-react';
+import { Plus, Search, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FutCard } from '../components/FutCard';
 import { photoUrl } from '../components/PlayerAvatar';
-import { Avatar, Empty, Field, Seg, Sheet, Spinner, useAsync, useToast } from '../components/ui';
+import { Empty, Field, Seg, Sheet, Spinner, useAsync, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
 import { groupsOf, guessGroup, playerGroup } from '../lib/groups';
 import { playerName, useApp } from '../lib/store';
-import type { DomainKey, Player, PlayerCard } from '../lib/types';
+import type { DomainKey, Player, PlayerCard, PlayerInfo } from '../lib/types';
+
+const EMPTY_INFO: PlayerInfo = { contacts: [], allergies: '', treatment: '', health: '', licence: { number: '', status: 'missing' }, certificate: null, photoConsent: '', city: '' };
 
 export function PlayerForm({ player, teamId, onClose, onSaved }: { player?: Player; teamId: string; onClose: () => void; onSaved: (p: Player) => void }) {
   const toast = useToast();
@@ -19,11 +21,17 @@ export function PlayerForm({ player, teamId, onClose, onSaved }: { player?: Play
   const [picked, setPicked] = useState<string | null>(player && groups.includes(player.category ?? '') ? player.category! : null);
   const category = groups.length ? (picked ?? guessGroup(f.birthYear, team)) : null;
   const [busy, setBusy] = useState(false);
+  const info: PlayerInfo = { ...EMPTY_INFO, ...(player?.info ?? {}) };
+  const [lic, setLic] = useState(info.licence);
+  const [city, setCity] = useState(info.city ?? '');
   const save = async () => {
     if (!f.firstName?.trim() || (groups.length && !category)) return;
     setBusy(true);
     try {
-      const p = await api.put<Player>(`/players/${player?.id ?? uid()}`, { ...f, category: category ?? undefined, teamId: f.teamId ?? teamId });
+      let p = await api.put<Player>(`/players/${player?.id ?? uid()}`, { ...f, category: category ?? undefined, teamId: f.teamId ?? teamId });
+      // Licence et ville : enregistrées avec les infos pratiques de la fiche.
+      if (lic.number !== info.licence.number || lic.status !== info.licence.status || city.trim() !== (info.city ?? ''))
+        p = await api.put<Player>(`/players/${p.id}/info`, { ...info, licence: { ...lic, number: lic.number.trim() }, city: city.trim() });
       onSaved(p);
       onClose();
     } catch (e) {
@@ -62,13 +70,31 @@ export function PlayerForm({ player, teamId, onClose, onSaved }: { player?: Play
             <input className="input" type="number" inputMode="numeric" min={1950} max={2030} value={f.birthYear ?? ''} onChange={(e) => setF({ ...f, birthYear: num(e.target.value) })} />
           </Field>
         </div>
+        <div className="row">
+          <Field label="N° de licence">
+            <input className="input" value={lic.number} onChange={(e) => setLic({ ...lic, number: e.target.value })} />
+          </Field>
+          <Field label="Ville">
+            <input className="input" value={city} placeholder="Ville de la famille" onChange={(e) => setCity(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Licence">
+          <Seg<PlayerInfo['licence']['status']>
+            value={lic.status}
+            onChange={(status) => setLic({ ...lic, status })}
+            options={[
+              { value: 'ok', label: 'Validée' },
+              { value: 'pending', label: 'En cours' },
+              { value: 'missing', label: 'À faire' },
+            ]}
+          />
+        </Field>
         {groups.length > 0 && (
           <Field label="Catégorie">
             <Seg<string> value={category ?? ''} onChange={setPicked} options={groups.map((g) => ({ value: g, label: g }))} />
           </Field>
         )}
-        {!player && <p className="small muted">Postes, pied fort, évaluations et objectifs se remplissent ensuite sur sa fiche.</p>}
-      </div>
+              </div>
     </Sheet>
   );
 }
@@ -91,6 +117,7 @@ function rosterCard(p: Player): PlayerCard {
     id: p.id,
     firstName: p.firstName,
     photo: photoUrl(p),
+    cutout: !!p.photo && !!p.photoAlpha,
     position: p.profile?.positions?.[0] ?? '—',
     ovr,
     stats,
@@ -107,50 +134,25 @@ export function Players() {
   const { me, team, can } = useApp();
   const nav = useNavigate();
   const groups = groupsOf(team?.category);
-  const q = useAsync(() => (team ? api.get<Player[]>(`/teams/${team.id}/players?followUp=1`) : Promise.resolve([])), [team?.id]);
-  const [sort, setSort] = useState<'name' | 'follow'>('name');
+  const q = useAsync(() => (team ? api.get<Player[]>(`/teams/${team.id}/players`) : Promise.resolve([])), [team?.id]);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState(false);
   const list = useMemo(() => {
     const n = search.trim().toLowerCase();
-    const out = (q.data ?? []).filter((p) => !n || playerName(p).toLowerCase().includes(n));
-    if (sort === 'follow') out.sort((a, b) => (b.followUp?.quietDays ?? 0) - (a.followUp?.quietDays ?? 0));
-    return out;
-  }, [q.data, search, sort]);
-  // Joueurs à suivre : pas d'observation depuis 4 semaines, objectif dépassé, certificat manquant ou expiré.
-  const watch = useMemo(() => {
-    const out: { p: Player; why: string; icon: React.ReactNode }[] = [];
-    for (const p of q.data ?? []) {
-      const f = p.followUp;
-      if (!f) continue;
-      if (f.overdueGoals) out.push({ p, why: `${f.overdueGoals} objectif${f.overdueGoals > 1 ? 's' : ''} à échéance dépassée`, icon: <Target size={14} /> });
-      else if (f.quietDays >= 28) out.push({ p, why: f.lastObservation ? `Pas d’observation depuis ${Math.floor(f.quietDays / 7)} semaines` : 'Aucune observation', icon: <AlertCircle size={14} /> });
-      else if (f.certificate === 'expired' || f.certificate === 'soon') out.push({ p, why: f.certificate === 'expired' ? 'Certificat expiré' : 'Certificat bientôt expiré', icon: <FileWarning size={14} /> });
-    }
-    return out;
-  }, [q.data]);
-
+    return (q.data ?? []).filter((p) => !n || playerName(p).toLowerCase().includes(n));
+  }, [q.data, search]);
   if (!team) return <div className="page"><Empty icon={<Users />} title="Aucune équipe" /></div>;
 
-  const tile = (p: Player) => {
-    const alert = p.followUp && (p.followUp.quietDays >= 28 || p.followUp.overdueGoals > 0);
-    return (
+  const tile = (p: Player) => (
       <button key={p.id} className="fut-tile" onClick={() => nav(`/joueurs/${p.id}`)} aria-label={playerName(p)}>
         <FutCard
           card={rosterCard(p)}
           team={{ category: playerGroup(p, team) ?? team.category, color: team.color, logo: me.club?.logo }}
           size={180}
-          foot={
-            <>
-              {p.birthYear && <span>{p.birthYear}</span>}
-              {!!p.followUp?.activeGoals && <span>🎯 {p.followUp.activeGoals}</span>}
-            </>
-          }
+          foot={p.birthYear ? <span>{p.birthYear}</span> : <></>}
         />
-        {alert && <span className="fut-alert" title="À suivre" />}
       </button>
-    );
-  };
+  );
   // Équipe U8/U9 : une section par catégorie.
   const sections = groups.length
     ? [...groups, null].map((g) => ({ g, players: list.filter((p) => playerGroup(p, team) === g) })).filter((x) => x.players.length)
@@ -170,37 +172,9 @@ export function Players() {
           </div>
         )}
       </div>
-      {watch.length > 0 && (
-        <div className="watch">
-          <b>À suivre cette semaine</b>
-          <div className="watch-list">
-            {watch.slice(0, 8).map(({ p, why, icon }) => (
-              <button key={p.id} onClick={() => nav(`/joueurs/${p.id}?tab=suivi`)}>
-                <Avatar name={playerName(p)} size="sm" />
-                <span>
-                  <b>{p.firstName}</b>
-                  <small>
-                    {icon} {why}
-                  </small>
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="row" style={{ gap: 10, marginBottom: 16 }}>
-      <div style={{ position: 'relative', flex: 1 }}>
+      <div style={{ position: 'relative', marginBottom: 16 }}>
         <Search size={17} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ink-3)' }} />
         <input className="input" style={{ paddingLeft: 38 }} placeholder="Rechercher un joueur…" value={search} onChange={(e) => setSearch(e.target.value)} />
-      </div>
-      <Seg
-        value={sort}
-        onChange={setSort}
-        options={[
-          { value: 'name', label: 'A–Z' },
-          { value: 'follow', label: 'À suivre' },
-        ]}
-      />
       </div>
       {q.loading && !q.data ? (
         <Spinner fill />

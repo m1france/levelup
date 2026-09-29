@@ -113,7 +113,7 @@ export function Calendar({
                   {list.slice(0, 3).map((it) => (
                     <span key={it.key} className={`cal-pill${it.event?.type === 'training' && !it.training ? ' planned' : ''}`} style={{ ['--c' as string]: it.color }}>
                       <b>{it.title}</b>
-                      {it.time && <small>{formatTime(it.time)}{it.event?.location ? ` · ${it.event.location}` : ''}</small>}
+                      {it.time && <small>{formatTime(it.time)}</small>}
                     </span>
                   ))}
                   {list.length > 3 && <small className="cal-more">+{list.length - 3}</small>}
@@ -180,7 +180,6 @@ function DaySheet({
                 {it.time ? formatTime(it.time) : 'Journée'}
                 {it.event?.endTime && !it.event.allDay ? ` – ${formatTime(it.event.endTime)}` : ''}
                 {it.event?.meetTime ? ` · RDV ${formatTime(it.event.meetTime)}` : ''}
-                {it.event?.location ? ` · ${it.event.location}` : ''}
                 {it.training ? ' · Séance préparée' : it.event?.type === 'training' ? ' · Séance à préparer' : ''}
               </small>
             </span>

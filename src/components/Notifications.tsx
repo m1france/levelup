@@ -1,28 +1,8 @@
-import { Bell, BellOff, BellRing, CheckCheck, Share, SquarePlus } from 'lucide-react';
+import { Bell, BellRing, Share, SquarePlus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
-import { useLive } from '../lib/live';
-import { disablePush, enablePush, pushState, type PushState } from '../lib/push';
-import { relative } from '../lib/store';
-import type { AppNotification } from '../lib/types';
-import { Sheet, useToast } from './ui';
-
-interface Feed { unread: number; push: number; items: AppNotification[] }
-
-function useFeed() {
-  const [feed, setFeed] = useState<Feed | null>(null);
-  const load = useCallback(() => {
-    api.get<Feed>('/notifications').then(setFeed).catch(() => undefined);
-  }, []);
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 120_000);
-    return () => clearInterval(t);
-  }, [load]);
-  useLive((m) => m.t === 'notif' && load());
-  return { feed, load };
-}
+import { enablePush, pushState, type PushState } from '../lib/push';
+import { useToast } from './ui';
 
 export function usePushState() {
   const [state, setState] = useState<PushState | null>(null);
@@ -83,86 +63,5 @@ export function PushCard({ compact }: { compact?: boolean }) {
         </button>
       )}
     </div>
-  );
-}
-
-/** Cloche flottante et centre de notifications. */
-export function NotificationBell() {
-  const { feed, load } = useFeed();
-  const [open, setOpen] = useState(false);
-  const nav = useNavigate();
-  const unread = feed?.unread ?? 0;
-  const { state, setState } = usePushState();
-
-  const markAll = async () => {
-    await api.post('/notifications/read', {});
-    load();
-  };
-
-  return (
-    <>
-      <button className={`bell-float${unread ? ' has' : ''}`} onClick={() => setOpen(true)} aria-label={`Notifications${unread ? ` (${unread} non lues)` : ''}`}>
-        <Bell />
-        {unread > 0 && <span className="bell-count">{unread > 9 ? '9+' : unread}</span>}
-      </button>
-      {open && (
-        <Sheet
-          title="Notifications"
-          onClose={() => setOpen(false)}
-          footer={
-            <>
-              {state === 'on' && (
-                <button
-                  className="btn ghost sm"
-                  onClick={async () => {
-                    await disablePush();
-                    setState('off');
-                  }}
-                >
-                  <BellOff /> Couper sur cet appareil
-                </button>
-              )}
-              <span className="grow" />
-              {unread > 0 && (
-                <button className="btn sm" onClick={markAll}>
-                  <CheckCheck /> Tout marquer comme lu
-                </button>
-              )}
-            </>
-          }
-        >
-          <div className="stack" style={{ gap: 12 }}>
-            <PushCard />
-            {feed?.items.length ? (
-              <div className="notif-list">
-                {feed.items.map((n) => (
-                  <button
-                    key={n.id}
-                    className={`notif${n.read ? '' : ' unread'}`}
-                    onClick={async () => {
-                      if (!n.read) await api.post('/notifications/read', { ids: [n.id] }).catch(() => undefined);
-                      setOpen(false);
-                      load();
-                      if (n.url) nav(n.url);
-                    }}
-                  >
-                    <i />
-                    <span className="grow">
-                      <b>{n.title}</b>
-                      {n.body && <small>{n.body}</small>}
-                    </span>
-                    <time>{relative(n.createdAt)}</time>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>
-                Rien de nouveau pour l’instant.
-              </p>
-            )}
-          </div>
-        </Sheet>
-      )}
-    </>
   );
 }

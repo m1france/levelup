@@ -595,6 +595,41 @@ api.delete('/exercises/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+const BLANK_EXERCISE = {
+  title: 'Nouvel exercice', objective: '', instructions: '', easier: '', harder: '', themes: [], duration: 10, players: 8,
+  field: { preset: 'square', w: 20, h: 20 }, items: [], paths: [], frames: [{ id: 'f0', dur: 0, pos: {}, owner: {} }],
+};
+
+/** Exercice créé puis quitté sans rien y changer : on le supprime, ainsi que sa place dans les séances. */
+api.post('/exercises/:id/discard', (req, res) => {
+  const row = get('SELECT * FROM exercises WHERE id = ?', req.params.id);
+  if (!row) return res.json({ ok: true, discarded: false });
+  if (!exerciseEditable(req.user, row)) throw new HttpError(403, 'Seuls les éducateurs de son équipe peuvent supprimer cet exercice');
+  const data = JSON.parse(row.data);
+  if (Object.entries(BLANK_EXERCISE).some(([k, v]) => JSON.stringify(data[k]) !== JSON.stringify(v))) return res.json({ ok: true, discarded: false });
+  run('DELETE FROM exercises WHERE id = ?', row.id);
+  if (row.team_id) {
+    for (const t of all('SELECT id, data FROM trainings WHERE team_id = ?', row.team_id)) {
+      const d = JSON.parse(t.data);
+      if (!exerciseIdsOf(d).includes(row.id)) continue;
+      // Un bloc ajouté pour cet exercice disparaît avec lui ; un emplacement existant est simplement libéré.
+      d.blocks = (d.blocks || []).filter((b) => !(b.kind === 'exercise' && b.exerciseId === row.id && b.title === BLANK_EXERCISE.title));
+      for (const b of d.blocks) {
+        if (b.exerciseId === row.id) delete b.exerciseId;
+        for (const st of b.stations || []) if (st.exerciseId === row.id) {
+          delete st.exerciseId;
+          if (st.title === BLANK_EXERCISE.title) st.title = '';
+        }
+      }
+      run('UPDATE trainings SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(d), now(), t.id);
+      toTeam(row.team_id, { t: 'training', id: t.id, teamId: row.team_id, by: req.user.name });
+    }
+  }
+  // Aussi vers l'onglet d'origine : la liste qu'il ouvre a pu être chargée avant la suppression.
+  toTeamAndRoom(row.team_id, row.id, { t: 'exercise', id: row.id, teamId: row.team_id ?? null, deleted: true, by: req.user.name, updatedAt: now() });
+  res.json({ ok: true, discarded: true });
+});
+
 /* ------------------------------------------------------------------ temps réel */
 
 api.get('/live', (req, res) => {

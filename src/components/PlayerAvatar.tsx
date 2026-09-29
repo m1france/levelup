@@ -28,7 +28,7 @@ export function PlayerAvatar({ player, size = 76, editable, onChange }: { player
     }
   };
   return (
-    <span className={`p-avatar${editable ? ' edit' : ''}${busy ? ' busy' : ''}`} style={{ width: size, height: size }}>
+    <span className={`p-avatar${editable ? ' edit' : ''}${busy ? ' busy' : ''}${player.photoAlpha ? ' cutout' : ''}`} style={{ width: size, height: size }}>
       {url ? <img src={url} alt={player.firstName} /> : <Avatar name={playerName(player)} size="lg" />}
       {editable && (
         <>

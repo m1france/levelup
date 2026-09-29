@@ -109,7 +109,8 @@ export function drawCardFront(card: PlayerCard, team: { category: string; color:
   const lc = layer.getContext('2d')!;
   lc.scale(SCALE, SCALE);
   lc.imageSmoothingQuality = 'high';
-  if (photo) drawCover(lc, photo, 0, 0, pw, ph, 0);
+  // Photo détourée : pas de fond, la tête légèrement sous le haut du cadre.
+  if (photo) drawCover(lc, photo, 0, card.cutout ? ph * 0.05 : 0, pw, card.cutout ? ph * 0.95 : ph, 0);
   else {
     lc.fillStyle = t.line;
     lc.globalAlpha = 0.9;
@@ -238,7 +239,7 @@ export function drawCardBack(team: { category: string; color: string }, logo: HT
   tint.addColorStop(1, rgba(team.color, 0));
   ctx.fillStyle = tint;
   ctx.fillRect(0, 0, 250, 350);
-  ctx.strokeStyle = '#f6d77a';
+  ctx.strokeStyle = '#ff5a4f';
   for (let i = 0; i < 16; i++) {
     ctx.globalAlpha = 0.3 - i * 0.015;
     ctx.lineWidth = i % 3 === 0 ? 1.4 : 0.6;
@@ -252,7 +253,7 @@ export function drawCardBack(team: { category: string; color: string }, logo: HT
   ctx.translate(125, 175);
   ctx.scale(0.93, 0.93);
   ctx.translate(-125, -175);
-  ctx.strokeStyle = '#f6d77a';
+  ctx.strokeStyle = '#ff5a4f';
   ctx.lineWidth = 2.2;
   ctx.stroke(shape);
   ctx.restore();
@@ -262,7 +263,7 @@ export function drawCardBack(team: { category: string; color: string }, logo: HT
   ctx.fillStyle = logo ? 'rgba(255,255,255,0.95)' : team.color;
   ctx.fill();
   ctx.lineWidth = 3;
-  ctx.strokeStyle = '#f6d77a';
+  ctx.strokeStyle = '#ff5a4f';
   ctx.stroke();
   if (logo) drawContain(ctx, logo, 125, 160, 68);
   ctx.textAlign = 'center';
@@ -270,7 +271,7 @@ export function drawCardBack(team: { category: string; color: string }, logo: HT
   ctx.font = font(900, 30, true);
   ctx.fillText(team.category || 'CONVOCATION', 125, 250);
   ctx.font = font(800, 12);
-  ctx.fillStyle = '#f6d77a';
+  ctx.fillStyle = '#ff5a4f';
   ctx.fillText('C O N V O C A T I O N', 125, 272);
   return c;
 }

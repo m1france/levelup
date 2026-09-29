@@ -76,7 +76,7 @@ export function FutCard({ card, team, size = 240, foot }: { card: PlayerCard; te
         <path d={SHAPE} fill="none" stroke={t.line} strokeWidth="2.5" transform="translate(125 175) scale(.93) translate(-125 -175)" />
       </svg>
 
-      <div className="fut-photo">
+      <div className={`fut-photo${card.cutout ? ' cutout' : ''}`}>
         {card.photo ? <img src={card.photo} alt={card.firstName} draggable={false} /> : <Silhouette color={t.line} />}
       </div>
       <div className="fut-left">

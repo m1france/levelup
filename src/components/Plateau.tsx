@@ -10,8 +10,12 @@ import { Field, Seg, Sheet, useAsync, useToast } from './ui';
 
 /* ------------------------------------------------------------------ résultats */
 
-/** Plateau : score de chaque match (les matchs pas encore joués affichent un tiret). */
-export function GamesResults({ games, results }: { games: Pick<PlateauGame, 'id' | 'opponent' | 'time'>[]; results: ({ us: number; them: number } | undefined)[] }) {
+const RESULT = { win: 'Victoire', draw: 'Nul', loss: 'Défaite' } as const;
+
+/** Plateau : score de chaque match (les matchs pas encore joués affichent un tiret). En `cards`, une carte par match, deux par ligne. */
+export function GamesResults({
+  games, results, cards,
+}: { games: Pick<PlateauGame, 'id' | 'opponent' | 'time'>[]; results: ({ us: number; them: number } | undefined)[]; cards?: boolean }) {
   const done = results.filter((r): r is { us: number; them: number } => !!r);
   const w = done.filter((r) => r.us > r.them).length;
   const dr = done.filter((r) => r.us === r.them).length;
@@ -23,16 +27,28 @@ export function GamesResults({ games, results }: { games: Pick<PlateauGame, 'id'
           {w} V · {dr} N · {done.length - w - dr} D
         </span>
       </div>
-      {games.map((g, i) => {
-        const r = results[i];
-        return (
-          <div key={g.id} className={`gr-row${r ? (r.us > r.them ? ' win' : r.us === r.them ? ' draw' : ' loss') : ''}`}>
-            <small>{g.time ? formatTime(g.time) : `Match ${i + 1}`}</small>
-            <span className="grow ellipsis">{g.opponent}</span>
-            <b>{r ? `${r.us} – ${r.them}` : '–'}</b>
-          </div>
-        );
-      })}
+      <div className={cards ? 'gr-cards' : 'games-results'}>
+        {games.map((g, i) => {
+          const r = results[i];
+          const tone = r ? (r.us > r.them ? 'win' : r.us === r.them ? 'draw' : 'loss') : null;
+          return cards ? (
+            <div key={g.id} className={`gr-card${tone ? ` ${tone}` : ''}`}>
+              <small>
+                {g.time ? formatTime(g.time) : `Match ${i + 1}`}
+                {tone && <em>{RESULT[tone]}</em>}
+              </small>
+              <span className="ellipsis">{g.opponent}</span>
+              <b>{r ? `${r.us} – ${r.them}` : '–'}</b>
+            </div>
+          ) : (
+            <div key={g.id} className={`gr-row${tone ? ` ${tone}` : ''}`}>
+              <small>{g.time ? formatTime(g.time) : `Match ${i + 1}`}</small>
+              <span className="grow ellipsis">{g.opponent}</span>
+              <b>{r ? `${r.us} – ${r.them}` : '–'}</b>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

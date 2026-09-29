@@ -168,6 +168,15 @@ export function emptyExercise(): ExerciseData {
   };
 }
 
+export const NEW_EXERCISE_TITLE = 'Nouvel exercice';
+
+/** Exercice tout juste créé et jamais touché : même contenu que le modèle vierge. */
+export function isBlankExercise(ex: ExerciseData) {
+  const { title, ...rest } = ex;
+  const { title: _, ...blank } = emptyExercise();
+  return title === NEW_EXERCISE_TITLE && (Object.keys(blank) as (keyof typeof blank)[]).every((k) => JSON.stringify(rest[k]) === JSON.stringify(blank[k]));
+}
+
 /** Matériel nécessaire, compté à partir du schéma. */
 export function equipmentOf(ex: Pick<ExerciseData, 'items'>) {
   const counts = new Map<string, number>();

@@ -11,26 +11,26 @@ import fontData from './fonts/barlow-black-italic.typeface.json';
 import { SHAPE } from '../components/FutCard';
 import type { WalkoutAudio } from './audio';
 import {
-  doorTexture, floorTexture, glowTexture, labelTexture, raysTexture, runnerTexture, screenTexture, signTexture, smokeTexture, sparkTexture, wallTexture,
+  doorTexture, floorTexture, glowTexture, raysTexture, runnerTexture, screenTexture, signTexture, smokeTexture, sparkTexture, wallTexture,
 } from './textures';
 
 /**
  * Entrée sur le terrain façon FIFA, en 3D :
  * la caméra avance dans le tunnel des vestiaires (les néons s'allument un à un), s'arrête devant les portes,
- * qui s'ouvrent dans un flash ; elle continue d'avancer dans un espace de lumière où surgissent, une à une,
- * les trois premières lettres du prénom ; elle débouche enfin sur l'estrade : la carte à gauche,
- * l'enfant (photo en pied ou vidéo de célébration, en calque HTML) à droite, pyrotechnie et feux d'artifice.
+ * qui s'ouvrent dans un flash ; elle continue d'avancer dans un espace de lumière rouge où surgissent, une à une,
+ * toutes les lettres du prénom ; elle débouche enfin sur l'estrade : la carte à gauche,
+ * l'enfant (photo en pied, en calque HTML) à droite, pyrotechnie et feux d'artifice.
  */
 
 export interface WalkoutInput {
   team: { color: string; category: string };
   club: string;
   logo: HTMLImageElement | null;
-  /** Lettres révélées (3 au plus). */
+  /** Lettres révélées : tout le prénom. */
   letters: string[];
   cardFront: HTMLCanvasElement;
   cardBack: HTMLCanvasElement;
-  /** Un média (photo en pied / vidéo) est posé à droite de la carte. */
+  /** Une photo en pied est posée à droite de la carte. */
   hero: boolean;
   /** Ligne de l'écran géant (« Samedi 3 octobre · Match à Teyran »). */
   screenLine: string;
@@ -137,7 +137,13 @@ interface Timeline {
   done: number;
 }
 
+/** Rythme des lettres : plus le prénom est long, plus elles s'enchaînent vite et rapprochées (l'estrade ne bouge pas). */
+function letterPace(n: number) {
+  return { step: BEAT * (n <= 3 ? 4 : n <= 6 ? 3 : 2), gap: n > 1 ? Math.min(STATION_GAP, 90 / (n - 1)) : STATION_GAP };
+}
+
 function timeline(n: number, finalZ: number): Timeline {
+  const { step, gap } = letterPace(n);
   const keys: [number, number][] = [
     [0, 5.6],
     [0.7, 5.3],
@@ -151,15 +157,16 @@ function timeline(n: number, finalZ: number): Timeline {
   const letters: number[] = [];
   const collects: number[] = [];
   for (let i = 0; i < n; i++) {
-    const zi = STATION_Z0 - i * STATION_GAP;
-    const a = FLASH + 2 * BEAT + i * 4 * BEAT;
+    const zi = STATION_Z0 - i * gap;
+    const a = FLASH + 2 * BEAT + i * step;
+    const hold = step * 0.69;
     letters.push(a);
-    collects.push(a + 1.65);
+    collects.push(a + hold);
     if (i === 0) keys.push([6.5, -77]);
-    keys.push([a, zi + 16.5], [a + 0.8, zi + 13.8], [a + 1.65, zi + 11.8]);
+    keys.push([a, zi + 16.5], [a + step / 3, zi + 13.8], [a + hold, zi + 11.8]);
   }
   const lastA = letters.length ? letters[letters.length - 1] : FLASH + BEAT;
-  const stage = lastA + 4 * BEAT;
+  const stage = lastA + (n ? step : 4 * BEAT);
   if (!n) keys.push([6.6, -80]);
   keys.push([stage, finalZ + 17], [stage + 0.75, finalZ + 3.5], [stage + 1.8, finalZ]);
   return {
@@ -486,13 +493,14 @@ const shineMaterial = () =>
 /* ------------------------------------------------------------------ scène */
 
 export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions) {
-  const team = new THREE.Color(input.team.color || '#1f7a4f');
+  const team = new THREE.Color(input.team.color || '#d7141e');
   // Couleur d'accent visible même si le club a une couleur très sombre.
   const accent = team.clone();
   const hsl = { h: 0, s: 0, l: 0 };
   accent.getHSL(hsl);
   accent.setHSL(hsl.h, Math.max(hsl.s, 0.55), clamp(hsl.l, 0.42, 0.6));
-  const gold = new THREE.Color('#ffd27a');
+  // Rouge clair lumineux (étincelles, rayons, pyrotechnie) : décline le rouge du club.
+  const flare = new THREE.Color('#ff6a5c');
   const coolWhite = new THREE.Color('#e9f0ff');
 
   const mobile = Math.min(window.innerWidth, window.innerHeight) < 700;
@@ -666,7 +674,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     x.fillStyle = '#fff';
     x.fill();
     x.lineWidth = 18;
-    x.strokeStyle = '#f6d77a';
+    x.strokeStyle = '#d7141e';
     x.stroke();
     const k = Math.min(330 / input.logo.width, 330 / input.logo.height);
     x.drawImage(input.logo, 256 - (input.logo.width * k) / 2, 256 - (input.logo.height * k) / 2, input.logo.width * k, input.logo.height * k);
@@ -791,7 +799,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
   const beamGeo = track(new THREE.ConeGeometry(2.2, 30, 40, 1, true));
   beamGeo.translate(0, -15, 0);
   for (let i = 0; i < 14; i++) {
-    const white = i % 3 !== 0;
+    const white = i % 3 === 0;
     const mat = track(beamMaterial(white ? hot(0xfff4e0, 1) : hot(accent, 1.6), white ? 0.16 : 0.2));
     const m = new THREE.Mesh(beamGeo, mat);
     const s = i % 2 ? 1 : -1;
@@ -808,7 +816,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     for (let i = 0; i < n; i++) pos.set([(Math.random() - 0.5) * 30, Math.random() * 12, -66 - Math.random() * 170], i * 3);
     const g = track(new THREE.BufferGeometry());
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const dust = new THREE.Points(g, track(new THREE.PointsMaterial({ size: 0.07, map: texSpark, color: 0xffe6b8, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending })));
+    const dust = new THREE.Points(g, track(new THREE.PointsMaterial({ size: 0.07, map: texSpark, color: 0xffc4bd, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending })));
     world.add(dust);
   }
 
@@ -844,17 +852,17 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
 
   // Stations des lettres.
   const font = new Font(fontData as never);
-  const faceMat = track(shiny(new THREE.MeshStandardMaterial({ color: 0xf2b84b, metalness: 1, roughness: 0.3, emissive: 0x4a2e04, emissiveIntensity: 0.15 }), 0.95));
-  const sideMat = track(shiny(new THREE.MeshStandardMaterial({ color: 0x9a6414, metalness: 1, roughness: 0.34, emissive: 0x140b00 }), 1));
+  const faceMat = track(shiny(new THREE.MeshStandardMaterial({ color: 0xe8262e, metalness: 1, roughness: 0.3, emissive: 0x5a0306, emissiveIntensity: 0.25 }), 0.95));
+  const sideMat = track(shiny(new THREE.MeshStandardMaterial({ color: 0x7a0a0f, metalness: 1, roughness: 0.34, emissive: 0x160001 }), 1));
   const letterSparks = new Sparks(mobile ? 700 : 1100, texSpark, 0.12, -1.2, 0.965);
   world.add(letterSparks.points);
-  const ORD = ['1re', '2e', '3e'];
   // Lettre absente de la police : on retombe sur la lettre sans accent.
   const glyphs = (fontData as { glyphs: Record<string, unknown> }).glyphs;
   const glyph = (ch: string) => (glyphs[ch] ? ch : glyphs[ch.normalize('NFD')[0]] ? ch.normalize('NFD')[0] : '?');
-  const stations = input.letters.slice(0, 3).map(glyph).map((ch, i) => {
+  const { gap: letterGap } = letterPace(input.letters.length);
+  const stations = input.letters.map(glyph).map((ch, i) => {
     const g = new THREE.Group();
-    g.position.set(0, 0, STATION_Z0 - i * STATION_GAP);
+    g.position.set(0, 0, STATION_Z0 - i * letterGap);
     world.add(g);
     const geo = track(
       new TextGeometry(ch, { font, size: 3.1, depth: 0.55, curveSegments: 10, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.055, bevelSegments: 4 }),
@@ -869,12 +877,12 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     g.add(holder);
     const rays = new THREE.Mesh(
       track(new THREE.PlaneGeometry(11, 11)),
-      track(new THREE.MeshBasicMaterial({ map: texRays, color: hot(gold, 1.1), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })),
+      track(new THREE.MeshBasicMaterial({ map: texRays, color: hot(flare, 1.1), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })),
     );
     rays.position.set(0, 2.75, -1.6);
     g.add(rays);
     const ringA = new THREE.Mesh(track(new THREE.TorusGeometry(2.35, 0.03, 8, 160)), track(new THREE.MeshBasicMaterial({ color: hot(accent, 2.6), transparent: true })));
-    const ringB = new THREE.Mesh(track(new THREE.TorusGeometry(2.62, 0.012, 6, 160)), track(new THREE.MeshBasicMaterial({ color: hot(gold, 2), transparent: true })));
+    const ringB = new THREE.Mesh(track(new THREE.TorusGeometry(2.62, 0.012, 6, 160)), track(new THREE.MeshBasicMaterial({ color: hot(flare, 2), transparent: true })));
     ringA.position.set(0, 2.75, -0.7);
     ringB.position.set(0, 2.75, -0.9);
     g.add(ringA, ringB);
@@ -888,15 +896,8 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     floorGlow.rotation.x = -Math.PI / 2;
     floorGlow.position.y = 0.02;
     g.add(floorGlow);
-    const label = new THREE.Mesh(
-      track(new THREE.PlaneGeometry(2.4, 0.45)),
-      track(new THREE.MeshBasicMaterial({ map: track(canvasTexture(labelTexture(`${ORD[i]} lettre`))), color: hot(0xffffff, 1.4), transparent: true, opacity: 0, depthWrite: false })),
-    );
-    label.position.set(0, 0.2, 0.9);
-    label.scale.setScalar(1.25);
-    g.add(label);
     g.visible = false;
-    return { g, holder, rays, ringA, ringB, flash, floorGlow, label };
+    return { g, holder, rays, ringA, ringB, flash, floorGlow };
   });
 
   /* ---------------------------------------------------------------- estrade */
@@ -1008,7 +1009,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
   const pyro = new Sparks(mobile ? 1000 : 1800, texSpark, 0.11, -7, 0.99);
   const fireworks = new Sparks(mobile ? 1400 : 2400, texSpark, 0.16, -2.2, 0.975);
   scene.add(pyro.points, fireworks.points);
-  const confetti = new Confetti(mobile ? 260 : 420, [gold, new THREE.Color(0xffffff), accent, new THREE.Color(0xfff0b8)]);
+  const confetti = new Confetti(mobile ? 260 : 420, [flare, new THREE.Color(0xffffff), accent, new THREE.Color(0xffd0cb)]);
   shiny(confetti.mesh.material as THREE.MeshStandardMaterial, 1);
   scene.add(confetti.mesh);
 
@@ -1043,7 +1044,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
   stage.add(cardRig);
   const cardRays = new THREE.Mesh(
     track(new THREE.PlaneGeometry(9, 9)),
-    track(new THREE.MeshBasicMaterial({ map: texRays, color: hot(gold, 1), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })),
+    track(new THREE.MeshBasicMaterial({ map: texRays, color: hot(flare, 1), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })),
   );
   cardRays.position.set(cardX, cardY, -0.6);
   stage.add(cardRays);
@@ -1143,7 +1144,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
       const a = Math.random() * Math.PI * 2;
       const sp = 3 + Math.random() * 6;
       v3.set(Math.cos(a) * sp, Math.sin(a) * sp, (Math.random() - 0.2) * 3);
-      letterSparks.emit(c, v3, Math.random() < 0.7 ? gold : accent, 0.8 + Math.random() * 0.9);
+      letterSparks.emit(c, v3, Math.random() < 0.7 ? flare : accent, 0.8 + Math.random() * 0.9);
     }
   }
 
@@ -1297,7 +1298,6 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
       (s.ringB.material as THREE.MeshBasicMaterial).opacity = on;
       s.flash.material.opacity = T > a ? Math.max(0, 1 - (T - a) / 0.3) : 0;
       (s.floorGlow.material as THREE.MeshBasicMaterial).opacity = on * 0.7;
-      (s.label.material as THREE.MeshBasicMaterial).opacity = smooth(a + 0.25, a + 0.6, T) * (1 - smooth(c - 0.1, c + 0.15, T));
       fire(`letter${i}`, a, () => {
         burstLetter(i);
         sfx((au) => au.letterHit(i));
@@ -1318,7 +1318,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
         const on = smooth(tl.letters[cur] - 0.3, tl.letters[cur] + 0.2, T);
         l.distance = 14;
         if (i === 0) l.position.set(-2.5, 5.5, z + 4.5), l.color.set(0xffffff), (l.intensity = 26 * on);
-        else if (i === 1) l.position.set(3, 1, z + 3), l.color.copy(gold), (l.intensity = 14 * on);
+        else if (i === 1) l.position.set(3, 1, z + 3), l.color.copy(flare), (l.intensity = 14 * on);
         else if (i === 2) l.position.set(0, 4, z - 2.5), l.color.copy(accent), (l.intensity = 30 * on);
         else l.intensity = 0;
       });
@@ -1347,7 +1347,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
       pool.forEach((l, i) => {
         l.distance = 16;
         if (i === 0) l.position.set(-3, 4, STAGE_Z + 4), l.color.set(0xffffff), (l.intensity = 30 * st);
-        else if (i === 1) l.position.set(3.5, 3, STAGE_Z + 4), l.color.copy(gold), (l.intensity = 18 * st);
+        else if (i === 1) l.position.set(3.5, 3, STAGE_Z + 4), l.color.copy(flare), (l.intensity = 18 * st);
         else if (i === 2) l.position.set(-4, 3, STAGE_Z - 3), l.color.copy(accent), (l.intensity = 90 * st);
         else l.position.set(4, 3, STAGE_Z - 3), l.color.copy(accent), (l.intensity = 90 * st);
       });
@@ -1400,12 +1400,12 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
         const x = corner < 2 ? -3.4 : 3.4;
         const z = STAGE_Z + (corner % 2 ? 1.4 : -1.8);
         v3.set((Math.random() - 0.5) * 1.2, 8 + Math.random() * 4.5, (Math.random() - 0.5) * 1.2);
-        pyro.emit(new THREE.Vector3(x, 0.55, z), v3, Math.random() < 0.8 ? gold : new THREE.Color(1, 1, 1), 0.9 + Math.random() * 0.5);
+        pyro.emit(new THREE.Vector3(x, 0.55, z), v3, Math.random() < 0.8 ? flare : new THREE.Color(1, 1, 1), 0.9 + Math.random() * 0.5);
       }
     }
     while (bursts.length && T >= bursts[0]) {
       bursts.shift();
-      const colors = [gold, accent, new THREE.Color(1, 1, 1), new THREE.Color().lerpColors(accent, new THREE.Color(1, 1, 1), 0.5)];
+      const colors = [flare, accent, new THREE.Color(1, 1, 1), new THREE.Color().lerpColors(accent, new THREE.Color(1, 1, 1), 0.5)];
       firework((Math.random() - 0.5) * 12, 8 + Math.random() * 4, STAGE_Z - 7 - Math.random() * 5, colors[Math.floor(Math.random() * colors.length)].clone().multiplyScalar(2.2));
     }
     pyro.update(dt);
@@ -1470,7 +1470,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
       },
       seek(target: number) {
         devFrozen = true;
-        document.documentElement.classList.add('wk-noanim');
+        document.documentElement.classList.add('fw-noanim');
         while (t < target) {
           const d = Math.min(1 / 30, target - t);
           t += d;
@@ -1479,11 +1479,11 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
         }
         composer.render(0);
         // Copie du rendu dans une image : visible même quand le navigateur ne compose plus le canvas.
-        let img = document.getElementById('wk-debug-snap') as HTMLImageElement | null;
+        let img = document.getElementById('fw-debug-snap') as HTMLImageElement | null;
         if (!img) {
           img = document.createElement('img');
-          img.id = 'wk-debug-snap';
-          img.className = 'wk-canvas ready';
+          img.id = 'fw-debug-snap';
+          img.className = 'fw-canvas ready';
           canvas.after(img);
         }
         img.src = canvas.toDataURL('image/jpeg', 0.92);

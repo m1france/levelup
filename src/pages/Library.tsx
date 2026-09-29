@@ -7,11 +7,11 @@ import { api, uid } from '../lib/api';
 import { useLive } from '../lib/live';
 import { useApp } from '../lib/store';
 import type { Exercise } from '../lib/types';
-import { emptyExercise } from '../pitch/geometry';
+import { NEW_EXERCISE_TITLE, emptyExercise } from '../pitch/geometry';
 
 /** Un nouvel exercice appartient à l'équipe : tous ses éducateurs le modifient, ses joueurs le consultent. */
 export async function createExercise(teamId: string | null): Promise<Exercise> {
-  return api.put<Exercise>(`/exercises/${uid()}`, { ...emptyExercise(), title: 'Nouvel exercice', visibility: 'private', teamId });
+  return api.put<Exercise>(`/exercises/${uid()}`, { ...emptyExercise(), title: NEW_EXERCISE_TITLE, visibility: 'private', teamId });
 }
 
 export type ExerciseScope = 'team' | 'mine';
@@ -34,13 +34,6 @@ export function ExerciseCard({ ex, onClick, action }: { ex: Exercise; onClick: (
     <div className="card ex-card" onClick={onClick}>
       <div className="thumb">
         <SceneThumb ex={ex} />
-        <div className="badges">
-          {ex.frames.length > 1 && (
-            <span className="badge" style={{ background: 'rgba(0,0,0,.45)', color: '#fff' }}>
-              Animé · {ex.frames.length - 1}
-            </span>
-          )}
-        </div>
       </div>
       <div className="body">
         <b>{ex.title}</b>

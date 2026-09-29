@@ -100,6 +100,7 @@ function card(p, m, awardKey, totalSec, photoUrl) {
     firstName: p.firstName,
     number: p.number,
     photo: photoUrl,
+    cutout: !!(photoUrl && p.photoAlpha),
     position: pos,
     ovr,
     stats: clamped,
@@ -175,10 +176,12 @@ revealPublic.get('/public/reveal/:token/photo/:pid', (req, res) => {
 });
 
 export function sendPlayerPhoto(res, pid) {
-  const file = join(UPLOADS, `player_${pid}.jpg`);
+  // Photo détourée (PNG transparent) ou photo classique (JPEG).
+  const png = join(UPLOADS, `player_${pid}.png`);
+  const file = existsSync(png) ? png : join(UPLOADS, `player_${pid}.jpg`);
   if (!existsSync(file)) throw new HttpError(404, 'Photo introuvable');
   res.set('Cache-Control', 'private, max-age=31536000, immutable');
-  res.type('jpeg').sendFile(file);
+  res.type(file === png ? 'png' : 'jpeg').sendFile(file);
 }
 
 export const revealApi = Router();

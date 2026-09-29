@@ -257,12 +257,15 @@ export function Dashboard() {
     </button>
   ) : null;
 
-  // Diapositives : les actualités passent avant l'aperçu de la séance.
-  const slides: ShowcaseSlide[] = [];
+  // Diapositives : les annonces non lues d'abord, puis l'événement le plus proche (entraînement ou match),
+  // le covoiturage d'un match juste après la diapositive de ce match.
+  const when = (date: string, time?: string | null) => new Date(`${date.slice(0, 10)}T${time || '12:00'}`).getTime();
+  const slides: (ShowcaseSlide & { at: number })[] = [];
   for (const a of freshAnns) {
     const [first, ...rest] = a.preview.split('\n');
     const open = () => nav(`/messages/${anns.data?.threadId}`);
     slides.push({
+      at: -Infinity,
       key: `ann:${a.id}`,
       node: (
         <HeroSlide
@@ -285,6 +288,7 @@ export function Dashboard() {
     const urgent = c.phase === 'late' || (c.phase === 'collecting' && c.timeline.deadline - now < 24 * 3600e3);
     const open = () => nav(matchPath(c.eventId, c.date));
     slides.push({
+      at: when(c.date, c.time),
       key: `conv:${c.eventId}:${c.date}`,
       node: (
         <HeroSlide
@@ -325,9 +329,10 @@ export function Dashboard() {
       ),
     });
   }
-  for (const t of myTickets.filter((t) => t.status === 'to_answer').slice(0, 2)) {
+  for (const t of myTickets.filter((t) => t.status === 'to_answer' && t.timeline.start > now).slice(0, 2)) {
     const open = () => nav(matchPath(t.eventId, t.date));
     slides.push({
+      at: when(t.date, t.time),
       key: `ticket:${t.key}`,
       node: (
         <HeroSlide
@@ -352,10 +357,13 @@ export function Dashboard() {
     });
   }
   // Covoiturage : seulement quand une voiture est proposée ou qu'une famille cherche une place.
-  for (const c of (carpools.data ?? []).filter((c) => c.offers.length > 0 || c.requests.length > 0).slice(0, 3)) {
+  // Les matchs déjà passés n'apparaissent pas dans les diapositives.
+  const upcomingMatch = (date: string, time: string) => new Date(`${date}T${time || '23:59'}`).getTime() > now;
+  for (const c of (carpools.data ?? []).filter((c) => (c.offers.length > 0 || c.requests.length > 0) && upcomingMatch(c.date, c.time)).slice(0, 3)) {
     const need = c.needs > 0 && c.free < c.needs;
     const open = () => nav(`${matchPath(c.eventId, c.date)}?covoiturage=1`);
     slides.push({
+      at: when(c.date, c.time) + 1,
       key: `car:${c.eventId}:${c.date}`,
       node: (
         <HeroSlide
@@ -392,6 +400,8 @@ export function Dashboard() {
     });
   }
   slides.push({
+    // Une séance passée (aucune à venir) reste en dernier.
+    at: hero && hero.date.slice(0, 10) >= todayISO() ? (hero.date.length > 10 ? new Date(hero.date).getTime() : when(hero.date)) : Infinity,
     key: 'session',
     node: (
       <HeroSlide
@@ -423,7 +433,7 @@ export function Dashboard() {
         <Spinner fill />
       ) : (
         <>
-          <Showcase slides={slides} />
+          <Showcase slides={[...slides].sort((a, b) => a.at - b.at)} />
           {!isStaff && me.children.length > 1 && (
             <div className="family-strip">
               {me.children.map((c) => {
@@ -467,8 +477,11 @@ export function Dashboard() {
             <div className="sec-head">
               <h2>Séances</h2>
               <div className="row" style={{ gap: 4 }}>
-                <button className="plain-toggle" onClick={() => nav('/seances')} title="Toutes les séances, semaine par semaine, y compris les anciennes">
+                <button className="plain-toggle hide-mobile" onClick={() => nav('/seances')} title="Toutes les séances, semaine par semaine, y compris les anciennes">
                   <CalendarDays size={15} /> Toutes les séances
+                </button>
+                <button className="btn icon sm only-mobile" onClick={() => nav('/seances')} aria-label="Toutes les séances">
+                  <CalendarDays />
                 </button>
                 {canPlan && (
                   <button className="btn icon sm only-mobile" onClick={newTraining} aria-label="Nouvelle séance">
@@ -478,7 +491,8 @@ export function Dashboard() {
               </div>
             </div>
             {!upcoming.length && !planned.length && !canPlan && <p className="muted small">Aucune séance à venir pour l’instant.</p>}
-            <div className="s-grid">
+            {/* 2 lignes sur ordinateur (8 cases, carte d'ajout comprise), 3 lignes de 2 sur téléphone (CSS). */}
+            <div className={`s-grid${canPlan ? ' has-new' : ''}`}>
               {canPlan && (
                 <button className="s-card s-new hide-mobile" onClick={newTraining} aria-label="Nouvelle séance">
                   <div className="cover">
@@ -494,6 +508,7 @@ export function Dashboard() {
                 })),
               ]
                 .sort((a, b) => a.at.localeCompare(b.at))
+                .slice(0, canPlan ? 7 : 8)
                 .map((x) => x.node)}
             </div>
           </section>

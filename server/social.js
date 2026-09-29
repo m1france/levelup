@@ -63,7 +63,7 @@ export function carpoolView(o, user) {
     }));
   const free = offers.reduce((a, x) => a + x.free, 0);
   return {
-    eventId: o.e.id, date: o.date, title: evTitle(o.e), time: o.e.time, meetTime: o.data.meetTime || o.e.meetTime || '', location: o.e.location,
+    eventId: o.e.id, date: o.date, title: evTitle(o.e), meetTime: o.data.meetTime || o.e.meetTime || '', location: o.e.location,
     offers, requests, free, needs: requests.filter((r) => !r.solved).length,
     kids: bookableKids(user, o).map((p) => ({ id: p.id, firstName: p.firstName, booked: booked.has(p.id) })),
   };
@@ -315,8 +315,10 @@ function markRead(threadId, userId, at = now()) {
 /** Discussion supprimée par ce membre : les messages d'avant restent cachés pour lui. */
 const clearedAt = (threadId, userId) => get('SELECT cleared_at FROM chat_members WHERE thread_id = ? AND user_id = ?', threadId, userId)?.cleared_at ?? 0;
 
+/** Un message supprimé disparaît pour tous ; l'administrateur le garde sous les yeux, marqué comme tel. */
+const seesDeleted = (user) => user.role === 'admin';
+
 function preview(m) {
-  if (m.deleted) return 'Message supprimé';
   const d = JSON.parse(m.data || '{}');
   switch (m.kind) {
     case 'image': return '📷 Photo';
@@ -343,7 +345,7 @@ function threadTitle(t, user) {
 
 function threadSummary(t, user) {
   const cleared = clearedAt(t.id, user.id);
-  const last = get('SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.created_at > ? ORDER BY m.created_at DESC LIMIT 1', t.id, cleared);
+  const last = get('SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.created_at > ? AND m.deleted = 0 ORDER BY m.created_at DESC LIMIT 1', t.id, cleared);
   const read = Math.max(lastRead(t.id, user.id), cleared);
   const unread = get('SELECT COUNT(*) n FROM chat_messages WHERE thread_id = ? AND created_at > ? AND (user_id IS NULL OR user_id != ?) AND deleted = 0', t.id, read, user.id).n;
   const icon = tData(t).icon ?? null;
@@ -570,11 +572,10 @@ const REACTIONS = ['❤️', '👍', '👎', '😂', '‼️', '❓', '⚽', '�
 function enrich(m, user) {
   const d = JSON.parse(m.data || '{}');
   const base = {
-    id: m.id, threadId: m.thread_id, userId: m.user_id, author: m.author ?? null, mine: m.user_id === user.id, kind: m.deleted ? 'deleted' : m.kind,
-    body: m.deleted ? '' : m.body, at: m.created_at,
+    id: m.id, threadId: m.thread_id, userId: m.user_id, author: m.author ?? null, mine: m.user_id === user.id, kind: m.kind,
+    body: m.body, at: m.created_at, ...(m.deleted ? { deleted: true } : {}),
     reactions: all('SELECT r.emoji, r.user_id, u.name FROM chat_reactions r JOIN users u ON u.id = r.user_id WHERE msg_id = ?', m.id).map((r) => ({ emoji: r.emoji, mine: r.user_id === user.id, name: r.name })),
   };
-  if (m.deleted) return base;
   try {
     if (m.kind === 'carpool') {
       const cp = carpoolView(occ(d.eventId, d.date), user);
@@ -584,7 +585,7 @@ function enrich(m, user) {
     }
     if (m.kind === 'match') {
       const o = occ(d.eventId, d.date);
-      return { ...base, data: { eventId: o.e.id, date: o.date, title: evTitle(o.e), time: o.e.time, meetTime: o.data.meetTime || o.e.meetTime, location: o.e.location, venue: o.e.venue, type: o.e.type } };
+      return { ...base, data: { eventId: o.e.id, date: o.date, title: evTitle(o.e), meetTime: o.data.meetTime || o.e.meetTime, location: o.e.location, venue: o.e.venue, type: o.e.type } };
     }
   } catch {
     return { ...base, data: { ...d, gone: true } };
@@ -614,8 +615,8 @@ socialApi.get('/chat/threads/:id/messages', (req, res) => {
   const t = threadAccess(req.user, req.params.id);
   const before = Number(req.query.before) || now() + 1;
   const rows = all(
-    `SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.created_at < ? AND m.created_at > ? ORDER BY m.created_at DESC LIMIT 60`,
-    t.id, before, clearedAt(t.id, req.user.id),
+    `SELECT m.*, u.name author FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.thread_id = ? AND m.created_at < ? AND m.created_at > ? AND (m.deleted = 0 OR ?) ORDER BY m.created_at DESC LIMIT 60`,
+    t.id, before, clearedAt(t.id, req.user.id), seesDeleted(req.user) ? 1 : 0,
   ).reverse();
   const members = memberIds(t);
   const reads = Object.fromEntries(all('SELECT user_id, last_read_at FROM chat_members WHERE thread_id = ?', t.id).map((r) => [r.user_id, r.last_read_at]));
@@ -707,7 +708,7 @@ socialApi.post('/chat/threads/:id/image', (req, res) => {
 
 socialApi.get('/chat/images/:msgId', (req, res) => {
   const m = get('SELECT * FROM chat_messages WHERE id = ?', req.params.msgId);
-  if (!m || m.kind !== 'image' || m.deleted) throw new HttpError(404, 'Image introuvable');
+  if (!m || m.kind !== 'image' || (m.deleted && !seesDeleted(req.user))) throw new HttpError(404, 'Image introuvable');
   threadAccess(req.user, m.thread_id);
   const file = join(UPLOADS, `chat_${JSON.parse(m.data).file}.jpg`);
   if (!existsSync(file)) throw new HttpError(404, 'Image introuvable');

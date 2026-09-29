@@ -6,15 +6,14 @@
  * Confidentialité : les évaluations restent entre éducateurs. Les parents voient les objectifs
  * et observations explicitement partagés, les présences, les matchs et les infos pratiques de leur enfant.
  */
-import express, { Router } from 'express';
+import { Router } from 'express';
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { all, get, run, parse, UPLOADS } from './db.js';
 import { can, need, needTeam, isStaff, childIdsFor, newId, HttpError } from './auth.js';
-import { evTitle, parentsOf } from './convocations.js';
-import { todayYMD, seasonStart } from './occurrences.js';
+import { evTitle } from './convocations.js';
+import { todayYMD } from './occurrences.js';
 import { AWARDS, autoAwards, sendPlayerPhoto } from './reveal.js';
-import { notify } from './notify.js';
 import { guessGroup, teamInfo } from './groups.js';
 
 export const playersApi = Router();
@@ -208,9 +207,7 @@ playersApi.get('/players/:id', (req, res) => {
     objectives,
     attendance: { present: history.filter((h) => h.present).length, total: history.length, history: history.slice(0, 40) },
     matches: playerMatches(row.id, row.team_id),
-    parents: isStaff(u)
-      ? all('SELECT u.id, u.name, u.email FROM player_parents pp JOIN users u ON u.id = pp.user_id WHERE pp.player_id = ?', row.id)
-      : [],
+    parents: all('SELECT u.id, u.name, u.email, u.phone FROM player_parents pp JOIN users u ON u.id = pp.user_id WHERE pp.player_id = ?', row.id),
   });
 });
 
@@ -249,7 +246,7 @@ playersApi.delete('/players/:id', (req, res) => {
   if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
   run('DELETE FROM players WHERE id = ?', row.id);
   // Les photos et la vidéo de l'enfant partent avec sa fiche.
-  for (const f of [join(UPLOADS, `player_${row.id}.jpg`), ...walkoutFiles(row.id)]) if (existsSync(f)) unlinkSync(f);
+  for (const f of [join(UPLOADS, `player_${row.id}.jpg`), join(UPLOADS, `player_${row.id}.png`), ...walkoutFiles(row.id)]) if (existsSync(f)) unlinkSync(f);
   res.json({ ok: true });
 });
 
@@ -300,6 +297,7 @@ playersApi.put('/players/:id/info', (req, res) => {
     licence: { number: str(b.licence?.number, 40), status: ['ok', 'pending', 'missing'].includes(b.licence?.status) ? b.licence.status : 'missing' },
     certificate: ymd(b.certificate),
     photoConsent: ['yes', 'no'].includes(b.photoConsent) ? b.photoConsent : '',
+    city: str(b.city, 80),
   };
   run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
   res.json(playerOut(get('SELECT * FROM players WHERE id = ?', row.id), req.user, true));
@@ -407,9 +405,14 @@ function decodeImage(dataUrl, maxBytes) {
 playersApi.post('/players/:id/photo', (req, res) => {
   const row = playerAccess(req.user, req.params.id);
   if (isStaff(req.user)) need(req.user, 'players.manage');
-  writeFileSync(join(UPLOADS, `player_${row.id}.jpg`), decodeImage(req.body.image, 2_000_000));
+  // PNG : photo détourée, la transparence est conservée sur les cartes.
+  const alpha = /^data:image\/png;/.test(String(req.body.image || ''));
+  const buf = decodeImage(req.body.image, 3_000_000);
+  for (const e of ['jpg', 'png']) if (existsSync(join(UPLOADS, `player_${row.id}.${e}`))) unlinkSync(join(UPLOADS, `player_${row.id}.${e}`));
+  writeFileSync(join(UPLOADS, `player_${row.id}.${alpha ? 'png' : 'jpg'}`), buf);
   const data = JSON.parse(row.data);
   data.photo = now();
+  data.photoAlpha = alpha;
   run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
   res.json(playerOut(get('SELECT * FROM players WHERE id = ?', row.id), req.user, true));
 });
@@ -422,25 +425,19 @@ playersApi.get('/players/:id/photo', (req, res) => {
 /* ------------------------------------------------------------------ entrée sur le terrain (walkout) */
 
 /*
- * Pour l'entrée sur le terrain de la convocation : une photo en pied (idéalement détourée, PNG transparent)
- * et une vidéo de célébration à fond transparent (WebM VP9 pour Chrome et Android, MOV HEVC pour iPhone et Safari).
+ * Pour l'entrée sur le terrain de la convocation : une photo en pied (idéalement détourée, PNG transparent).
  * Mêmes droits que la photo : éducateurs qui gèrent l'effectif, parents de l'enfant.
  */
 const HERO_PHOTO = { png: 'image/png', jpg: 'image/jpeg' };
-const HERO_VIDEO = { webm: 'video/webm', mov: 'video/quicktime' };
 const heroPhotoFile = (pid, ext) => join(UPLOADS, `player_${pid}_walkout.${ext}`);
-const heroVideoFile = (pid, fmt) => join(UPLOADS, `player_${pid}_celebration.${fmt}`);
-const walkoutFiles = (pid) => [...Object.keys(HERO_PHOTO).map((e) => heroPhotoFile(pid, e)), ...Object.keys(HERO_VIDEO).map((f) => heroVideoFile(pid, f))];
+const walkoutFiles = (pid) => Object.keys(HERO_PHOTO).map((e) => heroPhotoFile(pid, e));
 
 /** Médias de l'entrée d'un joueur (URL) ; rien si l'autorisation photo est refusée. */
 export function heroOf(p) {
   const w = p.walkout || {};
   if (p.info?.photoConsent === 'no') return null;
-  const video = {};
-  for (const f of Object.keys(HERO_VIDEO)) if (w.video?.[f]) video[f] = `/api/players/${p.id}/walkout/video/${f}?v=${w.video[f]}`;
-  const photo = w.photo ? `/api/players/${p.id}/walkout/photo?v=${w.photo.v}` : null;
-  if (!photo && !Object.keys(video).length) return null;
-  return { photo, alpha: !!w.photo?.alpha, video };
+  if (!w.photo) return null;
+  return { photo: `/api/players/${p.id}/walkout/photo?v=${w.photo.v}`, alpha: !!w.photo.alpha };
 }
 
 function editWalkout(req) {
@@ -454,7 +451,7 @@ function saveWalkout(row, fn) {
   const w = { ...(data.walkout || {}) };
   fn(w);
   if (!w.photo) delete w.photo;
-  if (w.video && !Object.keys(w.video).length) delete w.video;
+  delete w.video;
   if (Object.keys(w).length) data.walkout = w;
   else delete data.walkout;
   run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
@@ -491,41 +488,6 @@ playersApi.get('/players/:id/walkout/photo', (req, res) => {
   res.type(HERO_PHOTO[ext]).sendFile(heroPhotoFile(row.id, ext));
 });
 
-const rawVideo = express.raw({ type: () => true, limit: '60mb' });
-
-playersApi.put('/players/:id/walkout/video/:format', rawVideo, (req, res) => {
-  const row = editWalkout(req);
-  const fmt = req.params.format;
-  if (!HERO_VIDEO[fmt]) throw new HttpError(400, 'Format de vidéo non pris en charge (WebM ou MOV)');
-  if (!Buffer.isBuffer(req.body) || req.body.length < 1000) throw new HttpError(400, 'Vidéo vide');
-  writeFileSync(heroVideoFile(row.id, fmt), req.body);
-  saveWalkout(row, (w) => {
-    w.video = { ...(w.video || {}), [fmt]: now() };
-  });
-  res.json(playerJson(req, row.id));
-});
-
-playersApi.delete('/players/:id/walkout/video/:format', (req, res) => {
-  const row = editWalkout(req);
-  const fmt = req.params.format;
-  if (!HERO_VIDEO[fmt]) throw new HttpError(400, 'Format inconnu');
-  if (existsSync(heroVideoFile(row.id, fmt))) unlinkSync(heroVideoFile(row.id, fmt));
-  saveWalkout(row, (w) => {
-    w.video = { ...(w.video || {}) };
-    delete w.video[fmt];
-  });
-  res.json(playerJson(req, row.id));
-});
-
-playersApi.get('/players/:id/walkout/video/:format', (req, res) => {
-  const row = playerAccess(req.user, req.params.id);
-  const fmt = req.params.format;
-  if (!HERO_VIDEO[fmt] || !existsSync(heroVideoFile(row.id, fmt))) throw new HttpError(404, 'Vidéo introuvable');
-  // Lecture par morceaux (Range) : indispensable pour les vidéos sur Safari.
-  res.set('Cache-Control', 'private, max-age=31536000, immutable');
-  res.type(HERO_VIDEO[fmt]).sendFile(heroVideoFile(row.id, fmt));
-});
-
 /* ------------------------------------------------------------------ tests mesurés */
 
 playersApi.post('/players/:id/tests', (req, res) => {
@@ -556,167 +518,4 @@ playersApi.delete('/players/:id/tests/:key', (req, res) => {
     run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
   }
   res.json(playerOut(get('SELECT * FROM players WHERE id = ?', row.id), req.user, true));
-});
-
-/* ------------------------------------------------------------------ bulletin de progression */
-
-function inRange(ymd, from, to) {
-  return ymd >= from && ymd <= to;
-}
-
-/** Photo figée de la période : ce que l'éducateur choisit de partager avec la famille, toujours en positif. */
-function bulletinSnapshot(row, from, to) {
-  const p = parse(row);
-  const profile = p.profile || {};
-  const ratings = profile.ratings || {};
-  const hist = profile.history || [];
-  const before = [...hist].reverse().find((h) => h.at <= from)?.d ?? hist[0]?.d ?? {};
-  const now = domainAverages(ratings);
-  const progress = Object.keys(DOMAINS).map((k) => ({ domain: k, before: before[k] ?? now[k] ?? null, now: now[k] ?? null }));
-  const strengths = Object.entries(ratings)
-    .filter(([, v]) => v >= 3)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([skill, v]) => ({ skill, v }));
-
-  const trainings = all('SELECT date, data FROM trainings WHERE team_id = ?', row.team_id)
-    .map((t) => ({ date: t.date.slice(0, 10), att: JSON.parse(t.data).attendance }))
-    .filter((t) => Array.isArray(t.att) && t.att.length && inRange(t.date, from, to));
-  const present = trainings.filter((t) => t.att.includes(p.id)).length;
-
-  let played = 0;
-  let opportunities = 0;
-  let minutes = 0;
-  let goals = 0;
-  let assists = 0;
-  const awards = [];
-  const avail = new Map(all('SELECT event_id, date, status FROM availability WHERE player_id = ?', p.id).map((a) => [`${a.event_id}|${a.date}`, a.status]));
-  for (const c of all('SELECT c.*, e.data edata FROM convocations c JOIN events e ON e.id = c.event_id WHERE c.team_id = ? AND c.published_at IS NOT NULL', row.team_id)) {
-    if (!inRange(c.date, from, to)) continue;
-    const d = JSON.parse(c.data);
-    const m = d.match;
-    if (!m?.finished && c.date >= todayYMD()) continue;
-    if (avail.get(`${c.event_id}|${c.date}`) !== 'no') opportunities++;
-    const absent = new Set(m?.absent || []);
-    if (!(d.selection || []).includes(p.id) || absent.has(p.id)) continue;
-    played++;
-    minutes += Math.round((m?.seconds?.[p.id] || 0) / 60);
-    goals += (m?.events || []).filter((e) => e.t === 'goal' && e.pid === p.id).length;
-    assists += (m?.events || []).filter((e) => e.t === 'goal' && e.assist === p.id).length;
-    if (m?.finished) {
-      const present = (d.selection || []).filter((x) => !absent.has(x));
-      const key = d.awards?.[p.id] ?? autoAwards(m, present)[p.id];
-      if (key && AWARDS[key]) awards.push({ key, ...AWARDS[key], date: c.date, title: evTitle(JSON.parse(c.edata)) });
-    }
-  }
-
-  const goals_ = all('SELECT data, visibility FROM player_objectives WHERE player_id = ?', p.id).map((g) => ({ ...JSON.parse(g.data), visibility: g.visibility }));
-  const doneGoals = goals_.filter((g) => g.status === 'done' && g.doneAt && inRange(new Date(g.doneAt).toISOString().slice(0, 10), from, to));
-  const activeGoals = goals_.filter((g) => g.status === 'active');
-  const records = Object.entries(profile.tests || {})
-    .map(([key, list]) => {
-      if (!list.length) return null;
-      const lower = TESTS[key]?.lower;
-      const best = list.reduce((a, b) => ((lower ? b.v < a.v : b.v > a.v) ? b : a));
-      return { key, best: best.v, first: list[0].v, count: list.length };
-    })
-    .filter(Boolean);
-
-  return {
-    progress,
-    strengths,
-    attendance: { present, total: trainings.length },
-    matches: { played, opportunities, minutes, goals, assists },
-    awards,
-    goals: {
-      done: doneGoals.map((g) => ({ title: g.title, domain: g.domain })),
-      active: activeGoals.map((g) => ({ title: g.title, domain: g.domain, progress: g.progress })),
-    },
-    records,
-    positions: profile.positions ?? [],
-  };
-}
-
-const bulletinOut = (b) => {
-  const d = JSON.parse(b.data);
-  return { id: b.id, playerId: b.player_id, authorName: b.author_name ?? d.authorName ?? null, publishedAt: b.published_at, createdAt: b.created_at, ...d };
-};
-
-playersApi.get('/players/:id/bulletins', (req, res) => {
-  const row = playerAccess(req.user, req.params.id);
-  const staff = isStaff(req.user) && can(req.user, 'notes.view');
-  res.json(
-    all(`SELECT b.*, u.name author_name FROM bulletins b LEFT JOIN users u ON u.id = b.author_id WHERE player_id = ? ${staff ? '' : 'AND published_at IS NOT NULL'} ORDER BY created_at DESC`, row.id).map(bulletinOut),
-  );
-});
-
-playersApi.get('/bulletins/:id', (req, res) => {
-  const b = get('SELECT b.*, u.name author_name FROM bulletins b LEFT JOIN users u ON u.id = b.author_id WHERE b.id = ?', req.params.id);
-  if (!b) throw new HttpError(404, 'Bulletin introuvable');
-  const row = playerAccess(req.user, b.player_id);
-  if (!isStaff(req.user) && !b.published_at) throw new HttpError(404, 'Bulletin introuvable');
-  const p = parse(row);
-  const team = get('SELECT category, color FROM teams WHERE id = ?', row.team_id);
-  res.json({
-    ...bulletinOut(b),
-    player: { id: p.id, firstName: p.firstName, lastName: p.lastName ?? '', number: p.number, birthYear: p.birthYear, photo: p.photo && p.info?.photoConsent !== 'no' ? `/api/players/${p.id}/photo?v=${p.photo}` : null },
-    team,
-    club: get('SELECT name FROM club WHERE id = 1')?.name ?? '',
-  });
-});
-
-playersApi.post('/players/:id/bulletins', (req, res) => {
-  need(req.user, 'notes.write');
-  const row = playerAccess(req.user, req.params.id);
-  if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
-  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.body.from || '') ? req.body.from : seasonStart();
-  const to = /^\d{4}-\d{2}-\d{2}$/.test(req.body.to || '') ? req.body.to : todayYMD();
-  const data = {
-    period: str(req.body.period, 60) || 'Bulletin',
-    from,
-    to,
-    message: str(req.body.message, 2000),
-    authorName: req.user.name,
-    snapshot: bulletinSnapshot(row, from, to),
-  };
-  const id = newId();
-  const publish = !!req.body.publish;
-  run('INSERT INTO bulletins VALUES (?, ?, ?, ?, ?, ?)', id, row.id, req.user.id, JSON.stringify(data), publish ? now() : null, now());
-  if (publish) announceBulletin(row, id, data.period);
-  res.json(bulletinOut(get('SELECT * FROM bulletins WHERE id = ?', id)));
-});
-
-function announceBulletin(row, id, period) {
-  const p = parse(row);
-  notify(parentsOf(row.id).map((u) => u.id), {
-    kind: 'bulletin',
-    title: `📘 Le bulletin de ${p.firstName} est arrivé`,
-    body: `${period} : ses progrès, ses récompenses et le mot de l’éducateur.`,
-    url: `/bulletins/${id}`,
-  });
-}
-
-playersApi.patch('/bulletins/:id', (req, res) => {
-  need(req.user, 'notes.write');
-  const b = get('SELECT * FROM bulletins WHERE id = ?', req.params.id);
-  if (!b) throw new HttpError(404, 'Bulletin introuvable');
-  const row = playerAccess(req.user, b.player_id);
-  if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
-  const data = JSON.parse(b.data);
-  if (req.body.message !== undefined) data.message = str(req.body.message, 2000);
-  if (req.body.refresh) data.snapshot = bulletinSnapshot(row, data.from, data.to);
-  const publish = req.body.publish === true && !b.published_at;
-  run('UPDATE bulletins SET data = ?, published_at = COALESCE(published_at, ?) WHERE id = ?', JSON.stringify(data), publish ? now() : null, b.id);
-  if (publish) announceBulletin(row, b.id, data.period);
-  res.json(bulletinOut(get('SELECT * FROM bulletins WHERE id = ?', b.id)));
-});
-
-playersApi.delete('/bulletins/:id', (req, res) => {
-  need(req.user, 'notes.write');
-  const b = get('SELECT * FROM bulletins WHERE id = ?', req.params.id);
-  if (!b) return res.json({ ok: true });
-  playerAccess(req.user, b.player_id);
-  if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
-  run('DELETE FROM bulletins WHERE id = ?', b.id);
-  res.json({ ok: true });
 });
