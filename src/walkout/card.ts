@@ -212,13 +212,15 @@ export function drawCardFront(card: PlayerCard, team: { category: string; color:
   ctx.fillStyle = t.line;
   ctx.fillRect(124.5, 254, 0.8, 62);
 
-  // Pied de carte.
-  ctx.textAlign = 'center';
-  ctx.font = font(800, 13);
-  ctx.globalAlpha = 0.9;
-  ctx.fillStyle = ink;
-  ctx.fillText([card.number != null ? `#${card.number}` : '', team.category, 'CONVOQUÉ'].filter(Boolean).join('  ·  '), 125, 332);
-  ctx.globalAlpha = 1;
+  // Pied de carte : le numéro seul.
+  if (card.number != null) {
+    ctx.textAlign = 'center';
+    ctx.font = font(800, 13);
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = ink;
+    ctx.fillText(`#${card.number}`, 125, 332);
+    ctx.globalAlpha = 1;
+  }
   return c;
 }
 

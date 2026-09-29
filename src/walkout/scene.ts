@@ -16,10 +16,9 @@ import {
 
 /**
  * Entrée sur le terrain façon FIFA, en 3D :
- * la caméra avance dans le tunnel des vestiaires (les néons s'allument un à un), s'arrête devant les portes,
- * qui s'ouvrent dans un flash ; elle continue d'avancer dans un espace de lumière rouge où surgissent, une à une,
- * toutes les lettres du prénom ; elle débouche enfin sur l'estrade : la carte à gauche,
- * l'enfant (photo en pied, en calque HTML) à droite, pyrotechnie et feux d'artifice.
+ * la caméra avance doucement dans le tunnel des vestiaires (les néons s'allument un à un) où surgissent, une à une,
+ * toutes les lettres du prénom ; elle s'arrête devant les portes, qui s'ouvrent dans un flash sur l'estrade :
+ * la carte à gauche, l'enfant (photo en pied, en calque HTML) à droite, pyrotechnie et feux d'artifice.
  */
 
 export interface WalkoutInput {
@@ -28,6 +27,8 @@ export interface WalkoutInput {
   logo: HTMLImageElement | null;
   /** Lettres révélées : tout le prénom. */
   letters: string[];
+  /** Prénom affiché sur l'écran géant. */
+  name: string;
   cardFront: HTMLCanvasElement;
   cardBack: HTMLCanvasElement;
   /** Une photo en pied est posée à droite de la carte. */
@@ -118,18 +119,34 @@ const hot = (color: THREE.ColorRepresentation, k: number) => new THREE.Color(col
 
 /* ------------------------------------------------------------------ décor */
 
-const TUNNEL = { start: 9, end: -64, w: 6.4, h: 4.2 };
-const DOOR_Z = -64;
-const STATION_Z0 = -96;
-const STATION_GAP = 30;
-const STAGE_Z = -216;
-const FLASH = 5.5;
+const TUNNEL = { start: 9, w: 6.4, h: 4.2 };
+/** Lettres dans le couloir : hauteur d'une majuscule et hauteur de son centre (loin du sol et des néons). */
+const LETTER = { h: 1.85, y: 2.05 };
+const FIRST_LETTER_Z = -16;
+/** Distance entre la caméra et la lettre quand elle surgit. */
+const VIEW = 9.5;
+/** L'estrade, juste derrière les portes. */
+const STAGE_GAP = 60;
 const BEAT = 0.6;
+/** Paysage : largeur (px) laissée à droite au tableau des convoqués (voir `.fw-roster`). */
+const ROSTER_PX = 300;
+
+/** Emplacements : une lettre tous les `gap` mètres dans le couloir, puis la porte, puis l'estrade. */
+function plan(n: number) {
+  // Plus le prénom est long, plus les lettres s'enchaînent vite et rapprochées.
+  const step = BEAT * (n <= 3 ? 4 : n <= 6 ? 3 : 2);
+  const gap = n <= 6 ? 12 : 9;
+  const letterZ = Array.from({ length: n }, (_, i) => FIRST_LETTER_Z - i * gap);
+  const door = n ? letterZ[n - 1] - 14 : -40;
+  return { step, letterZ, door, stage: door - STAGE_GAP };
+}
+type Plan = ReturnType<typeof plan>;
 
 interface Timeline {
   z: (t: number) => [number, number];
   letters: number[];
   collects: number[];
+  door: number;
   stage: number;
   hero: number;
   spin: number;
@@ -137,42 +154,32 @@ interface Timeline {
   done: number;
 }
 
-/** Rythme des lettres : plus le prénom est long, plus elles s'enchaînent vite et rapprochées (l'estrade ne bouge pas). */
-function letterPace(n: number) {
-  return { step: BEAT * (n <= 3 ? 4 : n <= 6 ? 3 : 2), gap: n > 1 ? Math.min(STATION_GAP, 90 / (n - 1)) : STATION_GAP };
-}
-
-function timeline(n: number, finalZ: number): Timeline {
-  const { step, gap } = letterPace(n);
+function timeline(p: Plan, finalZ: number): Timeline {
+  const n = p.letterZ.length;
+  // Départ en douceur, puis chaque lettre surgit devant la caméra qui ralentit à son approche.
   const keys: [number, number][] = [
     [0, 5.6],
     [0.7, 5.3],
-    [2.0, -7],
-    [3.3, -30],
-    [4.4, -50],
-    [5.0, -57.4],
-    [5.55, -59.6],
-    [6.05, -67.5],
   ];
   const letters: number[] = [];
   const collects: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const zi = STATION_Z0 - i * gap;
-    const a = FLASH + 2 * BEAT + i * step;
-    const hold = step * 0.69;
+  p.letterZ.forEach((z, i) => {
+    const a = 3 + i * p.step;
+    const hold = p.step * 0.69;
     letters.push(a);
     collects.push(a + hold);
-    if (i === 0) keys.push([6.5, -77]);
-    keys.push([a, zi + 16.5], [a + step / 3, zi + 13.8], [a + hold, zi + 11.8]);
-  }
-  const lastA = letters.length ? letters[letters.length - 1] : FLASH + BEAT;
-  const stage = lastA + (n ? step : 4 * BEAT);
-  if (!n) keys.push([6.6, -80]);
+    keys.push([a, z + VIEW], [a + p.step / 3, z + VIEW - 1.5], [a + hold, z + VIEW - 2.5]);
+  });
+  // Arrêt devant les portes (grondement), qui s'ouvrent sur l'estrade.
+  const door = n ? collects[n - 1] + 2.2 : 4.6;
+  keys.push([door - 1.1, p.door + 9], [door - 0.5, p.door + 6.6], [door + 0.05, p.door + 4.4], [door + 0.55, p.door - 3.5]);
+  const stage = door + 1.3;
   keys.push([stage, finalZ + 17], [stage + 0.75, finalZ + 3.5], [stage + 1.8, finalZ]);
   return {
     z: monotone(keys),
     letters,
     collects,
+    door,
     stage,
     hero: stage + 0.45,
     spin: stage + 0.55,
@@ -548,6 +555,10 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     return m;
   };
 
+  const P = plan(input.letters.length);
+  const DOOR_Z = P.door;
+  const STAGE_Z = P.stage;
+
   const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 400);
   camera.position.set(0, 1.65, 5.6);
 
@@ -590,8 +601,8 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
 
   const tunnel = new THREE.Group();
   scene.add(tunnel);
-  const len = TUNNEL.start - TUNNEL.end;
-  const cz = (TUNNEL.start + TUNNEL.end) / 2;
+  const len = TUNNEL.start - DOOR_Z;
+  const cz = (TUNNEL.start + DOOR_Z) / 2;
 
   const floorTex = track(canvasTexture(floorTexture()));
   floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
@@ -783,7 +794,9 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
 
   /* ---------------------------------------------------------------- espace des lettres */
 
+  // Décor conçu pour une porte en z = -64 : décalé derrière la vraie porte.
   const world = new THREE.Group();
+  world.position.z = DOOR_Z + 64;
   scene.add(world);
   const sky = new THREE.Mesh(track(new THREE.SphereGeometry(320, 32, 16)), track(skyMaterial(accent)));
   sky.position.z = -150;
@@ -820,20 +833,6 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     world.add(dust);
   }
 
-  // Volutes de fumée le long du parcours : de la profondeur dans l'espace lumineux.
-  const haze: THREE.Sprite[] = [];
-  for (let i = 0; i < (mobile ? 18 : 30); i++) {
-    const mat = track(
-      new THREE.SpriteMaterial({ map: texSmoke, color: new THREE.Color().lerpColors(accent, new THREE.Color(0xffffff), 0.35), transparent: true, opacity: 0.12 + Math.random() * 0.1, depthWrite: false, rotation: Math.random() * 6 }),
-    );
-    const sp = new THREE.Sprite(mat);
-    const side = i % 2 ? 1 : -1;
-    sp.position.set(side * (2.5 + Math.random() * 7), 0.6 + Math.random() * 4, -74 - Math.random() * 110);
-    sp.scale.setScalar(5 + Math.random() * 6);
-    world.add(sp);
-    haze.push(sp);
-  }
-
   // Traînées de vitesse (visibles quand la caméra fonce).
   const streakMat = track(new THREE.MeshBasicMaterial({ color: hot(0xffffff, 2), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
   {
@@ -850,54 +849,58 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     world.add(streaks);
   }
 
-  // Stations des lettres.
+  // Lettres du prénom, dans le couloir : assez petites pour ne toucher ni le sol ni les néons du plafond.
   const font = new Font(fontData as never);
   const faceMat = track(shiny(new THREE.MeshStandardMaterial({ color: 0xe8262e, metalness: 1, roughness: 0.3, emissive: 0x5a0306, emissiveIntensity: 0.25 }), 0.95));
   const sideMat = track(shiny(new THREE.MeshStandardMaterial({ color: 0x7a0a0f, metalness: 1, roughness: 0.34, emissive: 0x160001 }), 1));
-  const letterSparks = new Sparks(mobile ? 700 : 1100, texSpark, 0.12, -1.2, 0.965);
-  world.add(letterSparks.points);
+  const letterSparks = new Sparks(mobile ? 500 : 800, texSpark, 0.08, -1.2, 0.965);
+  scene.add(letterSparks.points);
   // Lettre absente de la police : on retombe sur la lettre sans accent.
   const glyphs = (fontData as { glyphs: Record<string, unknown> }).glyphs;
   const glyph = (ch: string) => (glyphs[ch] ? ch : glyphs[ch.normalize('NFD')[0]] ? ch.normalize('NFD')[0] : '?');
-  const { gap: letterGap } = letterPace(input.letters.length);
+  // Taille de police telle qu'une majuscule mesure LETTER.h.
+  const size = (() => {
+    const g = new TextGeometry('H', { font, size: 1, depth: 0.1, curveSegments: 2 });
+    g.computeBoundingBox();
+    const h = g.boundingBox!.max.y - g.boundingBox!.min.y;
+    g.dispose();
+    return LETTER.h / h;
+  })();
   const stations = input.letters.map(glyph).map((ch, i) => {
     const g = new THREE.Group();
-    g.position.set(0, 0, STATION_Z0 - i * letterGap);
-    world.add(g);
+    g.position.set(0, 0, P.letterZ[i]);
+    scene.add(g);
+    const k = size / 3.1;
     const geo = track(
-      new TextGeometry(ch, { font, size: 3.1, depth: 0.55, curveSegments: 10, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.055, bevelSegments: 4 }),
+      new TextGeometry(ch, { font, size, depth: 0.55 * k, curveSegments: 10, bevelEnabled: true, bevelThickness: 0.08 * k, bevelSize: 0.055 * k, bevelSegments: 4 }),
     );
     geo.computeBoundingBox();
     const bb = geo.boundingBox!;
     geo.translate(-(bb.min.x + bb.max.x) / 2, -(bb.min.y + bb.max.y) / 2, -(bb.min.z + bb.max.z) / 2);
     const letter = new THREE.Mesh(geo, [faceMat, sideMat]);
     const holder = new THREE.Group();
-    holder.position.y = 2.75;
+    holder.position.y = LETTER.y;
     holder.add(letter);
     g.add(holder);
+    // Soleil derrière la lettre, contenu entre le sol et le plafond.
     const rays = new THREE.Mesh(
-      track(new THREE.PlaneGeometry(11, 11)),
+      track(new THREE.PlaneGeometry(3.8, 3.8)),
       track(new THREE.MeshBasicMaterial({ map: texRays, color: hot(flare, 1.1), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false })),
     );
-    rays.position.set(0, 2.75, -1.6);
+    rays.position.set(0, LETTER.y, -0.8);
     g.add(rays);
-    const ringA = new THREE.Mesh(track(new THREE.TorusGeometry(2.35, 0.03, 8, 160)), track(new THREE.MeshBasicMaterial({ color: hot(accent, 2.6), transparent: true })));
-    const ringB = new THREE.Mesh(track(new THREE.TorusGeometry(2.62, 0.012, 6, 160)), track(new THREE.MeshBasicMaterial({ color: hot(flare, 2), transparent: true })));
-    ringA.position.set(0, 2.75, -0.7);
-    ringB.position.set(0, 2.75, -0.9);
-    g.add(ringA, ringB);
-    const flash = glowSprite(new THREE.Color(0xfff4dc), 9, 0);
-    flash.position.set(0, 2.75, 0.5);
+    const flash = glowSprite(new THREE.Color(0xfff4dc), 4.2, 0);
+    flash.position.set(0, LETTER.y, 0.4);
     g.add(flash);
     const floorGlow = new THREE.Mesh(
-      track(new THREE.PlaneGeometry(10, 10)),
+      track(new THREE.PlaneGeometry(5, 5)),
       track(new THREE.MeshBasicMaterial({ map: texGlow, color: hot(accent, 1.2), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })),
     );
     floorGlow.rotation.x = -Math.PI / 2;
     floorGlow.position.y = 0.02;
     g.add(floorGlow);
     g.visible = false;
-    return { g, holder, rays, ringA, ringB, flash, floorGlow };
+    return { g, holder, rays, flash, floorGlow };
   });
 
   /* ---------------------------------------------------------------- estrade */
@@ -929,7 +932,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
   stageSpill.position.y = 0.015;
   stage.add(stageSpill);
 
-  const screenTex = track(canvasTexture(screenTexture(input.team.color, input.logo, input.team.category, input.screenLine)));
+  const screenTex = track(canvasTexture(screenTexture(input.team.color, input.logo, input.name, input.screenLine)));
   screenTex.wrapS = THREE.RepeatWrapping;
   screenTex.repeat.x = -1;
   screenTex.offset.x = 1;
@@ -1072,7 +1075,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
 
   /* ---------------------------------------------------------------- cadrage final */
 
-  let tl = timeline(stations.length, STAGE_Z + 9);
+  let tl = timeline(P, STAGE_Z + 9);
   const final = { y: 1.7, look: new THREE.Vector3(0, 1.7, STAGE_Z), z: STAGE_Z + 9, fov: 45 };
   let wideFov = 60;
   const layout = () => {
@@ -1089,21 +1092,23 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     camera.aspect = aspect;
     const portrait = aspect < 0.9;
     final.fov = portrait ? 50 : 34;
-    // L'estrade occupe la bande entre le prénom (en haut) et les infos du match (en bas).
-    const top = portrait ? 0.2 : 0.31;
-    const bottom = portrait ? 0.66 : 0.71;
+    // L'estrade occupe la bande au-dessus des infos du match (et, en portrait, du tableau des convoqués).
+    const top = portrait ? 0.12 : 0.17;
+    const bottom = portrait ? 0.56 : 0.72;
+    // Paysage : la colonne de droite est laissée au tableau des convoqués, l'estrade se centre sur le reste.
+    const reserve = portrait ? 0 : clamp(ROSTER_PX / w, 0, 0.4);
     const box = input.hero ? { x0: -2.1, x1: 2.45, y0: 0.45, y1: 3.4 } : { x0: -1.3, x1: 1.3, y0: 0.45, y1: 3.6 };
     const tv = Math.tan(THREE.MathUtils.degToRad(final.fov / 2));
-    const fw = portrait ? 0.97 : 0.62;
+    const fw = portrait ? 0.97 : 0.66 * (1 - reserve);
     const d = clamp(Math.max((box.x1 - box.x0) / (2 * fw * tv * aspect), (box.y1 - box.y0) / (2 * (bottom - top) * tv)), 5.5, 24);
     const cy = (box.y0 + box.y1) / 2;
-    const cx = (box.x0 + box.x1) / 2;
+    const cx = (box.x0 + box.x1) / 2 + reserve * d * tv * aspect;
     // Le centre de l'écran vise yAim : le contenu se retrouve dans la bande [top, bottom].
     const yAim = cy - (1 - (top + bottom)) * d * tv;
     final.z = STAGE_Z + d;
     final.y = Math.max(0.9, yAim);
     final.look.set(cx, yAim, STAGE_Z);
-    tl = timeline(stations.length, final.z);
+    tl = timeline(P, final.z);
   };
 
   /* ---------------------------------------------------------------- état */
@@ -1111,7 +1116,6 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
   let audio: WalkoutAudio | null = null;
   let running = false;
   let t = 0;
-  let speed = 1;
   let clock = 0;
   let prev = performance.now();
   let raf = 0;
@@ -1137,12 +1141,12 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     if (audio && !silent.v) fn(audio);
   };
 
-  function burstLetter(i: number) {
+  function burstLetter(i: number, n = 140) {
     const s = stations[i];
-    const c = new THREE.Vector3(0, 2.75, s.g.position.z);
-    for (let k = 0; k < 160; k++) {
+    const c = new THREE.Vector3(0, LETTER.y, s.g.position.z);
+    for (let k = 0; k < n; k++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = 3 + Math.random() * 6;
+      const sp = 1.5 + Math.random() * 3;
       v3.set(Math.cos(a) * sp, Math.sin(a) * sp, (Math.random() - 0.2) * 3);
       letterSparks.emit(c, v3, Math.random() < 0.7 ? flare : accent, 0.8 + Math.random() * 0.9);
     }
@@ -1169,7 +1173,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     const dt = Math.min(0.05, (now - prev) / 1000);
     prev = now;
     clock += dt;
-    if (running && !devFrozen) t += dt * speed;
+    if (running && !devFrozen) t += dt;
     update(dt);
     composer.render(dt);
     // Qualité adaptative : on baisse la résolution si l'appareil peine.
@@ -1190,11 +1194,14 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     const T = t;
     const [zCam, vz] = tl.z(T);
     const speedAbs = Math.abs(vz);
+    // Ouverture des portes (flash blanc) : tout le reste s'y cale.
+    const D = tl.door;
+    const firstLetter = tl.letters.length ? tl.letters[0] : D;
 
-    /* ----- tunnel : néons, pas, porte ----- */
-    const inTunnel = T < FLASH + 0.8;
+    /* ----- tunnel : néons, pas, lettres, porte ----- */
+    const inTunnel = T < D + 0.8;
     tunnel.visible = inTunnel;
-    doorGroup.visible = T < FLASH + 1.2;
+    doorGroup.visible = T < D + 1.2;
     rows.forEach((r, i) => {
       const target = running && T >= r.at ? 1 : 0.012;
       if (running && T >= r.at && r.on < 0.5) {
@@ -1206,10 +1213,11 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
       r.on += (target - r.on) * Math.min(1, dt * 30);
       r.mat.color.copy(coolWhite).multiplyScalar(1.9 * r.on * flicker);
     });
-    // Les 4 lumières suivent les néons allumés les plus proches devant la caméra.
+    // 3 lumières suivent les néons allumés les plus proches devant la caméra, la 4e éclaire la lettre en cours.
     if (inTunnel) {
-      const ahead = rows.filter((r) => r.z < zCam + 3).slice(0, 4);
+      const ahead = rows.filter((r) => r.z < zCam + 3).slice(0, 3);
       pool.forEach((l, i) => {
+        if (i === 3) return;
         const r = ahead[i];
         l.color.copy(coolWhite);
         l.distance = 13;
@@ -1218,34 +1226,46 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
         l.position.set(0, 2.2, r.z + 0.6);
         l.intensity = 22 * r.on;
       });
+      const cur = stations.findIndex((_, i) => T > tl.letters[i] - 0.3 && T < tl.collects[i] + 0.4);
+      const l = pool[3];
+      if (cur < 0) l.intensity = 0;
+      else {
+        l.position.set(0, 3.4, P.letterZ[cur] + 2.5);
+        l.color.copy(flare);
+        l.distance = 9;
+        l.intensity = 8 * smooth(tl.letters[cur] - 0.3, tl.letters[cur] + 0.2, T) * (1 - smooth(tl.collects[cur], tl.collects[cur] + 0.4, T));
+      }
     }
-    if (running && T > 0.9 && T < 5.1 && T >= nextStep) {
+    // Crampons sur le béton jusqu'à la première lettre (ensuite, la musique).
+    if (running && T > 0.9 && T < firstLetter - 0.2 && T >= nextStep) {
       const i = Math.round(nextStep / 0.4);
       sfx((a) => a.step(i % 2 ? 0.25 : -0.25));
       nextStep += 0.4;
     }
-    fire('rumble', 4.3, () => sfx((a) => a.rumble(FLASH - 4.3 - 0.2)));
-    const glowUp = smooth(4.2, FLASH - 0.3, T);
-    (gap.material as THREE.MeshBasicMaterial).color.setScalar(5 + glowUp * 9);
-    gapGlow.material.opacity = 0.35 + glowUp * 0.35 + (running ? 0 : Math.sin(clock * 2) * 0.08);
+    fire('rumble', D - 1.2, () => sfx((a) => a.rumble(0.7)));
+    const glowUp = smooth(D - 1.3, D - 0.3, T);
+    // Lumière derrière la porte : discrète tant qu'on en est loin, pour ne pas faire un soleil derrière les lettres.
+    const near = 0.12 + 0.88 * smooth(22, 12, zCam - DOOR_Z);
+    (gap.material as THREE.MeshBasicMaterial).color.setScalar((5 + glowUp * 9) * (0.3 + 0.7 * near));
+    gapGlow.material.opacity = (0.35 + glowUp * 0.35 + (running ? 0 : Math.sin(clock * 2) * 0.08)) * near;
     gapGlow.scale.set(1.3 + glowUp * 1.2, 5.2, 1);
-    (spill.material as THREE.MeshBasicMaterial).opacity = 0.25 + glowUp * 0.35;
-    const open = easeOutCubic((T - (FLASH - 0.3)) / 0.8);
+    (spill.material as THREE.MeshBasicMaterial).opacity = (0.25 + glowUp * 0.35) * near;
+    const open = easeOutCubic((T - (D - 0.3)) / 0.8);
     leaves[0].rotation.y = open * 1.75;
     leaves[1].rotation.y = -open * 1.75;
-    bigGlow.material.opacity = smooth(FLASH - 0.3, FLASH, T) * (1 - smooth(FLASH + 0.2, FLASH + 1, T));
-    (doorRays.material as THREE.MeshBasicMaterial).opacity = 0.08 + glowUp * 0.35 + smooth(FLASH - 0.35, FLASH - 0.1, T) * 0.5;
+    bigGlow.material.opacity = smooth(D - 0.3, D, T) * (1 - smooth(D + 0.2, D + 1, T));
+    (doorRays.material as THREE.MeshBasicMaterial).opacity = (0.08 + glowUp * 0.35) * near + smooth(D - 0.35, D - 0.1, T) * 0.5;
     doorRays.rotation.z = clock * 0.05;
-    leakMat.color.setScalar(3 + glowUp * 6);
-    fire('door', FLASH - 0.3, () => {
+    leakMat.color.setScalar((3 + glowUp * 6) * (0.3 + 0.7 * near));
+    fire('door', D - 0.3, () => {
       sfx((a) => a.doorOpen());
       onEvent({ type: 'door' });
     });
-    // Le beat démarre sur le flash : les lettres tombent sur les temps forts.
-    fire('music', FLASH - 0.05, () => sfx((a) => a.startMusic()));
+    // Le beat démarre avec la première lettre : les suivantes tombent sur les temps forts.
+    fire('music', firstLetter - 0.05, () => sfx((a) => a.startMusic()));
 
     /* ----- post : flash, halo, aberration ----- */
-    const flash = smooth(FLASH - 0.2, FLASH, T) * (1 - smooth(FLASH, FLASH + 0.9, T));
+    const flash = smooth(D - 0.2, D, T) * (1 - smooth(D, D + 0.9, T));
     const landFlash = T > tl.land ? Math.max(0, 1 - (T - tl.land) / 0.35) * 0.55 : 0;
     const stageFlash = T > tl.stage ? Math.max(0, 1 - (T - tl.stage) / 0.3) * 0.35 : 0;
     finish.uniforms.uFlash.value = Math.max(flash * 0.95, landFlash, stageFlash);
@@ -1253,13 +1273,13 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     finish.uniforms.uAberr.value = 0.0015 + clamp(speedAbs / 45) * 0.012;
     // Halo plus discret dans le tunnel (beaucoup de néons), plus généreux ensuite.
     const onStage = smooth(tl.land + 0.2, tl.land + 1.2, T);
-    bloom.strength = lerp(lerp(0.32, 0.6, smooth(FLASH, FLASH + 1, T)), 0.34, onStage) + flash * 1.4 + clamp(speedAbs / 50) * 0.2;
-    bloom.radius = lerp(lerp(0.18, 0.4, smooth(FLASH, FLASH + 1, T)), 0.22, onStage);
+    bloom.strength = lerp(lerp(0.32, 0.6, smooth(D, D + 1, T)), 0.34, onStage) + flash * 1.4 + clamp(speedAbs / 50) * 0.2;
+    bloom.radius = lerp(lerp(0.18, 0.4, smooth(D, D + 1, T)), 0.22, onStage);
     renderer.toneMappingExposure = 1.05 + flash * 0.9;
     streakMat.opacity = clamp((speedAbs - 12) / 30) * 0.75;
 
     /* ----- brouillard selon la zone ----- */
-    const zone = smooth(FLASH - 0.1, FLASH + 0.6, T);
+    const zone = smooth(D - 0.1, D + 0.6, T);
     fog.density = lerp(0.012, 0.021, zone);
     fog.color.setRGB(lerp(0.016, accent.r * 0.05, zone), lerp(0.02, accent.g * 0.05, zone), lerp(0.035, accent.b * 0.06 + 0.02, zone));
     gridU.uCam.value.set(0, 0, zCam);
@@ -1271,32 +1291,24 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
       b.mesh.rotation.x = Math.cos(clock * b.speed * 0.7 + i) * 0.15;
     });
 
-    haze.forEach((h, i) => (h.material.rotation += dt * (i % 2 ? 0.05 : -0.04)));
-
     /* ----- lettres ----- */
     stations.forEach((s, i) => {
       const a = tl.letters[i];
       const c = tl.collects[i];
-      s.g.visible = T > a - 2 && T < c + 1;
+      s.g.visible = T > a - 0.1 && T < c + 0.6;
       if (!s.g.visible) return;
       const p = (T - a) / 0.6;
-      const gone = easeInCubic((T - c) / 0.4);
-      const sc = T < a ? 0.001 : Math.max(0.001, easeOutBack(p) * (1 - gone * 0.75));
+      // La lettre surgit en tournant, puis s'efface sur place (rétrécit en pivotant) avant que la caméra ne la traverse.
+      const gone = easeInCubic((T - c) / 0.35);
+      const sc = T < a ? 0.001 : Math.max(0.001, easeOutBack(p) * (1 - gone));
       s.holder.scale.setScalar(sc);
-      s.holder.rotation.y = (1 - easeOutCubic(p)) * -1.4 + Math.sin(clock * 1.3 + i) * 0.14 * smooth(0.6, 1.2, T - a);
+      s.holder.rotation.y = (1 - easeOutCubic(p)) * -1.4 + Math.sin(clock * 1.3 + i) * 0.14 * smooth(0.6, 1.2, T - a) + gone * 2.4;
       s.holder.rotation.x = Math.sin(clock * 0.9 + i) * 0.05;
-      s.holder.position.y = 2.75 + gone * 6 + Math.sin(clock * 1.6) * 0.05;
+      s.holder.position.y = LETTER.y + Math.sin(clock * 1.6) * 0.04;
       const on = smooth(a - 0.05, a + 0.3, T) * (1 - smooth(c, c + 0.35, T));
-      (s.rays.material as THREE.MeshBasicMaterial).opacity = on * 0.26;
+      (s.rays.material as THREE.MeshBasicMaterial).opacity = on * 0.07;
       s.rays.rotation.z += dt * 0.15;
-      const ringS = T < a ? 0.001 : easeOutBack((T - a - 0.08) / 0.7, 1.3) * (1 + gone * 0.8);
-      s.ringA.scale.setScalar(Math.max(0.001, ringS));
-      s.ringB.scale.setScalar(Math.max(0.001, ringS * 1.02));
-      s.ringA.rotation.set(Math.sin(clock * 0.8) * 0.25, Math.cos(clock * 0.6) * 0.25, clock * 0.4);
-      s.ringB.rotation.set(Math.cos(clock * 0.7) * 0.3, Math.sin(clock * 0.5) * 0.3, -clock * 0.3);
-      (s.ringA.material as THREE.MeshBasicMaterial).opacity = on;
-      (s.ringB.material as THREE.MeshBasicMaterial).opacity = on;
-      s.flash.material.opacity = T > a ? Math.max(0, 1 - (T - a) / 0.3) : 0;
+      s.flash.material.opacity = T > a ? Math.max(0, 1 - (T - a) / 0.3) * 0.8 : 0;
       (s.floorGlow.material as THREE.MeshBasicMaterial).opacity = on * 0.7;
       fire(`letter${i}`, a, () => {
         burstLetter(i);
@@ -1304,30 +1316,17 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
         onEvent({ type: 'letter', index: i });
       });
       fire(`collect${i}`, c, () => {
-        sfx((au) => (i < stations.length - 1 ? au.whoosh(0.7) : au.riser(tl.stage - c)));
+        burstLetter(i, 50);
+        sfx((au) => (i < stations.length - 1 ? au.whoosh(0.7) : au.riser(D - 0.3 - c)));
         onEvent({ type: 'collect', index: i });
       });
     });
-    // Lumières sur la lettre en cours.
-    if (!inTunnel && T < tl.stage - 0.2) {
-      const cur = stations.findIndex((_, i) => T < tl.collects[i] + 0.4);
-      const s = stations[cur];
-      pool.forEach((l, i) => {
-        if (!s) return void (l.intensity = 0);
-        const z = s.g.position.z;
-        const on = smooth(tl.letters[cur] - 0.3, tl.letters[cur] + 0.2, T);
-        l.distance = 14;
-        if (i === 0) l.position.set(-2.5, 5.5, z + 4.5), l.color.set(0xffffff), (l.intensity = 26 * on);
-        else if (i === 1) l.position.set(3, 1, z + 3), l.color.copy(flare), (l.intensity = 14 * on);
-        else if (i === 2) l.position.set(0, 4, z - 2.5), l.color.copy(accent), (l.intensity = 30 * on);
-        else l.intensity = 0;
-      });
-    }
     letterSparks.update(dt);
 
     /* ----- estrade ----- */
     const st = smooth(tl.stage - 0.05, tl.stage + 0.25, T);
-    stage.visible = T > (tl.collects.length ? tl.collects[tl.collects.length - 1] : tl.stage - 1) - 0.1;
+    // L'estrade apparaît à l'ouverture des portes.
+    stage.visible = T > D - 0.4;
     fire('stage', tl.stage, () => {
       sfx((a) => a.stageSlam());
       onEvent({ type: 'stage' });
@@ -1414,9 +1413,9 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
 
     /* ----- caméra ----- */
     const end = smooth(tl.stage + 0.6, tl.stage + 1.8, T);
-    const bob = inTunnel && running ? Math.sin(T * Math.PI * 2.5) * 0.025 * smooth(0.8, 1.4, T) * (1 - smooth(4.6, 5.2, T)) : 0;
-    const shake = (smooth(4.4, FLASH - 0.2, T) * (1 - smooth(FLASH - 0.2, FLASH + 0.4, T)) * 0.02 + (T > tl.land ? Math.max(0, 1 - (T - tl.land) / 0.4) * 0.05 : 0)) * (running ? 1 : 0);
-    const reveal = smooth(FLASH + 0.2, FLASH + 1.2, T);
+    const bob = inTunnel && running ? Math.sin(T * Math.PI * 2.5) * 0.025 * smooth(0.8, 1.4, T) * (1 - smooth(D - 0.9, D - 0.3, T)) : 0;
+    const shake = (smooth(D - 1.1, D - 0.2, T) * (1 - smooth(D - 0.2, D + 0.4, T)) * 0.02 + (T > tl.land ? Math.max(0, 1 - (T - tl.land) / 0.4) * 0.05 : 0)) * (running ? 1 : 0);
+    const reveal = smooth(D + 0.2, D + 1.2, T);
     const yBase = lerp(1.65, 2.05, reveal);
     const orbit = smooth(tl.done - 0.8, tl.done + 1.5, T);
     camera.position.set(
@@ -1464,7 +1463,7 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
     (window as unknown as { __walkout: unknown }).__walkout = {
       renderer, scene, camera, composer,
       getT: () => t,
-      state: () => ({ t, running, speed, audio: audio ? audio.ctx.state : null, rows: rows.map((r) => +r.on.toFixed(2)), bloom: bloom.strength, exposure: renderer.toneMappingExposure, cam: camera.position.toArray().map((v) => +v.toFixed(2)) }),
+      state: () => ({ t, running, audio: audio ? audio.ctx.state : null, rows: rows.map((r) => +r.on.toFixed(2)), bloom: bloom.strength, exposure: renderer.toneMappingExposure, cam: camera.position.toArray().map((v) => +v.toFixed(2)) }),
       freeze(on = true) {
         devFrozen = on;
       },
@@ -1506,10 +1505,6 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
       prev = performance.now();
       onEvent({ type: 'start' });
     },
-    /** Maintenir le doigt appuyé : accélère. */
-    fast(on: boolean) {
-      speed = on ? 2.6 : 1;
-    },
     /** Passe directement à l'estrade. */
     skip() {
       if (!running) return;
@@ -1520,7 +1515,6 @@ export function createWalkout({ canvas, heroEl, input, onEvent }: WalkoutOptions
       update(0);
       silent.v = false;
       audio?.startMusic();
-      audio?.crowd(0.3, 5200, 0.3);
     },
     get finished() {
       return t >= tl.done;
