@@ -11,7 +11,6 @@ export interface CardData {
   venue: string;
   date: string;
   time: string;
-  meetTime: string;
   location: string;
   bring: string;
   message: string;
@@ -106,8 +105,7 @@ export async function renderConvCard(d: CardData): Promise<Blob> {
   roundRect(g, 72, boxY, W - 144, 170, 34);
   g.fill();
   const cols = [
-    { k: 'RENDEZ-VOUS', v: d.meetTime ? formatTime(d.meetTime) : '—', hi: true },
-    { k: 'COUP D’ENVOI', v: d.time ? formatTime(d.time) : '—', hi: false },
+    { k: 'DÉBUT', v: d.time ? formatTime(d.time) : '—', hi: true },
   ];
   cols.forEach((col, i) => {
     const x = 112 + i * ((W - 144) / 2);

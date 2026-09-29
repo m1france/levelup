@@ -62,7 +62,7 @@ function icsFor(user, origin) {
       for (const date of occurrences(e, ymdAdd(today, -30), ymdAdd(today, 200))) {
         const row = c.enabled ? get('SELECT * FROM convocations WHERE event_id = ? AND date = ?', e.id, date) : null;
         const data = row ? JSON.parse(row.data) : {};
-        const meet = data.meetTime || e.meetTime || '';
+        const meet = e.time || '';
         let status = '';
         if (c.enabled && teamKids.length) {
           status = teamKids

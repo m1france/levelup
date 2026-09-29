@@ -36,7 +36,11 @@ function ParentMatches() {
   const now = Date.now();
   const isPast = (t: Ticket) => !!t.result || t.timeline.start + 3 * 3600e3 <= now;
   const upcoming = (q.data ?? []).filter((t) => !isPast(t));
-  const past = (q.data ?? []).filter(isPast).reverse();
+  const past = (q.data ?? []).filter(isPast).sort((a, b) => b.date.localeCompare(a.date));
+  const pastGroups = Object.entries(past.reduce<Record<string, Ticket[]>>((groups, t) => {
+    const key = new Set(past.filter((x) => x.result).map((x) => `${x.eventId}:${x.date}`)).size > 3 ? t.date.slice(0, 7) : 'all';
+    (groups[key] ??= []).push(t); return groups;
+  }, {}));
   const multi = new Set((q.data ?? []).map((t) => t.child.id)).size > 1;
   // Un match par diapositive, même si plusieurs enfants y sont attendus.
   const showcase = [...new Map(upcoming.map((t) => [`${t.eventId}:${t.date}`, t])).values()].slice(0, 5);
@@ -68,9 +72,13 @@ function ParentMatches() {
             Derniers matchs
           </div>
           <div className="stack" style={{ gap: 18 }}>
-            {past.map((t) => (
-              <MatchTicket key={t.key} t={t} onChanged={q.reload} showChild={multi} />
-            ))}
+            {pastGroups.map(([month, matches]) => <section className="match-month" key={month}>
+              {month !== 'all' && <h3>{new Date(`${month}-01T12:00:00`).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</h3>}
+              <div className="stack">{matches.map((t) => <Link className="conv-card phase-played" key={t.key} to={matchPath(t.eventId, t.date)}>
+                <div className="grow"><b>{t.title}</b><small className="muted">{fromYMD(t.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}{multi ? ` · ${t.child.firstName}` : ''}</small></div>
+                <div className="conv-card-side match-card-scores">{t.result?.games?.length ? t.result.games.map((g) => <strong key={g.id} title={g.opponent}>{g.us === null ? '–' : `${g.us}-${g.them}`}</strong>) : <strong>{t.result ? `${t.result.us}-${t.result.them}` : '–'}</strong>}</div>
+              </Link>)}</div>
+            </section>)}
           </div>
         </>
       )}
@@ -243,15 +251,15 @@ export function ConvCard({ c, showTeam }: { c: ConvSnapshot; showTeam?: boolean 
     <>
     {menu}
     <button className={`conv-card phase-${c.phase}${urgent ? ' urgent' : ''}`} onClick={() => nav(matchPath(c.eventId, c.date))} {...bind}>
-      <DateTile date={c.date} />
+      <div className="match-card-date"><DateTile date={c.date} /></div>
       <div className="grow">
         <div className="row wrap" style={{ gap: 6 }}>
           {showTeam && team && <TeamBadge team={team} size={22} brand={false} />}
           <b className="ellipsis">{c.title}</b>
         </div>
         <small className="muted">
-          {c.time ? formatTime(c.time) : 'Journée'}
-          {c.meetTime ? ` · RDV ${formatTime(c.meetTime)}` : ''}
+          {fromYMD(c.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}{c.phase !== 'played' && c.time ? ` · ${formatTime(c.time)}` : ''}
+
           {c.location ? ` · ${c.location}` : ''}
         </small>
         <div className="conv-card-foot">
@@ -259,24 +267,8 @@ export function ConvCard({ c, showTeam }: { c: ConvSnapshot; showTeam?: boolean 
           <span className="small">{nextStep(c)}</span>
         </div>
       </div>
-      <div className="conv-card-side">
-        {c.phase === 'published' || c.phase === 'played' ? (
-          <span className="big-num">
-            {c.selected}
-            <small>convoqués</small>
-          </span>
-        ) : (
-          <span className="big-num">
-            {answered}/{c.total}
-            <small>réponses</small>
-          </span>
-        )}
-        <div className="avail-bar mini" aria-hidden>
-          <i className="yes" style={{ flex: c.counts.yes }} />
-          <i className="maybe" style={{ flex: c.counts.maybe }} />
-          <i className="none" style={{ flex: c.counts.none }} />
-          <i className="no" style={{ flex: c.counts.no }} />
-        </div>
+      <div className="conv-card-side match-card-scores">
+        {c.score?.games?.length ? c.score.games.map((g) => <strong key={g.id} title={g.opponent}>{g.us === null ? '–' : `${g.us}-${g.them}`}</strong>) : c.score ? <strong>{c.score.us}-{c.score.them}</strong> : <span className="match-card-upcoming">{c.phase === 'published' ? `${c.selected} convoqués` : `${answered}/${c.total} réponses`}</span>}
       </div>
       <ChevronRight className="hide-mobile" color="var(--ink-3)" />
     </button>
@@ -294,7 +286,8 @@ function ConvList({ group }: { group: string | null }) {
   const list = q.data ?? [];
   const todo = list.filter((c) => c.timeline.start > now && ['collecting', 'late', 'upcoming'].includes(c.phase));
   const ready = list.filter((c) => c.timeline.start > now && c.phase === 'published');
-  const past = list.filter((c) => c.timeline.start <= now || c.phase === 'played').reverse();
+  const past = (season.data ?? list).filter((c) => c.timeline.start <= now || c.phase === 'played').sort((a, b) => b.date.localeCompare(a.date));
+  const pastGroups = Object.entries(past.reduce<Record<string, ConvSnapshot[]>>((groups, c) => { const month = past.filter((x) => x.phase === 'played').length > 3 ? c.date.slice(0, 7) : 'all'; (groups[month] ??= []).push(c); return groups; }, {}));
   const coming = list.filter((c) => c.timeline.start > now && c.phase !== 'played').slice(0, 5);
   if (q.loading && !q.data) return <Spinner fill />;
   if (!list.length)
@@ -340,9 +333,10 @@ function ConvList({ group }: { group: string | null }) {
         <section>
           <div className="section-title">Joués</div>
           <div className="stack" style={{ gap: 10 }}>
-            {past.map((c) => (
-              <ConvCard key={`${c.eventId}:${c.date}`} c={c} />
-            ))}
+            {pastGroups.map(([month, matches]) => <section className="match-month" key={month}>
+              {month !== 'all' && <h3>{new Date(`${month}-01T12:00:00`).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</h3>}
+              <div className="match-card-grid">{matches!.map((c) => <ConvCard key={`${c.eventId}:${c.date}`} c={c} />)}</div>
+            </section>)}
           </div>
         </section>
       )}

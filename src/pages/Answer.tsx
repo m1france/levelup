@@ -88,7 +88,7 @@ export function Answer() {
             <CheckCircle2 />
             <div>
               <b>{v.convoked ? `${v.child.firstName} est dans le groupe` : `${v.child.firstName} n’est pas dans le groupe cette fois`}</b>
-              <small>{v.convoked ? (v.meetTime ? `Rendez-vous ${formatTime(v.meetTime)}. ${v.bring}` : v.bring) : 'Les convocations tournent pour que chacun joue autant.'}</small>
+              <small>{v.convoked ? (v.meetTime ? `Début ${formatTime(v.meetTime)}. ${v.bring}` : v.bring) : 'Les convocations tournent pour que chacun joue autant.'}</small>
             </div>
           </div>
         ) : v.closed ? (

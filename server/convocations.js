@@ -170,14 +170,21 @@ export function organizerOf(e) {
 }
 
 /** Plateau : les matchs prévus (adversaire, heure, durée), s'il y en a. */
-export const gamesOf = (e) => (Array.isArray(e?.games) && e.games.length ? e.games : null);
+export const gamesOf = (e, m) => {
+  if (!Array.isArray(e?.games) || !e.games.length) return null;
+  const order = m?.gameOrder ?? [];
+  return [...e.games].sort((a, b) => {
+    const rank = (id) => order.includes(id) ? order.indexOf(id) : order.length + e.games.findIndex((g) => g.id === id);
+    return rank(a.id) - rank(b.id);
+  });
+};
 
 /**
  * Résultat de chaque match d'un plateau : les matchs terminés (m.results), puis celui en cours.
  * null pour un match simple.
  */
 export function gameResults(e, m) {
-  const games = gamesOf(e);
+  const games = gamesOf(e, m);
   if (!games) return null;
   const results = m?.results || [];
   const current = m && !m.finished && m.started ? (m.period || 1) - 1 : -1;
@@ -228,6 +235,7 @@ export function saveData(o, patch = {}) {
 
 /** Étape de la convocation. */
 function phaseOf(o, t = now()) {
+  if (o.data.match?.finished) return 'played';
   if (o.row?.published_at) return o.data.match?.finished || t > o.t.start + 4 * 3600e3 ? 'played' : 'published';
   if (t > o.t.start) return 'missed';
   if (t > o.t.deadline) return 'late';
@@ -311,13 +319,13 @@ function readToken(token) {
 
 /* ------------------------------------------------------------------ messages */
 
-export const meetOf = (o) => o.data.meetTime || o.e.meetTime || '';
+export const meetOf = (o) => o.e.time || '';
 const bringOf = (o) => (o.data.bring ?? '') || o.settings.bring;
 
 function whereLine(o) {
   const meet = meetOf(o);
   const parts = [];
-  if (meet) parts.push(`RDV ${hm(meet)}`);
+  if (meet) parts.push(`Début ${hm(meet)}`);
   else if (o.e.time) parts.push(`Coup d'envoi ${hm(o.e.time)}`);
   if (o.e.location) parts.push(o.e.location);
   return parts.join(' · ');
@@ -489,7 +497,7 @@ function eventInfo(o) {
     eventId: e.id, date: o.date, teamId: e.teamId, type: e.type, title: evTitle(e), group: eventGroup(e),
     organizer: organizerOf(e), logo: e.logo ? `/api/events/${e.id}/logo?v=${e.logo}` : null, time: e.allDay ? '' : e.time, endTime: e.endTime,
     meetTime: meetOf(o), location: e.location, opponent: e.opponent, venue: e.venue, color: e.color, bring: bringOf(o), message: o.data.message || '',
-    games: gamesOf(e),
+    games: gamesOf(e, o.data.match),
   };
 }
 
@@ -554,6 +562,10 @@ function detail(o) {
       firstName: p.firstName,
       lastName: p.lastName ?? '',
       number: p.number,
+      photo: p.info?.photoConsent === 'no' ? undefined : p.photo,
+      photoAlpha: p.photoAlpha,
+      cardPhoto: p.info?.photoConsent === 'no' ? undefined : p.cardPhoto,
+      cardPhotoAlpha: p.cardPhotoAlpha,
       positions: p.profile?.positions ?? [],
       availability: avail[p.id] ?? null,
       selected: sel.has(p.id),
@@ -781,7 +793,7 @@ convApi.put('/convocations/:eventId/:date', (req, res) => {
   const patch = {};
   if (Array.isArray(req.body.selection)) patch.selection = [...new Set(req.body.selection.filter((id) => ids.has(id)))];
   if (req.body.message !== undefined) patch.message = str(req.body.message, 1000);
-  if (req.body.meetTime !== undefined) patch.meetTime = hhmm(req.body.meetTime);
+
   if (req.body.bring !== undefined) patch.bring = str(req.body.bring, 200);
   saveData(o, patch);
   toTeam(o.e.teamId, { t: 'conv', eventId: o.e.id, date: o.date }, req.get('X-Client-Id'));
@@ -832,6 +844,7 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
 
 convApi.post('/convocations/:eventId/:date/request', (req, res) => {
   const o = staffOcc(req, true);
+  if (now() >= Math.min(o.t.answerBy ?? o.t.deadline, o.t.start)) throw new HttpError(400, 'La date limite de dispos est dépassée');
   const onlyMissing = jobSent(o, 'request') || !!req.body.onlyMissing;
   const sent = sendRequest(o, occPlayers(o), onlyMissing);
   markJob(o, 'request');

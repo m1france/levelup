@@ -1,8 +1,8 @@
-import { ArrowLeft, RotateCcw, Share2, Sparkles } from 'lucide-react';
+import { ArrowLeft, RotateCcw, Sparkles } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { FutBack, FutCard, TIERS } from '../components/FutCard';
-import { Spinner, useAsync, useToast } from '../components/ui';
+import { Spinner, useAsync } from '../components/ui';
 import { api } from '../lib/api';
 import type { GameResult, PlayerCard, Reveal } from '../lib/types';
 
@@ -119,7 +119,6 @@ function GamesBoard({ games, team }: { games: GameResult[]; team: string }) {
 type Rect = { x: number; y: number; w: number; h: number };
 
 export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void }) {
-  const toast = useToast();
   const [phase, setPhase] = useState<Phase>('intro');
   const [flipped, setFlipped] = useState<Set<string>>(new Set());
   const [focus, setFocus] = useState<PlayerCard | null>(null);
@@ -231,18 +230,6 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
     closing.current = false;
     setRun((r) => r + 1);
   };
-  const share = async () => {
-    const url = data.shareToken ? `${location.origin}/m/${data.shareToken}` : location.href;
-    try {
-      if (navigator.share) await navigator.share({ title: `Les cartes du match · ${data.team.category}`, text: 'Retournez les cartes des joueurs 🃏', url });
-      else {
-        await navigator.clipboard.writeText(url);
-        toast('Lien copié');
-      }
-    } catch {
-      /* partage annulé */
-    }
-  };
 
   // Taille des cartes : tout doit tenir à l'écran, même sur un petit téléphone.
   // Plateau : la colonne des scores prend la gauche de l'écran (en haut sur un téléphone).
@@ -315,11 +302,6 @@ export function RevealShow({ data, onBack }: { data: Reveal; onBack?: () => void
           </button>
         )}
         <span className="grow" />
-        {data.shareToken && (
-          <button className="rv-icon" onClick={share} aria-label="Partager">
-            <Share2 />
-          </button>
-        )}
         <button className="rv-icon" onClick={replay} aria-label="Rejouer l’animation">
           <RotateCcw />
         </button>

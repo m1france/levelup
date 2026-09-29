@@ -100,7 +100,7 @@ function card(p, m, awardKey, totalSec, photoUrl) {
     firstName: p.firstName,
     number: p.number,
     photo: photoUrl,
-    cutout: !!(photoUrl && p.photoAlpha),
+    cutout: !!(photoUrl && (p.cardPhoto ? p.cardPhotoAlpha : p.photoAlpha)),
     position: pos,
     ovr,
     stats: clamped,
@@ -130,8 +130,8 @@ export function revealPayload(o, { user = null, publicToken = null } = {}) {
       if (!row) return null;
       const p = parse(row);
       const consent = p.info?.photoConsent ?? '';
-      const allowed = p.photo && (publicToken ? consent === 'yes' : consent !== 'no');
-      const url = allowed ? (publicToken ? `/api/public/reveal/${publicToken}/photo/${pid}?v=${p.photo}` : `/api/players/${pid}/photo?v=${p.photo}`) : null;
+      const allowed = (p.cardPhoto || p.photo) && (publicToken ? consent === 'yes' : consent !== 'no');
+      const url = allowed ? (publicToken ? `/api/public/reveal/${publicToken}/photo/${pid}?v=${p.cardPhoto || p.photo}` : `/api/players/${pid}/${p.cardPhoto ? 'card-photo' : 'photo'}?v=${p.cardPhoto || p.photo}`) : null;
       return { ...card(p, m, awards[pid], totalSec, url), mine: kids.includes(pid) };
     })
     .filter(Boolean);
@@ -172,13 +172,13 @@ revealPublic.get('/public/reveal/:token/photo/:pid', (req, res) => {
   if (!row || row.team_id !== o.e.teamId || !(o.data.selection || []).includes(row.id)) throw new HttpError(404, 'Photo introuvable');
   const p = parse(row);
   if (p.info?.photoConsent !== 'yes') throw new HttpError(404, 'Photo introuvable');
-  sendPlayerPhoto(res, row.id);
+  sendPlayerPhoto(res, row.id, !!p.cardPhoto);
 });
 
-export function sendPlayerPhoto(res, pid) {
+export function sendPlayerPhoto(res, pid, card = false) {
   // Photo détourée (PNG transparent) ou photo classique (JPEG).
-  const png = join(UPLOADS, `player_${pid}.png`);
-  const file = existsSync(png) ? png : join(UPLOADS, `player_${pid}.jpg`);
+  const png = join(UPLOADS, `player_${pid}${card ? '_card' : ''}.png`);
+  const file = existsSync(png) ? png : join(UPLOADS, `player_${pid}${card ? '_card' : ''}.jpg`);
   if (!existsSync(file)) throw new HttpError(404, 'Photo introuvable');
   res.set('Cache-Control', 'private, max-age=31536000, immutable');
   res.type(file === png ? 'png' : 'jpeg').sendFile(file);
@@ -201,7 +201,7 @@ revealApi.get('/convocations/:eventId/:date/reveal', (req, res) => {
 /** Cartes du groupe : même couleur et même note pour tous (pas de classement entre les enfants). */
 function squadCards(squad, openedIds) {
   const cards = squad.map((p) => {
-    const url = p.photo && p.info?.photoConsent !== 'no' ? `/api/players/${p.id}/photo?v=${p.photo}` : null;
+    const url = (p.cardPhoto || p.photo) && p.info?.photoConsent !== 'no' ? `/api/players/${p.id}/${p.cardPhoto ? 'card-photo' : 'photo'}?v=${p.cardPhoto || p.photo}` : null;
     return { ...card(p, {}, null, 1, url), award: { key: 'squad', label: 'Convoqué', emoji: '✅', tier: 'totw' }, mine: openedIds.has(p.id) };
   });
   const ovr = cards.length ? clamp(cards.reduce((a, c) => a + c.ovr, 0) / cards.length + 2) : 80;

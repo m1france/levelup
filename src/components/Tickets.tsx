@@ -2,7 +2,7 @@ import { Backpack, Car, Check, ChevronDown, CircleHelp, Clock, Home, MapPin, Mes
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
-import { AVAIL, countdown, mapsUrl, matchPath, momentLabel } from '../lib/convocations';
+import { AVAIL, mapsUrl, matchPath, momentLabel } from '../lib/convocations';
 import { MONTHS_TILE, formatTime, fromYMD } from '../lib/events';
 import type { Availability, Ticket } from '../lib/types';
 import { CarpoolPanel } from './Carpool';
@@ -104,7 +104,7 @@ export function MatchTicket({ t, onChanged, showChild = true, carpool: carpoolOp
       head = { title: `Réponse envoyée : ${AVAIL[t.availability!.status].label.toLowerCase()}`, sub: `Convocation publiée au plus tard ${momentLabel(t.timeline.deadline)}` };
       break;
     case 'convoked':
-      head = { title: `${name} est dans le groupe`, sub: t.meetTime ? `Rendez-vous ${formatTime(t.meetTime)}` : `Coup d’envoi ${formatTime(t.time)}` };
+      head = { title: `${name} est dans le groupe`, sub: `Début ${formatTime(t.time)}` };
       break;
     case 'not_selected':
       head = { title: `${name} n’est pas dans le groupe cette fois`, sub: 'Les convocations tournent pour que chacun joue autant.' };
@@ -146,14 +146,8 @@ export function MatchTicket({ t, onChanged, showChild = true, carpool: carpoolOp
                 <Plane size={13} /> Extérieur
               </span>
             )}
-            {t.time && <span>Coup d’envoi {formatTime(t.time)}</span>}
+            {t.time && <span>Début {formatTime(t.time)}</span>}
           </div>
-          {t.status === 'convoked' && t.meetTime && !t.result && (
-            <div className="tk-meet">
-              RDV <b>{formatTime(t.meetTime)}</b>
-              <small>{countdown(new Date(`${t.date}T${t.meetTime}`).getTime())}</small>
-            </div>
-          )}
         </div>
       </Link>
 

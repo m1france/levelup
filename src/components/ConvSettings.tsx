@@ -66,7 +66,7 @@ export function TimelinePreview({ settings, date, time }: { settings: ConvSettin
   const marks = [
     t.request && { at: t.request, label: 'Dispos demandées', tone: 'blue' },
     ...t.reminders.map((r) => ({ at: r, label: 'Relance', tone: 'blue' })),
-    t.answerBy && { at: t.answerBy, label: 'Réponse parents', tone: 'blue' },
+    t.answerBy && { at: t.answerBy, label: 'Date limite de dispos', tone: 'blue' },
     t.coachAlert < t.deadline && { at: t.coachAlert, label: 'Alerte éducateur', tone: 'warn' },
     { at: t.deadline, label: 'Convocation publiée', tone: 'green' },
     t.eve && t.eve < t.start && { at: t.eve, label: 'Rappel veille', tone: 'green' },
@@ -151,7 +151,7 @@ export function ConvSettingsEditor({ value, onChange, date, time }: { value: Con
             ))}
           </div>
         </div>
-        <WhenRow icon={<AlarmClock />} label="Réponse des parents souhaitée avant" value={s.answerBy} toggle onChange={(answerBy) => set({ answerBy })} />
+        <WhenRow icon={<AlarmClock />} label="Date limite de dispos" value={s.answerBy} toggle onChange={(answerBy) => set({ answerBy })} />
         <WhenRow icon={<ShieldAlert />} label="Convocation publiée au plus tard" value={s.deadline} onChange={({ days, time }) => set({ deadline: { days, time } })}>
           <p className="small muted" style={{ marginTop: 6 }}>
             C’est la promesse faite aux parents : elle apparaît sur leur billet de match.

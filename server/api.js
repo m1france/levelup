@@ -810,7 +810,7 @@ function cleanGames(b) {
     .map((g) => ({
       id: ID.test(String(g?.id || '')) ? g.id : newId(8),
       opponent: str(g?.opponent, 80),
-      time: hhmm(g?.time),
+      time: '',
       minutes: Math.max(1, Math.min(90, Math.round(Number(g?.minutes) || 10))),
       pitch: str(g?.pitch, 40) || undefined,
     }))
@@ -836,7 +836,7 @@ api.put('/events/:id', (req, res) => {
     allDay: !!b.allDay,
     time: hhmm(b.time),
     endTime: hhmm(b.endTime),
-    meetTime: hhmm(b.meetTime),
+    meetTime: '',
     location: str(b.location, 200),
     opponent: str(b.opponent, 80),
     venue: ['home', 'away', 'neutral'].includes(b.venue) ? b.venue : '',

@@ -137,3 +137,23 @@ export function FutBack({ size = 240, mine }: { size?: number; mine?: boolean })
     </div>
   );
 }
+
+/** Carte de terrain : la silhouette habituelle et le portrait, sans statistiques. */
+export function PortraitCard({ photo, name, tier = 'gold' }: { photo: string | null; name: string; tier?: string }) {
+  const id = useId().replace(/:/g, '');
+  const t = TIERS[tier] ?? TIERS.gold;
+  return <svg className="portrait-card" viewBox="0 0 250 350" aria-hidden>
+    <defs>
+      <linearGradient id={`${id}base`} x2="1" y2="1"><stop stopColor={t.from} /><stop offset=".55" stopColor={t.mid} /><stop offset="1" stopColor={t.to} /></linearGradient>
+      <linearGradient id={`${id}fade`} x1="0" y1="1" x2="0" y2="0"><stop stopColor={t.to} /><stop offset=".55" stopColor={t.mid} stopOpacity=".3" /><stop offset=".85" stopColor={t.mid} stopOpacity="0" /></linearGradient>
+      <clipPath id={`${id}clip`}><path d={SHAPE} /></clipPath>
+    </defs>
+    <g clipPath={`url(#${id}clip)`}>
+      <path d={SHAPE} fill={`url(#${id}base)`} />
+      {Array.from({ length: 8 }, (_, i) => <path key={i} d={`M${-50 + i * 45} 350 L${65 + i * 45} 0`} stroke={t.line} strokeWidth="16" opacity=".2" />)}
+      {photo ? <image href={photo} x="15" y="28" width="220" height="310" preserveAspectRatio="xMidYMid slice"><title>{name}</title></image> : <g fill={t.line}><circle cx="125" cy="119" r="40" /><path d="M40 310 Q35 185 125 175 Q215 185 210 310Z" /></g>}
+      <path d={SHAPE} fill={`url(#${id}fade)`} />
+    </g>
+    <path d={SHAPE} fill="none" stroke={t.line} strokeWidth="3" transform="translate(125 175) scale(.94) translate(-125 -175)" />
+  </svg>;
+}

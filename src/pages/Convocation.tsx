@@ -1,6 +1,6 @@
 import {
   ArrowLeft, Bell, BellOff, Check, CircleHelp, Clock, Copy, Eye, Image as ImageIcon, Gift, Link2, ListChecks, MapPin, Megaphone, MessageCircle,
-  Minus, Play, Send, Share2, TrendingDown, TrendingUp, Trophy, X,
+  Minus, Play, Send, TrendingDown, TrendingUp, Trophy, X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -86,13 +86,13 @@ function Progress({ d, onRequest, busy }: { d: ConvDetail; onRequest: (reminder:
   const steps = [
     t.request !== null && {
       label: 'Dispos demandées', at: t.request, done: d.requestSent || now >= t.request,
-      action: !d.requestSent && !d.publishedAt ? { label: 'Demander maintenant', fn: () => onRequest(false) } : null,
+      action: !d.requestSent && !d.publishedAt && now < (t.answerBy ?? t.deadline) && now < t.start ? { label: 'Demander les dispos maintenant', fn: () => onRequest(false) } : null,
     },
     ...t.reminders.map((r, i) => ({
       label: t.reminders.length > 1 ? `Relance ${i + 1}` : 'Relance', at: r, done: now >= r,
       action: null as null | { label: string; fn: () => void },
     })),
-    t.answerBy !== null && { label: 'Réponses parents', at: t.answerBy, done: now >= t.answerBy, action: null },
+    t.answerBy !== null && { label: 'Date limite de dispos', at: t.answerBy, done: now >= t.answerBy, action: null },
     {
       label: 'Convocation', at: d.publishedAt ?? t.deadline, done: !!d.publishedAt, late: !d.publishedAt && now > t.deadline, deadline: !d.publishedAt, action: null,
     },
@@ -103,7 +103,7 @@ function Progress({ d, onRequest, busy }: { d: ConvDetail; onRequest: (reminder:
     <div className="conv-progress">
       <ol>
         {steps.map((s, i) => (
-          <li key={i} className={`${s.done ? 'done' : ''}${i === cur ? ' now' : ''}${s.late ? ' late' : ''}`}>
+          <li key={i} tabIndex={s.action ? 0 : undefined} className={`${s.done ? 'done' : ''}${i === cur ? ' now' : ''}${s.late ? ' late' : ''}`}>
             <i>{s.done ? <Check size={12} strokeWidth={3.5} /> : null}</i>
             <b>{s.label}</b>
             <small>
@@ -111,24 +111,11 @@ function Progress({ d, onRequest, busy }: { d: ConvDetail; onRequest: (reminder:
               {momentLabel(s.at)}
             </small>
             {i === cur && !s.done && <em>{countdown(s.at)}</em>}
+            {s.action && <div className="progress-context"><button className="btn sm" disabled={busy} onClick={s.action.fn}><Send size={14} />{s.action.label}</button></div>}
           </li>
         ))}
       </ol>
-      {!d.publishedAt && (
-        <div className="row wrap" style={{ gap: 8 }}>
-          {!d.requestSent ? (
-            <button className="btn sm" disabled={busy} onClick={() => onRequest(false)}>
-              <Send /> Demander les dispos maintenant
-            </button>
-          ) : (
-            missing > 0 && (
-              <button className="btn sm" disabled={busy} onClick={() => onRequest(true)}>
-                <Bell /> Relancer les {missing} sans réponse
-              </button>
-            )
-          )}
-        </div>
-      )}
+      {!d.publishedAt && d.requestSent && missing > 0 && now < (t.answerBy ?? t.deadline) && <button className="btn sm" disabled={busy} onClick={() => onRequest(true)}><Bell /> Relancer les {missing} sans réponse</button>}
     </div>
   );
 }
@@ -264,7 +251,6 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
   const team = me.teams.find((t) => t.id === d.teamId);
   const [sel, setSel] = useState<Set<string>>(() => new Set(d.selection));
   const [message, setMessage] = useState(d.message);
-  const [meet, setMeet] = useState(d.meetTime);
   const [busy, setBusy] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [saving, setSaving] = useState<'idle' | 'saving' | 'error'>('idle');
@@ -275,9 +261,8 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
     if (!dirty.current) {
       setSel(new Set(d.selection));
       setMessage(d.message);
-      setMeet(d.meetTime);
     }
-  }, [d.selection, d.message, d.meetTime]);
+  }, [d.selection, d.message]);
 
   // Enregistrement automatique du brouillon.
   useEffect(() => {
@@ -285,7 +270,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
     setSaving('saving');
     const t = setTimeout(async () => {
       try {
-        const out = await api.put<ConvDetail>(`/convocations/${d.eventId}/${d.date}`, { selection: [...sel], message, meetTime: meet });
+        const out = await api.put<ConvDetail>(`/convocations/${d.eventId}/${d.date}`, { selection: [...sel], message });
         dirty.current = false;
         setSaving('idle');
         setData(out);
@@ -295,7 +280,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
     }, 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel, message, meet]);
+  }, [sel, message]);
 
   const edit = <T,>(fn: (v: T) => void) => (v: T) => {
     dirty.current = true;
@@ -369,7 +354,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
     setPublishing(false);
     setBusy(true);
     try {
-      if (dirty.current) await api.put(`/convocations/${d.eventId}/${d.date}`, { selection: [...sel], message, meetTime: meet });
+      if (dirty.current) await api.put(`/convocations/${d.eventId}/${d.date}`, { selection: [...sel], message });
       dirty.current = false;
       const out = await api.post<ConvDetail & { sent: number }>(`/convocations/${d.eventId}/${d.date}/publish`);
       setData(out);
@@ -386,7 +371,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
     try {
       const blob = await renderConvCard({
         club: me.club?.name ?? '', team: d.group ?? team?.category ?? '', color: team?.color ?? '#1f6f4a', title: d.title, opponent: d.opponent,
-        venue: d.venue === 'home' ? 'Domicile' : d.venue === 'away' ? 'Extérieur' : '', date: d.date, time: d.time, meetTime: meet,
+        venue: d.venue === 'home' ? 'Domicile' : d.venue === 'away' ? 'Extérieur' : '', date: d.date, time: d.time,
         location: d.location, bring: d.bring, message, players: convoked,
       });
       const r = await shareCard(blob, `convocation-${d.date}`, `Convocation ${d.group ?? team?.category ?? ''} · ${d.title}`);
@@ -399,7 +384,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
   const textMessage = () =>
     [
       `⚽ *Convocation ${d.group ?? team?.category ?? ''}* · ${d.title}`,
-      `📅 ${longDate(d.date)}${meet ? ` · RDV ${formatTime(meet)}` : ''}${d.time ? ` · coup d’envoi ${formatTime(d.time)}` : ''}`,
+      `📅 ${longDate(d.date)}${d.time ? ` · début ${formatTime(d.time)}` : ''}`,
       d.location ? `📍 ${d.location}` : null,
       '',
       `✅ Convoqués (${convoked.length}) : ${convoked.map((p) => p.firstName).join(', ')}`,
@@ -412,7 +397,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
   const played = d.phase === 'played' || !!d.match?.finished;
 
   return (
-    <div className="page wide">
+    <div className={`page wide${played ? ' played-page' : ''}`}>
       <Link to="/matchs" className="back">
         <ArrowLeft size={15} /> Matchs
       </Link>
@@ -464,7 +449,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
       </div>
 
       {d.score?.games && (
-        <div className="card pad" style={{ marginBottom: 16 }}>
+        <div className="report-results" style={{ marginBottom: 24 }}>
           <GamesResults
             cards={played}
             games={d.score.games.map((g) => ({ id: g.id, opponent: g.opponent, time: g.time, minutes: 0 }))}
@@ -683,20 +668,6 @@ function MatchReport({ d, canEdit }: { d: ConvDetail; canEdit: boolean }) {
   );
   const [editAwards, setEditAwards] = useState(false);
 
-  const share = async () => {
-    try {
-      const r = await api.get<{ shareToken: string }>(`/convocations/${d.eventId}/${d.date}/reveal`);
-      const url = `${location.origin}/m/${r.shareToken}`;
-      if (navigator.share) await navigator.share({ title: `Les cartes du match · ${d.group ?? d.title}`, text: 'Retournez les cartes des joueurs 🃏', url }).catch(() => undefined);
-      else {
-        await navigator.clipboard.writeText(url);
-        toast('Lien des cartes copié');
-      }
-    } catch (e) {
-      toast((e as Error).message, true);
-    }
-  };
-
   // Présences : convoqués d'abord, puis les autres ; l'icône dit la réponse des parents.
   const roster = [...d.players].sort((a, b) => Number(d.selection.includes(b.id)) - Number(d.selection.includes(a.id)));
   const presence = (
@@ -755,7 +726,7 @@ function MatchReport({ d, canEdit }: { d: ConvDetail; canEdit: boolean }) {
   const stats = d.settings.stats;
 
   return (
-    <div className="stack" style={{ gap: 16 }}>
+    <div className="stack match-report" style={{ gap: 20 }}>
       <div className="kpis">
         <div className="kpi" style={{ ['--c' as string]: '#2f9e44' }}>
           <small>Buts marqués</small>
@@ -789,9 +760,7 @@ function MatchReport({ d, canEdit }: { d: ConvDetail; canEdit: boolean }) {
         <button className="btn lime" onClick={() => nav(`/matchs/${d.eventId}/${d.date}/cartes`)}>
           🃏 Voir les cartes des joueurs
         </button>
-        <button className="btn" onClick={share}>
-          <Share2 /> Partager le lien
-        </button>
+
       </div>
 
       <div className="mr-grid">

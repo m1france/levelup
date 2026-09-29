@@ -2,7 +2,7 @@ import { Plus, Search, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FutCard } from '../components/FutCard';
-import { photoUrl } from '../components/PlayerAvatar';
+import { cardPhotoUrl } from '../components/PlayerAvatar';
 import { Empty, Field, Seg, Sheet, Spinner, useAsync, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
 import { groupsOf, guessGroup, playerGroup } from '../lib/groups';
@@ -116,8 +116,8 @@ function rosterCard(p: Player): PlayerCard {
   return {
     id: p.id,
     firstName: p.firstName,
-    photo: photoUrl(p),
-    cutout: !!p.photo && !!p.photoAlpha,
+    photo: cardPhotoUrl(p),
+    cutout: p.cardPhoto ? !!p.cardPhotoAlpha : !!p.photoAlpha,
     position: p.profile?.positions?.[0] ?? '—',
     ovr,
     stats,

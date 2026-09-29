@@ -7,7 +7,7 @@
  * et observations explicitement partagés, les présences, les matchs et les infos pratiques de leur enfant.
  */
 import { Router } from 'express';
-import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { all, get, run, parse, UPLOADS } from './db.js';
 import { can, need, needTeam, isStaff, childIdsFor, newId, HttpError } from './auth.js';
@@ -246,7 +246,7 @@ playersApi.delete('/players/:id', (req, res) => {
   if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
   run('DELETE FROM players WHERE id = ?', row.id);
   // Les photos et la vidéo de l'enfant partent avec sa fiche.
-  for (const f of [join(UPLOADS, `player_${row.id}.jpg`), join(UPLOADS, `player_${row.id}.png`), ...walkoutFiles(row.id)]) if (existsSync(f)) unlinkSync(f);
+  for (const f of [join(UPLOADS, `player_${row.id}.jpg`), join(UPLOADS, `player_${row.id}.png`), join(UPLOADS, `player_${row.id}_card.jpg`), join(UPLOADS, `player_${row.id}_card.png`), ...walkoutFiles(row.id)]) if (existsSync(f)) unlinkSync(f);
   res.json({ ok: true });
 });
 
@@ -408,9 +408,19 @@ playersApi.post('/players/:id/photo', (req, res) => {
   // PNG : photo détourée, la transparence est conservée sur les cartes.
   const alpha = /^data:image\/png;/.test(String(req.body.image || ''));
   const buf = decodeImage(req.body.image, 3_000_000);
+  const legacy = JSON.parse(row.data);
+  if (legacy.photo && !legacy.cardPhoto) {
+    for (const e of ['jpg', 'png']) {
+      const file = join(UPLOADS, `player_${row.id}.${e}`);
+      if (existsSync(file)) copyFileSync(file, join(UPLOADS, `player_${row.id}_card.${e}`));
+    }
+    legacy.cardPhoto = legacy.photo;
+    legacy.cardPhotoAlpha = legacy.photoAlpha;
+  }
   for (const e of ['jpg', 'png']) if (existsSync(join(UPLOADS, `player_${row.id}.${e}`))) unlinkSync(join(UPLOADS, `player_${row.id}.${e}`));
   writeFileSync(join(UPLOADS, `player_${row.id}.${alpha ? 'png' : 'jpg'}`), buf);
   const data = JSON.parse(row.data);
+  Object.assign(data, { cardPhoto: legacy.cardPhoto, cardPhotoAlpha: legacy.cardPhotoAlpha });
   data.photo = now();
   data.photoAlpha = alpha;
   run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
@@ -420,6 +430,27 @@ playersApi.post('/players/:id/photo', (req, res) => {
 playersApi.get('/players/:id/photo', (req, res) => {
   const row = playerAccess(req.user, req.params.id);
   sendPlayerPhoto(res, row.id);
+});
+
+playersApi.post('/players/:id/card-photo', (req, res) => {
+  const row = playerAccess(req.user, req.params.id);
+  if (isStaff(req.user)) need(req.user, 'players.manage');
+  const alpha = /^data:image\/png;/.test(String(req.body.image || ''));
+  const buf = decodeImage(req.body.image, 3_000_000);
+  for (const ext of ['jpg', 'png']) {
+    const file = join(UPLOADS, `player_${row.id}_card.${ext}`);
+    if (existsSync(file)) unlinkSync(file);
+  }
+  writeFileSync(join(UPLOADS, `player_${row.id}_card.${alpha ? 'png' : 'jpg'}`), buf);
+  const data = JSON.parse(row.data);
+  data.cardPhoto = now();
+  data.cardPhotoAlpha = alpha;
+  run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
+  res.json(playerOut(get('SELECT * FROM players WHERE id = ?', row.id), req.user, true));
+});
+playersApi.get('/players/:id/card-photo', (req, res) => {
+  const row = playerAccess(req.user, req.params.id);
+  sendPlayerPhoto(res, row.id, !!JSON.parse(row.data).cardPhoto);
 });
 
 /* ------------------------------------------------------------------ entrée sur le terrain (walkout) */

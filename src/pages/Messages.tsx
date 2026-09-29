@@ -1067,7 +1067,7 @@ function MatchCard({ m }: { m: ChatMessage }) {
         </span>
         <span className="grow">
           <b>{d.title}</b>
-          {d.meetTime && <small>RDV {formatTime(d.meetTime)}</small>}
+          {d.meetTime && <small>Début {formatTime(d.meetTime)}</small>}
           {d.location && <small>📍 {d.location}</small>}
         </span>
         <ChevronRight size={18} className="muted" />

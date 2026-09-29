@@ -61,7 +61,10 @@ export function PlayerPage() {
       </Link>
       <div className="pp-head">
         <div className="pp-avatar">
-          <PlayerAvatar player={p} editable={!isStaff || can('players.manage')} onChange={(np) => q.setData({ ...data, player: { ...p, ...np } })} />
+          <div className="player-photo-pair">
+            <div><PlayerAvatar player={p} editable={!isStaff || can('players.manage')} onChange={(np) => q.setData({ ...data, player: { ...p, ...np } })} /><small>Photo de profil</small></div>
+            <div><PlayerAvatar player={p} variant="card" editable={!isStaff || can('players.manage')} onChange={(np) => q.setData({ ...data, player: { ...p, ...np } })} /><small>Photo de carte</small></div>
+          </div>
         </div>
         <div className="grow">
           <div className="pp-name">

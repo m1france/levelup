@@ -6,9 +6,10 @@ import { api, uid } from '../lib/api';
 import { useApp } from '../lib/store';
 import type { ConvDetail, ConvPlayer, MatchEvent, MatchState } from '../lib/types';
 import { GamesResults } from '../components/Plateau';
-import { formatTime } from '../lib/events';
+import { PortraitCard } from '../components/FutCard';
+import { cardPhotoUrl } from '../components/PlayerAvatar';
 import { useWakeLock } from '../lib/wakelock';
-import { whistle, unlockAudio } from '../lib/sound';
+import { beep, whistle, unlockAudio } from '../lib/sound';
 import { AWARDS, autoAwards, slotPosition } from '../lib/awards';
 
 /* ------------------------------------------------------------------ formations */
@@ -16,19 +17,17 @@ import { AWARDS, autoAwards, slotPosition } from '../lib/awards';
 /** Formations proposées selon le nombre de joueurs sur le terrain (la première est celle par défaut). Gardien en plus dès 5. */
 export const FORMATIONS: Record<number, string[]> = {
   1: ['1'],
-  2: ['1-1', '2'],
-  3: ['2-1', '1-2', '1-1-1', '3'],
-  4: ['1-2-1', '2-2', '3-1', '1-3', '2-1-1', '1-1-2'],
-  5: ['1-2-1', '2-2', '2-1-1', '1-1-2', '3-1', '1-3'],
-  6: ['2-2-1', '1-2-2', '2-1-2', '3-2', '2-3', '1-3-1'],
-  7: ['2-3-1', '3-2-1', '3-3', '2-1-2-1', '3-1-2', '2-2-2'],
-  8: ['3-3-1', '2-3-2', '3-2-2', '3-1-2-1', '2-4-1', '3-4'],
-  9: ['3-3-2', '3-4-1', '3-2-3', '4-3-1', '2-4-2', '3-1-3-1'],
-  10: ['4-3-2', '3-4-2', '3-3-3', '4-4-1', '3-5-1', '4-2-3'],
-  11: ['4-4-2', '4-3-3', '4-2-3-1', '3-5-2', '3-4-3', '4-1-4-1', '5-3-2', '4-5-1'],
+  2: ['1-1'],
+  3: ['2-1'],
+  4: ['1-2-1'],
+  5: ['1-2-1'],
+  6: ['2-2-1'],
+  7: ['2-3-1'],
+  8: ['3-3-1'],
+  9: ['3-3-2'],
+  10: ['4-3-2'],
+  11: ['4-4-2'],
 };
-
-const formationLabel = (f: string, onField: number) => (onField >= 5 ? `G-${f}` : f);
 
 interface Slot { x: number; y: number; gk: boolean }
 
@@ -40,34 +39,12 @@ export function slotsFor(formation: string, onField: number): Slot[] {
   if (rows.reduce((a, b) => a + b, 0) !== outfield) rows = (FORMATIONS[onField]?.[0] ?? String(outfield)).split('-').map(Number);
   const slots: Slot[] = [];
   // Marges : le nom et le temps de jeu sous chaque pastille restent dans le terrain.
-  if (gk) slots.push({ x: 50, y: 86, gk: true });
+  if (gk) slots.push({ x: 50, y: 87, gk: true });
   rows.forEach((k, i) => {
-    const y = rows.length === 1 ? 45 : 68 - (i * 50) / (rows.length - 1);
+    const y = rows.length === 1 ? 45 : 64 - (i * 51) / (rows.length - 1);
     for (let j = 0; j < k; j++) slots.push({ x: 12 + ((j + 1) / (k + 1)) * 76, y, gk: false });
   });
   return slots;
-}
-
-/** Choix de la composition : un mini-terrain par formation. */
-function FormationPicker({ onField, value, onChange }: { onField: number; value: string; onChange: (f: string) => void }) {
-  const list = FORMATIONS[onField] ?? [value];
-  if (list.length < 2) return null;
-  return (
-    <div className="formation-picker" role="radiogroup" aria-label="Composition">
-      {list.map((f) => (
-        <button key={f} type="button" role="radio" aria-checked={f === value} className={f === value ? 'on' : ''} onClick={() => onChange(f)}>
-          <svg viewBox="0 0 68 92" aria-hidden>
-            <rect x="3" y="3" width="62" height="86" rx="5" />
-            <line x1="3" y1="46" x2="65" y2="46" />
-            {slotsFor(f, onField).map((p, i) => (
-              <circle key={i} cx={(p.x / 100) * 68} cy={(p.y / 100) * 92} r="5.2" className={p.gk ? 'gk' : ''} />
-            ))}
-          </svg>
-          <span>{formationLabel(f, onField)}</span>
-        </button>
-      ))}
-    </div>
-  );
 }
 
 const fmt = (sec: number) => {
@@ -140,16 +117,20 @@ function MatchBoard({ d }: { d: ConvDetail }) {
   const [m, setM] = useState<MatchState>(() => {
     try {
       const local = JSON.parse(localStorage.getItem(storeKey(d.eventId, d.date)) || 'null') as MatchState | null;
-      if (local && (!d.match || (local.events.length >= d.match.events.length && local.elapsed >= d.match.elapsed))) return local;
+      if (local && (!d.match || (local.events.length >= d.match.events.length && local.elapsed >= d.match.elapsed))) return { ...local, formation: FORMATIONS[s.onField]?.[0] ?? String(s.onField) };
     } catch {
       /* rien */
     }
-    return d.match ?? initial(d);
+    return d.match ? { ...d.match, formation: FORMATIONS[s.onField]?.[0] ?? String(s.onField) } : initial(d);
   });
   const [pick, setPick] = useState<Pick>(null);
   const [, setTick] = useState(0);
   const [goal, setGoal] = useState(false);
   const [finish, setFinish] = useState(false);
+  const [halfAlert, setHalfAlert] = useState(false);
+  const notified = useRef(new Set<number>());
+  const [dragging, setDragging] = useState<number | null>(null);
+  const drag = useRef<{ from: number; ready: boolean; timer: ReturnType<typeof setTimeout> } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const players = useMemo(() => Object.fromEntries(d.players.map((p) => [p.id, p])), [d.players]);
@@ -180,6 +161,13 @@ function MatchBoard({ d }: { d: ConvDetail }) {
     },
     [d.eventId, d.date],
   );
+  useEffect(() => () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      const saved = localStorage.getItem(storeKey(d.eventId, d.date));
+      if (saved) void api.put(`/convocations/${d.eventId}/${d.date}/match`, JSON.parse(saved)).catch(() => undefined);
+    }
+  }, [d.eventId, d.date]);
   const update = (fn: (m: MatchState) => MatchState, now = false) =>
     setM((cur) => {
       const next = fn(cur);
@@ -189,14 +177,15 @@ function MatchBoard({ d }: { d: ConvDetail }) {
 
   const live = (x: MatchState) => (x.running && x.since ? (Date.now() - x.since) / 1000 : 0);
   // Plateau : chaque « période » est un petit match contre un adversaire, avec sa propre durée.
-  const games = d.games?.length ? d.games : null;
+  const games = d.games?.length ? [...d.games].sort((a, b) => {
+    const rank = (id: string) => m.gameOrder?.includes(id) ? m.gameOrder.indexOf(id) : (m.gameOrder?.length ?? 0) + d.games!.findIndex((g) => g.id === id);
+    return rank(a.id) - rank(b.id);
+  }) : null;
   const periods = games ? games.length : s.periods;
   const lengthOf = (p: number) => (games ? (games[p - 1]?.minutes ?? s.periodMinutes) : s.periodMinutes) * 60;
   const periodSec = lengthOf(m.period);
   const elapsed = m.elapsed + live(m);
   const totalSec = Array.from({ length: periods }, (_, i) => lengthOf(i + 1)).reduce((a, b) => a + b, 0);
-  const played = Array.from({ length: m.period - 1 }, (_, i) => lengthOf(i + 1)).reduce((a, b) => a + b, 0) + Math.min(elapsed, periodSec);
-  const remaining = Math.max(0, totalSec - played);
   const game = games?.[m.period - 1] ?? null;
   const results = m.results ?? [];
   const secOf = (pid: string) => (m.seconds[pid] ?? 0) + (m.running && m.field.includes(pid) ? live(m) : 0);
@@ -205,11 +194,80 @@ function MatchBoard({ d }: { d: ConvDetail }) {
   const periodLabel = games ? `Match ${m.period}/${periods}` : s.periods === 2 ? (m.period === 1 ? '1re mi-temps' : '2e mi-temps') : `Période ${m.period}/${s.periods}`;
   const overtime = elapsed > periodSec;
 
-  // Remplaçants qui n'atteindront plus leur part de temps de jeu s'ils n'entrent pas dans les 5 prochaines minutes.
-  const alerts = bench
-    .map((p) => ({ p, slack: secOf(p.id) + remaining - target * 0.9 }))
-    .filter((a) => m.started && remaining > 0 && a.slack < 300)
-    .sort((a, b) => a.slack - b.slack);
+  // Une alerte par rencontre, conservée avec le chrono lors des pauses et rechargements.
+  const midpoint = games ? periodSec / 2 : totalSec / 2;
+  const matchElapsed = games ? elapsed : (m.period - 1) * periodSec + elapsed;
+  const alertKey = games ? m.period : 1;
+  useEffect(() => {
+    if (!m.running || matchElapsed < midpoint || m.halftimeNotified?.includes(alertKey) || notified.current.has(alertKey)) return;
+    notified.current.add(alertKey);
+    beep();
+    navigator.vibrate?.([180, 80, 180]);
+    setHalfAlert(true);
+    update((x) => ({ ...x, halftimeNotified: [...(x.halftimeNotified ?? []), alertKey] }), true);
+  }, [m.running, matchElapsed, midpoint, alertKey, m.halftimeNotified]);
+  useEffect(() => { setHalfAlert(false); }, [m.period]);
+  useEffect(() => () => { if (drag.current) clearTimeout(drag.current.timer); }, []);
+
+  // Les rencontres terminées et celle déjà démarrée gardent leur place et leur score.
+  const firstMovable = (m.period - 1) + (elapsed > 0 || m.running || results[m.period - 1] ? 1 : 0);
+  const reorder = (from: number, to: number) => {
+    if (!games || from < firstMovable || to < firstMovable || from === to || to >= games.length) return;
+    const order = games.map((g) => g.id);
+    const [id] = order.splice(from, 1);
+    order.splice(to, 0, id);
+    update((x) => ({ ...x, gameOrder: order }), true);
+  };
+  const gameList = <section className="match-fixtures">
+    <div className="match-section-heading"><span>Les rencontres</span><small>{games?.length ?? 1}</small></div>
+    <div className="plateau-strip" aria-label="Ordre des matchs">
+      {(games ?? [{ id: d.eventId, opponent: d.opponent || 'Adversaire' }]).map((g, i) => {
+        const r = results[i];
+        const current = i === m.period - 1;
+        const movable = !!games && i >= firstMovable;
+        return <div key={g.id}
+          data-game-index={i} tabIndex={movable ? 0 : undefined}
+          className={`ps-game${current ? ' current' : ''}${r ? ' completed' : ''}${dragging === i ? ' dragging' : ''}`}
+          aria-label={`${g.opponent}${movable ? ', maintenir pour déplacer, ou Alt et flèches au clavier' : ''}`}
+          onKeyDown={(e) => { if (e.altKey && ['ArrowUp', 'ArrowDown'].includes(e.key)) { e.preventDefault(); reorder(i, i + (e.key === 'ArrowUp' ? -1 : 1)); } }}
+          onPointerDown={(e) => {
+            if (!movable || e.button !== 0) return;
+            const element = e.currentTarget;
+            const pointerId = e.pointerId;
+            const mouse = e.pointerType === 'mouse';
+            if (mouse) element.setPointerCapture(pointerId);
+            drag.current = { from: i, ready: mouse, timer: setTimeout(() => {
+              if (!drag.current) return;
+              drag.current.ready = true;
+              element.setPointerCapture(pointerId);
+              setDragging(i);
+            }, mouse ? 0 : 180) };
+          }}
+          onPointerMove={(e) => {
+            if (!drag.current?.ready) return;
+            e.preventDefault();
+            const target = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-game-index]');
+            if (target) target.dataset.drop = 'true';
+            document.querySelectorAll<HTMLElement>('[data-drop]').forEach((el) => { if (el !== target) delete el.dataset.drop; });
+          }}
+          onPointerUp={(e) => {
+            const state = drag.current;
+            if (!state) return;
+            clearTimeout(state.timer);
+            if (state.ready) {
+              const target = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-game-index]');
+              if (target) reorder(state.from, Number(target.dataset.gameIndex));
+            }
+            drag.current = null; setDragging(null);
+            document.querySelectorAll<HTMLElement>('[data-drop]').forEach((el) => delete el.dataset.drop);
+          }}
+          onPointerCancel={() => { if (drag.current) clearTimeout(drag.current.timer); drag.current = null; setDragging(null); }}>
+          <small>{String(i + 1).padStart(2, '0')}</small><b>{g.opponent}</b>
+          <em>{r ? `${r.us}-${r.them}` : current ? `${m.score.us}-${m.score.them}` : '–'}</em>
+        </div>;
+      })}
+    </div>
+  </section>;
 
   /* ---- actions */
 
@@ -276,19 +334,6 @@ function MatchBoard({ d }: { d: ConvDetail }) {
 
   const pickedPid = pick ? (pick.where === 'field' ? m.field[pick.idx] : pick.pid) : null;
 
-  const setFormation = (f: string) => {
-    const nextSlots = slotsFor(f, s.onField);
-    update((x) => {
-      const c = commit(x);
-      // Le gardien reste dans les buts, les autres gardent leur ordre.
-      const keeper = slots.findIndex((sl) => sl.gk);
-      const gk = keeper >= 0 ? c.field[keeper] : null;
-      const others = c.field.filter((pid, i) => pid && i !== keeper) as string[];
-      const field = nextSlots.map((sl) => (sl.gk ? gk ?? others.shift() ?? null : others.shift() ?? null));
-      return { ...c, formation: f, field };
-    }, true);
-  };
-
   const markAbsent = (pid: string) => {
     setPick(null);
     update((x) => ({ ...x, absent: x.absent.includes(pid) ? x.absent.filter((a) => a !== pid) : [...x.absent, pid], field: x.field.map((f) => (f === pid ? null : f)) }));
@@ -322,6 +367,8 @@ function MatchBoard({ d }: { d: ConvDetail }) {
   const reset = async () => {
     if (!(await confirm({ title: 'Recommencer le match ?', text: 'Chrono, temps de jeu, buts et changements seront remis à zéro.', confirm: 'Recommencer', danger: true }))) return;
     const fresh = initial(d);
+    setHalfAlert(false);
+    notified.current.clear();
     setM(fresh);
     persist(fresh, true);
   };
@@ -332,20 +379,22 @@ function MatchBoard({ d }: { d: ConvDetail }) {
   if (m.finished) return <Navigate to={`/matchs/${d.eventId}/${d.date}`} replace />;
   const canUndo = m.events.some((e) => (e.t === 'goal' || e.t === 'against') && (!games || e.period === m.period));
 
-  const Token = ({ pid, idx }: { pid: string | null; idx: number }) => {
+  const renderToken = (pid: string | null, idx: number) => {
     const p = pid ? players[pid] : null;
     const on = pick?.where === 'field' && pick.idx === idx;
     const target = !!pick && !on;
-    const sec = pid ? secOf(pid) : 0;
+
     return (
       <button
+        key={idx}
         className={`mtoken${on ? ' on' : ''}${target ? ' target' : ''}${!p ? ' empty' : ''}${slots[idx]?.gk ? ' gk' : ''}`}
         style={{ left: `${slots[idx].x}%`, top: `${slots[idx].y}%` }}
+        title={p?.firstName ?? 'Poste libre'}
+        aria-label={p ? `${p.firstName}, ${slots[idx]?.gk ? 'gardien' : 'sur le terrain'}, sélectionner pour remplacer` : 'Poste libre'}
         onClick={() => tap({ where: 'field', idx })}
       >
-        <span className="disc" style={{ background: slots[idx]?.gk ? '#f59f00' : team?.color }}>{p ? p.number ?? p.firstName.slice(0, 2) : '+'}</span>
-        {p && <b>{p.firstName}</b>}
-        {p && m.started && <small>{Math.floor(sec / 60)}′</small>}
+        <PortraitCard photo={p ? cardPhotoUrl(p) : null} name={p?.firstName ?? 'Poste libre'} tier={slots[idx]?.gk ? 'green' : slots[idx]?.y > 60 ? 'silver' : 'gold'} />
+        {!p && <span className="empty-slot">+</span>}
       </button>
     );
   };
@@ -373,31 +422,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
 
       <div className="match-body">
         <section className="match-main">
-          {games && (
-            <div className="plateau-strip" aria-label="Matchs du plateau">
-              {games.map((g, i) => {
-                const r = results[i];
-                const current = i === m.period - 1;
-                const tone = r ? (r.us > r.them ? 'win' : r.us === r.them ? 'draw' : 'loss') : current ? 'current' : '';
-                return (
-                  <span key={g.id} className={`ps-game ${tone}`}>
-                    <small>{g.time ? formatTime(g.time) : `Match ${i + 1}`}</small>
-                    <b className="ellipsis">{g.opponent}</b>
-                    <em>{r ? `${r.us} – ${r.them}` : current && m.started ? `${m.score.us} – ${m.score.them}` : `${g.minutes} min`}</em>
-                  </span>
-                );
-              })}
-            </div>
-          )}
-          {alerts[0] && (
-            <button className="equity-alert" onClick={() => setPick({ where: 'bench', pid: alerts[0].p.id })}>
-              <AlertTriangle />
-              <span className="grow">
-                <b>{alerts[0].p.firstName}</b> : {Math.floor(secOf(alerts[0].p.id) / 60)} min jouées, il reste {Math.ceil(remaining / 60)} min. À faire entrer {alerts[0].slack < 0 ? 'maintenant' : 'bientôt'} pour qu’il joue autant que les autres.
-              </span>
-              <span className="btn sm">Faire entrer</span>
-            </button>
-          )}
+          {halfAlert && <div className="equity-alert" role="status"><AlertTriangle /><span className="grow"><b>La moitié du match est jouée.</b> Pensez aux remplacements.</span><button className="btn icon sm ghost" aria-label="Fermer le rappel" onClick={() => setHalfAlert(false)}><X /></button></div>}
           <div className="mpitch">
             <div className="mp-lines">
               <i className="mid" />
@@ -406,7 +431,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
               <i className="box bottom" />
             </div>
             {slots.map((_, i) => (
-              <Token key={i} pid={m.field[i] ?? null} idx={i} />
+              renderToken(m.field[i] ?? null, i)
             ))}
           </div>
           {pickedPid && (
@@ -449,12 +474,6 @@ function MatchBoard({ d }: { d: ConvDetail }) {
                     : `Fin de la ${periodLabel.toLowerCase()}`}
               </button>
             )}
-            {games && !m.running && elapsed === 0 && game && (
-              <span className="next-game">
-                Prochain : <b>{game.opponent}</b>
-                {game.time ? ` à ${formatTime(game.time)}` : ''} · {game.minutes} min
-              </span>
-            )}
             {canUndo && (
               <button className="btn sm ghost" onClick={undoScore}>
                 <RotateCcw /> Annuler le dernier but
@@ -466,15 +485,16 @@ function MatchBoard({ d }: { d: ConvDetail }) {
               </button>
             )}
           </div>
-          <FormationPicker onField={s.onField} value={m.formation} onChange={setFormation} />
         </section>
 
         <aside className="match-side">
+          {gameList}
+          <section className="match-bench-panel">
           <h3>Remplaçants</h3>
           <div className="bench">
             {bench.map((p) => (
-              <button key={p.id} className={`bench-chip${pick?.where === 'bench' && pick.pid === p.id ? ' on' : ''}${alerts.some((a) => a.p.id === p.id) ? ' warn' : ''}`} onClick={() => tap({ where: 'bench', pid: p.id })}>
-                <span className="disc sm" style={{ background: team?.color }}>{p.number ?? p.firstName.slice(0, 2)}</span>
+              <button key={p.id} className={`bench-chip${pick?.where === 'bench' && pick.pid === p.id ? ' on' : ''}`} onClick={() => tap({ where: 'bench', pid: p.id })}>
+                <PortraitCard photo={cardPhotoUrl(p)} name={p.firstName} tier={p.positions.includes('GB') ? 'green' : 'gold'} />
                 <b>{p.firstName}</b>
                 <small>{Math.floor(secOf(p.id) / 60)}′</small>
               </button>
@@ -491,10 +511,8 @@ function MatchBoard({ d }: { d: ConvDetail }) {
             </p>
           )}
 
-          <h3 style={{ marginTop: 20 }}>Temps de jeu</h3>
-          <p className="small muted" style={{ marginBottom: 8 }}>
-            Objectif équitable : {Math.round(target / 60)} min chacun
-          </p>
+          </section>
+          <section className="match-minutes-panel"><h3>Temps de jeu</h3>
           <div className="minutes">
             {[...present].sort((a, b) => secOf(a.id) - secOf(b.id)).map((p) => {
               const sec = secOf(p.id);
@@ -511,6 +529,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
               );
             })}
           </div>
+          </section>
         </aside>
       </div>
 
@@ -523,7 +542,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
       )}
       {finish && (
         <FinishSheet
-          d={d}
+          d={{ ...d, games }}
           m={m}
           onClose={() => setFinish(false)}
           onDone={async (text, publish, awards) => {
@@ -532,6 +551,7 @@ function MatchBoard({ d }: { d: ConvDetail }) {
             const total = c.results?.length ? c.results.reduce((a, r) => ({ us: a.us + r.us, them: a.them + r.them }), { us: 0, them: 0 }) : c.score;
             const next = { ...c, score: total, running: false, since: null, finished: true };
             try {
+              if (saveTimer.current) clearTimeout(saveTimer.current);
               const r = await api.post<{ sent: number }>(`/convocations/${d.eventId}/${d.date}/finish`, { match: next, text, publish, awards });
               localStorage.removeItem(storeKey(d.eventId, d.date));
               setM(next);
@@ -641,7 +661,7 @@ function FinishSheet({ d, m, onClose, onDone }: { d: ConvDetail; m: MatchState; 
       {step === 1 ? (
         <div className="stack">
           {d.games?.length ? (
-            <GamesResults games={d.games} results={m.results ?? []} />
+            <GamesResults cards games={d.games} results={m.results ?? []} />
           ) : (
             <div className="final-score">
               {m.score.us} – {m.score.them}

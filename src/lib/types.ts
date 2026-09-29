@@ -109,6 +109,8 @@ export interface Player {
   photo?: number;
   /** Photo détourée (PNG transparent). */
   photoAlpha?: boolean;
+  cardPhoto?: number;
+  cardPhotoAlpha?: boolean;
   /** Entrée sur le terrain : photo en pied (détourée si `alpha`). */
   walkout?: { photo?: { v: number; ext: 'png' | 'jpg'; alpha: boolean } };
   profile?: PlayerProfile;
@@ -466,6 +468,10 @@ export interface PlayerMetrics {
 }
 
 export interface ConvPlayer {
+  photo?: number;
+  photoAlpha?: boolean;
+  cardPhoto?: number;
+  cardPhotoAlpha?: boolean;
   id: string;
   firstName: string;
   lastName: string;
@@ -486,6 +492,8 @@ export interface MatchEvent { id: string; t: 'goal' | 'against' | 'sub' | 'perio
 /* Plateau : chaque « période » est un match contre un adversaire ; son score part dans `results` au coup de sifflet. */
 
 export interface MatchState {
+  gameOrder?: string[];
+  halftimeNotified?: number[];
   formation: string;
   /** Joueur par poste de la formation (null = poste vide). */
   field: (string | null)[];

@@ -179,7 +179,7 @@ function DaySheet({
               <small>
                 {it.time ? formatTime(it.time) : 'Journée'}
                 {it.event?.endTime && !it.event.allDay ? ` – ${formatTime(it.event.endTime)}` : ''}
-                {it.event?.meetTime ? ` · RDV ${formatTime(it.event.meetTime)}` : ''}
+
                 {it.training ? ' · Séance préparée' : it.event?.type === 'training' ? ' · Séance à préparer' : ''}
               </small>
             </span>
@@ -326,14 +326,14 @@ export function ConvBox({ teamId, e, setE }: { teamId: string; e: Omit<TeamEvent
           <Field label="Réglage">
             <select
               className="select"
-              value={e.conv?.custom ? 'custom' : e.conv?.presetId ?? ''}
+              value={e.conv?.custom ? 'custom' : chosen?.id ?? ''}
               onChange={(x) => {
                 const v = x.target.value;
                 if (v === 'custom') setConv({ custom: { ...convSettings }, presetId: null });
                 else setConv({ custom: null, presetId: v || null });
               }}
             >
-              <option value="">Par défaut{teamDefault ? ` (${teamDefault.name})` : ''}</option>
+              {!presets?.length && <option value="">Convocation par défaut</option>}
               {presets?.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -529,9 +529,6 @@ function ClassicEventForm({
               </Field>
               <Field label="Fin">
                 <input className="input" type="time" value={e.endTime} onChange={(x) => setE({ ...e, endTime: x.target.value })} />
-              </Field>
-              <Field label="Convocation">
-                <input className="input" type="time" value={e.meetTime} onChange={(x) => setE({ ...e, meetTime: x.target.value })} />
               </Field>
             </>
           )}

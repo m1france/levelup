@@ -63,7 +63,7 @@ export function carpoolView(o, user) {
     }));
   const free = offers.reduce((a, x) => a + x.free, 0);
   return {
-    eventId: o.e.id, date: o.date, title: evTitle(o.e), meetTime: o.data.meetTime || o.e.meetTime || '', location: o.e.location,
+    eventId: o.e.id, date: o.date, title: evTitle(o.e), meetTime: o.e.time || '', location: o.e.location,
     offers, requests, free, needs: requests.filter((r) => !r.solved).length,
     kids: bookableKids(user, o).map((p) => ({ id: p.id, firstName: p.firstName, booked: booked.has(p.id) })),
   };
@@ -585,7 +585,7 @@ function enrich(m, user) {
     }
     if (m.kind === 'match') {
       const o = occ(d.eventId, d.date);
-      return { ...base, data: { eventId: o.e.id, date: o.date, title: evTitle(o.e), meetTime: o.data.meetTime || o.e.meetTime, location: o.e.location, venue: o.e.venue, type: o.e.type } };
+      return { ...base, data: { eventId: o.e.id, date: o.date, title: evTitle(o.e), meetTime: o.e.time, location: o.e.location, venue: o.e.venue, type: o.e.type } };
     }
   } catch {
     return { ...base, data: { ...d, gone: true } };
