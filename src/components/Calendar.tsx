@@ -362,7 +362,11 @@ export interface EventFormProps {
   initialType?: EventType; initialGroup?: string | null;
   /** Nouvel événement répété chaque semaine (programmer les entraînements de la saison). */
   initialWeekly?: boolean;
-  onClose: () => void; onSaved: () => void;
+  /** Événement récurrent : `one` ne modifie que l'occurrence `occurrence` (elle sort de la série). */
+  scope?: EditScope;
+  onClose: () => void;
+  /** `saved` : l'événement tel qu'enregistré (date, heure…), quand il vient du formulaire classique. */
+  onSaved: (saved?: Omit<TeamEvent, 'id' | 'teamId'>) => void;
 }
 
 /**
@@ -380,16 +384,20 @@ export function EventForm(props: EventFormProps) {
 }
 
 function ClassicEventForm({
-  teamId, date, event, occurrence, type, plateaux, initialGroup, initialWeekly, onType, onClose, onSaved,
+  teamId, date, event, occurrence, type, plateaux, initialGroup, initialWeekly, scope, onType, onClose, onSaved,
 }: EventFormProps & { type: EventType; plateaux: boolean; onType: (t: EventType) => void }) {
   const toast = useToast();
   const nav = useNavigate();
   const { me } = useApp();
   const groups = groupsOf(me.teams.find((t) => t.id === teamId)?.category);
   const weekday = fromYMD(date).getDay();
+  // Une seule date d'une série : on la modifie comme un événement à part.
+  const detach = !!(event && scope === 'one' && occurrence && event.recurrence.freq !== 'none');
   const [e, setE] = useState<Draft>(() =>
     event
-      ? { ...event, type }
+      ? detach
+        ? { ...event, type, start: occurrence!, exdates: [], recurrence: { freq: 'none', interval: 1, days: [], until: null, count: null } }
+        : { ...event, type }
       : {
           type, title: '', start: date, allDay: false, time: type === 'training' ? '14:00' : '10:00', endTime: type === 'training' ? '15:30' : '11:30', meetTime: '', location: '',
           opponent: '', venue: '', notes: '', color: '', parents: true, exdates: [], group: initialGroup ?? undefined,
@@ -428,7 +436,8 @@ function ClassicEventForm({
         games: undefined,
         recurrence: { ...r, until: ends === 'until' ? r.until : null, count: ends === 'count' ? r.count ?? 10 : null },
       };
-      const id = event?.id ?? uid();
+      if (detach) await api.put(`/events/${event!.id}`, { ...event, exdates: [...event!.exdates, occurrence] });
+      const id = event && !detach ? event.id : uid();
       await api.put(`/events/${id}`, body);
       if (logo.logo && isMatch) await api.post(`/events/${id}/logo`, { image: logo.logo });
       if (prepare && !event) {
@@ -436,7 +445,7 @@ function ClassicEventForm({
         nav(`/seances/${t.id}`);
       }
       toast(event ? 'Événement modifié' : 'Événement ajouté');
-      onSaved();
+      onSaved(body);
     } catch (err) {
       toast((err as Error).message, true);
     } finally {
@@ -444,7 +453,7 @@ function ClassicEventForm({
     }
   };
 
-  const remove = useRemoveEvent(event, occurrence, onSaved);
+  const remove = useRemoveEvent(event, occurrence, () => onSaved());
   const color = e.color || EVENT_TYPES[e.type].color;
   const home = e.venue === 'home';
 
@@ -632,6 +641,32 @@ function ClassicEventForm({
           <textarea className="textarea" rows={2} value={e.notes ?? ''} onChange={(x) => setE({ ...e, notes: x.target.value })} placeholder="Matériel à prévoir, covoiturage, maillots…" />
         </Field>
       </div>
+    </Sheet>
+  );
+}
+
+export type EditScope = 'one' | 'all';
+
+/** Événement répété : l'action porte-t-elle sur cette date seulement, ou sur toute la série ? */
+export function ScopeSheet({
+  title, danger, onPick, onClose,
+}: { title: string; danger?: boolean; onPick: (scope: EditScope) => void; onClose: () => void }) {
+  return (
+    <Sheet
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={() => onPick('all')}>
+            Cet événement et tous les autres
+          </button>
+          <button className={`btn ${danger ? 'danger' : 'primary'}`} onClick={() => onPick('one')} autoFocus>
+            Cet événement seulement
+          </button>
+        </>
+      }
+    >
+      <p className="muted">Cet événement se répète. {danger ? 'Supprimer' : 'Modifier'} uniquement cette date, ou toute la série ?</p>
     </Sheet>
   );
 }

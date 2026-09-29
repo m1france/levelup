@@ -1,8 +1,8 @@
-import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Repeat } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Pencil, Plus, Repeat, Trash2 } from 'lucide-react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { EventForm, usePrepareSession } from '../components/Calendar';
-import { Empty, Spinner, useAsync, useToast } from '../components/ui';
+import { EventForm, ScopeSheet, usePrepareSession, type EditScope } from '../components/Calendar';
+import { Empty, Spinner, useAsync, useConfirm, useContextMenu, useToast } from '../components/ui';
 import { api } from '../lib/api';
 import { MONTHS_TILE, agenda, fromYMD, toYMD } from '../lib/events';
 import { useLive } from '../lib/live';
@@ -25,12 +25,45 @@ function addDays(ymd: string, n: number) {
   return toYMD(d);
 }
 
+/** Une carte de la page : un entraînement programmé (date d'une série ou non), sa séance préparée, ou les deux. */
+interface Item {
+  date: string;
+  event?: TeamEvent;
+  training?: Training;
+}
+
+const repeats = (it: Item) => !!it.event && it.event.recurrence.freq !== 'none';
+
+/** Clic droit (ou appui long) sur une carte : « Modifier » et « Supprimer ». */
+function CardMenu({ on, onEdit, onRemove, children }: { on: boolean; onEdit: () => void; onRemove: () => void; children: ReactNode }) {
+  const { bind, menu } = useContextMenu();
+  if (!on) return <>{children}</>;
+  return (
+    <div style={{ display: 'contents' }} {...bind}>
+      {children}
+      {menu((close) => (
+        <>
+          <button onClick={() => (close(), onEdit())}>
+            <Pencil /> Modifier
+          </button>
+          <button onClick={() => (close(), onRemove())} style={{ color: 'var(--danger)' }}>
+            <Trash2 /> Supprimer
+          </button>
+        </>
+      ))}
+    </div>
+  );
+}
+
 /** Toutes les séances, semaine par semaine : on programme les entraînements et on retrouve les anciennes séances. */
 export function SessionsPage() {
   const { team, can, isStaff } = useApp();
   const nav = useNavigate();
   const toast = useToast();
+  const confirm = useConfirm();
   const [plan, setPlan] = useState(false);
+  const [ask, setAsk] = useState<{ item: Item; action: 'edit' | 'remove' } | null>(null);
+  const [edit, setEdit] = useState<{ item: Item; scope: EditScope } | null>(null);
   const q = useAsync(async () => {
     if (!team) return null;
     const [trainings, events] = await Promise.all([api.get<Training[]>(`/teams/${team.id}/trainings`), api.get<TeamEvent[]>(`/teams/${team.id}/events`)]);
@@ -53,6 +86,54 @@ export function SessionsPage() {
   const lastPast = useMemo(() => [...past].sort((a, b) => b.date.localeCompare(a.date))[0], [past]);
 
   const canPlan = isStaff && can('trainings.manage');
+  const trainingEvents = useMemo(() => (q.data?.events ?? []).filter((e) => e.type === 'training'), [q.data?.events]);
+  /** Toutes les séances rattachées à leur entraînement programmé (même jour). */
+  const linked = useMemo(() => {
+    if (!q.data) return [];
+    const dates = [...q.data.trainings.map((t) => t.date.slice(0, 10)), ...trainingEvents.map((e) => e.start), today].sort();
+    return agenda(trainingEvents, q.data.trainings, dates[0], dates[dates.length - 1]);
+  }, [q.data, trainingEvents, today]);
+  const itemOf = (t: Training): Item => linked.find((it) => it.training?.id === t.id) ?? { date: t.date.slice(0, 10), training: t };
+  const canMenu = (it: Item) => isStaff && can(it.event ? 'events.manage' : 'trainings.manage');
+
+  const onEdit = (it: Item) => {
+    if (!it.event) return it.training && nav(`/seances/${it.training.id}`);
+    if (repeats(it)) setAsk({ item: it, action: 'edit' });
+    else setEdit({ item: it, scope: 'all' });
+  };
+  const onRemove = async (it: Item, scope?: EditScope) => {
+    if (repeats(it) && !scope) return setAsk({ item: it, action: 'remove' });
+    try {
+      if (it.event && repeats(it) && scope === 'one') {
+        await api.put(`/events/${it.event.id}`, { ...it.event, exdates: [...it.event.exdates, it.date] });
+        if (it.training) await api.del(`/trainings/${it.training.id}`);
+      } else if (it.event) {
+        // Toute la série : ses séances préparées partent avec elle.
+        const sessions = linked.filter((l) => l.event?.id === it.event!.id && l.training).map((l) => l.training!);
+        const ok = await confirm({
+          title: repeats(it) ? 'Supprimer toute la série ?' : 'Supprimer cet entraînement ?',
+          text: sessions.length ? `${sessions.length > 1 ? `Les ${sessions.length} séances préparées seront` : 'La séance préparée sera'} également supprimée${sessions.length > 1 ? 's' : ''}.` : undefined,
+          confirm: repeats(it) ? 'Supprimer la série' : 'Supprimer',
+          danger: true,
+        });
+        if (!ok) return;
+        await api.del(`/events/${it.event.id}`);
+        for (const t of sessions) await api.del(`/trainings/${t.id}`);
+      } else if (it.training) {
+        if (!(await confirm({ title: 'Supprimer cette séance ?', confirm: 'Supprimer', danger: true }))) return;
+        await api.del(`/trainings/${it.training.id}`);
+      }
+      toast('Supprimé');
+      q.reload();
+    } catch (e) {
+      toast((e as Error).message, true);
+    }
+  };
+  const card = (it: Item, node: ReactNode) => (
+    <CardMenu on={canMenu(it)} onEdit={() => onEdit(it)} onRemove={() => void onRemove(it)}>
+      {node}
+    </CardMenu>
+  );
   const current = start === mondayOf(today);
   const first = fromYMD(start);
   const last = fromYMD(end);
@@ -128,13 +209,18 @@ export function SessionsPage() {
                         <b>{fromYMD(d).getDate()}</b>
                       </div>
                       <div className="wk-cards">
-                        {list.map((it) =>
-                          it.training ? (
-                            <SessionCard key={it.key} t={it.training} past={d < today} onClick={() => nav(`/seances/${it.training!.id}`)} />
-                          ) : (
-                            <PlannedCard key={it.key} it={it} canPrepare={canPlan && d >= today} onPrepare={() => void prepare(it)} />
-                          ),
-                        )}
+                        {list.map((it) => (
+                          <Fragment key={it.key}>
+                            {card(
+                              it,
+                              it.training ? (
+                                <SessionCard t={it.training} past={d < today} onClick={() => nav(`/seances/${it.training!.id}`)} />
+                              ) : (
+                                <PlannedCard it={it} meta={false} canPrepare={canPlan && d >= today} onPrepare={() => void prepare(it)} />
+                              ),
+                            )}
+                          </Fragment>
+                        ))}
                       </div>
                     </div>
                   );
@@ -152,10 +238,48 @@ export function SessionsPage() {
               <div className="sec-head">
                 <h2>Anciennes séances</h2>
               </div>
-              <MonthAccordion list={past} onOpen={(t) => nav(`/seances/${t.id}`)} />
+              <MonthAccordion list={past} onOpen={(t) => nav(`/seances/${t.id}`)} wrap={(t, node) => card(itemOf(t), node)} />
             </section>
           )}
         </>
+      )}
+      {ask && (
+        <ScopeSheet
+          title={ask.action === 'edit' ? 'Modifier l’entraînement' : 'Supprimer l’entraînement'}
+          danger={ask.action === 'remove'}
+          onClose={() => setAsk(null)}
+          onPick={(scope) => {
+            const { item, action } = ask;
+            setAsk(null);
+            if (action === 'edit') setEdit({ item, scope });
+            else void onRemove(item, scope);
+          }}
+        />
+      )}
+      {edit && edit.item.event && (
+        <EventForm
+          teamId={team.id}
+          date={edit.item.date}
+          event={edit.item.event}
+          occurrence={edit.item.date}
+          scope={edit.scope}
+          onClose={() => setEdit(null)}
+          onSaved={async (saved) => {
+            const { item, scope } = edit;
+            setEdit(null);
+            // La séance préparée suit sa date quand on déplace cet entraînement seul.
+            const t = item.training;
+            const moved = saved && (scope === 'one' || !repeats(item)) && t && saved.start !== item.date;
+            if (moved) {
+              try {
+                await api.put(`/trainings/${t.id}`, { ...t, date: `${saved.start}T${saved.time || t.date.slice(11, 16) || '14:00'}` });
+              } catch (e) {
+                toast((e as Error).message, true);
+              }
+            }
+            q.reload();
+          }}
+        />
       )}
       {plan && (
         <EventForm

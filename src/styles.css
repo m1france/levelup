@@ -805,21 +805,18 @@ p { margin: 0; }
 }
 
 .months { display: flex; flex-direction: column; }
-.month-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 16px; padding: 10px 0; }
-.month-row.open { align-items: start; padding: 16px 0; }
-.month-label { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 6px 0; cursor: pointer; text-align: left; color: inherit; }
-.month-label b { display: block; font-size: 16px; font-weight: 650; letter-spacing: -0.015em; }
-.month-label small { color: var(--ink-3); font-size: 12.5px; }
-.month-label .chev { width: 16px; height: 16px; color: var(--ink-3); transition: transform 0.2s; flex: none; }
+.month-row { display: flex; flex-direction: column; gap: 14px; padding: 8px 0; }
+.month-row.open { padding-bottom: 16px; }
+.month-head { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; padding: 6px 0; cursor: pointer; text-align: left; color: inherit; }
+.month-head b { font-size: 16px; font-weight: 650; letter-spacing: -0.015em; }
+.month-head small { color: var(--ink-3); font-size: 12.5px; }
+.month-head .chev { width: 16px; height: 16px; color: var(--ink-3); transition: transform 0.2s; flex: none; }
 .month-row.open .chev { transform: rotate(90deg); }
-.month-rule { display: flex; align-items: center; gap: 12px; border: 0; background: none; padding: 0; cursor: pointer; }
-.month-rule span { flex: 1; height: 1px; background: var(--line-strong); }
-.month-rule small { color: var(--ink-3); font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.month-head .rule { flex: 1; height: 1px; background: var(--line-strong); margin-left: 8px; }
+.month-head .count { font-weight: 600; font-variant-numeric: tabular-nums; }
 .month-line { display: grid; grid-auto-flow: column; grid-auto-columns: 220px; gap: 16px; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
 .month-line::-webkit-scrollbar { display: none; }
 @media (max-width: 820px) {
-  .month-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
-  .month-row:not(.open) { grid-template-columns: 120px minmax(0, 1fr); }
   .month-line { grid-auto-columns: 62%; margin: 0 -16px; padding: 0 16px 4px; }
 }
 
