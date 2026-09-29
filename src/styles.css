@@ -1534,7 +1534,7 @@ a.tk-line:hover { background: var(--surface-2); }
 .fut-ovr { font-size: 2.55em; font-weight: 900; letter-spacing: -0.05em; line-height: 0.9; }
 .fut-pos { font-size: 1em; font-weight: 800; letter-spacing: 0.02em; }
 .fut-club { width: 2.3em; height: 2.3em; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 0.46em; letter-spacing: -0.04em; font-weight: 800; box-shadow: 0 0 0 0.12em rgba(255, 255, 255, 0.6); margin-top: 0.25em; }
-.fut-club.logo { font-size: 0.8em; width: 2.1em; height: 2.1em; margin-top: 0.15em; background: rgba(255, 255, 255, 0.92); box-shadow: 0 0 0 0.12em rgba(255, 255, 255, 0.6), 0 0.1em 0.3em rgba(0, 0, 0, 0.25); overflow: hidden; padding: 0.22em; }
+.fut-club.logo { font-size: 0.8em; width: 2.1em; height: 2.1em; margin-top: 0.15em; border-radius: 0; background: none; box-shadow: none; filter: drop-shadow(0 0.08em 0.2em rgba(0, 0, 0, 0.35)); }
 .fut-club.logo img { width: 100%; height: 100%; object-fit: contain; }
 .fut-name { position: absolute; top: 58.5%; left: 12%; right: 12%; text-align: center; font-size: 1.28em; font-weight: 900; text-transform: uppercase; letter-spacing: 0.01em; padding-bottom: 0.18em; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fut-stats { position: absolute; top: 66.5%; left: 16%; right: 12%; display: grid; grid-template-columns: 1fr 1fr; gap: 0.12em 0.9em; font-size: 0.76em; font-weight: 700; }
@@ -2774,11 +2774,11 @@ a.tk-line:hover { background: var(--surface-2); }
 }
 /* Chevrons de vitesse, comme sur l'écran géant */
 .fw-roster::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.05) 0 12px, transparent 12px 34px); }
-/* Trame de LED : chaque pixel est visible */
+/* Trame de LED très discrète : le texte reste net */
 .fw-roster::after {
   content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
-  background-image: linear-gradient(rgba(0, 0, 0, 0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.6) 1px, transparent 1px);
-  background-size: 4px 4px;
+  background-image: linear-gradient(rgba(0, 0, 0, 0.14) 1px, transparent 1px);
+  background-size: 100% 3px;
 }
 .fw-roster header { position: relative; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 9px 14px 6px; border-bottom: 2px solid rgba(255, 90, 79, 0.55); }
 .fw-roster header b, .fw-roster header span, .fw-roster li span {
@@ -2806,7 +2806,7 @@ a.tk-line:hover { background: var(--surface-2); }
   100% { transform: none; filter: none; }
 }
 @keyframes fw-led-row { from { clip-path: inset(0 100% 0 0); opacity: 0.4; } to { clip-path: inset(0); opacity: 1; } }
-/* Paysage : en bas à droite, dans la colonne laissée libre par la scène (ROSTER_PX dans scene.ts) */
+/* Paysage : en bas à droite */
 @media (min-aspect-ratio: 9/10) {
   .fw-final { padding-right: 300px; }
   .fw-roster { position: absolute; right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); width: 260px; }
