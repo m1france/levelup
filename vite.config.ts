@@ -25,6 +25,8 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/index.html',
+        // Détourage (MediaPipe, ~12 Mo) : chargé seulement quand on détoure une photo, jamais précaché.
+        globIgnores: ['**/vision_*'],
         // Notifications push (convocations, rappels) et réponse « Présent / Absent » depuis la notification.
         importScripts: ['push-sw.js'],
         navigateFallbackDenylist: [/^\/api\//],

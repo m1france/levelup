@@ -6,7 +6,7 @@
  * Confidentialité : les évaluations restent entre éducateurs. Les parents voient les objectifs
  * et observations explicitement partagés, les présences, les matchs et les infos pratiques de leur enfant.
  */
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { all, get, run, parse, UPLOADS } from './db.js';
@@ -248,9 +248,8 @@ playersApi.delete('/players/:id', (req, res) => {
   const row = playerAccess(req.user, req.params.id);
   if (!isStaff(req.user)) throw new HttpError(403, 'Réservé aux éducateurs');
   run('DELETE FROM players WHERE id = ?', row.id);
-  // La photo de l'enfant part avec sa fiche.
-  const photo = join(UPLOADS, `player_${row.id}.jpg`);
-  if (existsSync(photo)) unlinkSync(photo);
+  // Les photos et la vidéo de l'enfant partent avec sa fiche.
+  for (const f of [join(UPLOADS, `player_${row.id}.jpg`), ...walkoutFiles(row.id)]) if (existsSync(f)) unlinkSync(f);
   res.json({ ok: true });
 });
 
@@ -418,6 +417,113 @@ playersApi.post('/players/:id/photo', (req, res) => {
 playersApi.get('/players/:id/photo', (req, res) => {
   const row = playerAccess(req.user, req.params.id);
   sendPlayerPhoto(res, row.id);
+});
+
+/* ------------------------------------------------------------------ entrée sur le terrain (walkout) */
+
+/*
+ * Pour l'entrée sur le terrain de la convocation : une photo en pied (idéalement détourée, PNG transparent)
+ * et une vidéo de célébration à fond transparent (WebM VP9 pour Chrome et Android, MOV HEVC pour iPhone et Safari).
+ * Mêmes droits que la photo : éducateurs qui gèrent l'effectif, parents de l'enfant.
+ */
+const HERO_PHOTO = { png: 'image/png', jpg: 'image/jpeg' };
+const HERO_VIDEO = { webm: 'video/webm', mov: 'video/quicktime' };
+const heroPhotoFile = (pid, ext) => join(UPLOADS, `player_${pid}_walkout.${ext}`);
+const heroVideoFile = (pid, fmt) => join(UPLOADS, `player_${pid}_celebration.${fmt}`);
+const walkoutFiles = (pid) => [...Object.keys(HERO_PHOTO).map((e) => heroPhotoFile(pid, e)), ...Object.keys(HERO_VIDEO).map((f) => heroVideoFile(pid, f))];
+
+/** Médias de l'entrée d'un joueur (URL) ; rien si l'autorisation photo est refusée. */
+export function heroOf(p) {
+  const w = p.walkout || {};
+  if (p.info?.photoConsent === 'no') return null;
+  const video = {};
+  for (const f of Object.keys(HERO_VIDEO)) if (w.video?.[f]) video[f] = `/api/players/${p.id}/walkout/video/${f}?v=${w.video[f]}`;
+  const photo = w.photo ? `/api/players/${p.id}/walkout/photo?v=${w.photo.v}` : null;
+  if (!photo && !Object.keys(video).length) return null;
+  return { photo, alpha: !!w.photo?.alpha, video };
+}
+
+function editWalkout(req) {
+  const row = playerAccess(req.user, req.params.id);
+  if (isStaff(req.user)) need(req.user, 'players.manage');
+  return row;
+}
+
+function saveWalkout(row, fn) {
+  const data = JSON.parse(row.data);
+  const w = { ...(data.walkout || {}) };
+  fn(w);
+  if (!w.photo) delete w.photo;
+  if (w.video && !Object.keys(w.video).length) delete w.video;
+  if (Object.keys(w).length) data.walkout = w;
+  else delete data.walkout;
+  run('UPDATE players SET data = ?, updated_at = ? WHERE id = ?', JSON.stringify(data), now(), row.id);
+}
+
+const playerJson = (req, id) => playerOut(get('SELECT * FROM players WHERE id = ?', id), req.user, true);
+
+playersApi.post('/players/:id/walkout/photo', (req, res) => {
+  const row = editWalkout(req);
+  const m = /^data:image\/(png|jpeg);base64,/.exec(String(req.body.image || ''));
+  if (!m) throw new HttpError(400, 'Image invalide');
+  const ext = m[1] === 'png' ? 'png' : 'jpg';
+  const buf = decodeImage(req.body.image, 6_000_000);
+  for (const e of Object.keys(HERO_PHOTO)) if (existsSync(heroPhotoFile(row.id, e))) unlinkSync(heroPhotoFile(row.id, e));
+  writeFileSync(heroPhotoFile(row.id, ext), buf);
+  saveWalkout(row, (w) => {
+    w.photo = { v: now(), ext, alpha: ext === 'png' && !!req.body.alpha };
+  });
+  res.json(playerJson(req, row.id));
+});
+
+playersApi.delete('/players/:id/walkout/photo', (req, res) => {
+  const row = editWalkout(req);
+  for (const e of Object.keys(HERO_PHOTO)) if (existsSync(heroPhotoFile(row.id, e))) unlinkSync(heroPhotoFile(row.id, e));
+  saveWalkout(row, (w) => delete w.photo);
+  res.json(playerJson(req, row.id));
+});
+
+playersApi.get('/players/:id/walkout/photo', (req, res) => {
+  const row = playerAccess(req.user, req.params.id);
+  const ext = parse(row).walkout?.photo?.ext;
+  if (!ext || !existsSync(heroPhotoFile(row.id, ext))) throw new HttpError(404, 'Photo introuvable');
+  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  res.type(HERO_PHOTO[ext]).sendFile(heroPhotoFile(row.id, ext));
+});
+
+const rawVideo = express.raw({ type: () => true, limit: '60mb' });
+
+playersApi.put('/players/:id/walkout/video/:format', rawVideo, (req, res) => {
+  const row = editWalkout(req);
+  const fmt = req.params.format;
+  if (!HERO_VIDEO[fmt]) throw new HttpError(400, 'Format de vidéo non pris en charge (WebM ou MOV)');
+  if (!Buffer.isBuffer(req.body) || req.body.length < 1000) throw new HttpError(400, 'Vidéo vide');
+  writeFileSync(heroVideoFile(row.id, fmt), req.body);
+  saveWalkout(row, (w) => {
+    w.video = { ...(w.video || {}), [fmt]: now() };
+  });
+  res.json(playerJson(req, row.id));
+});
+
+playersApi.delete('/players/:id/walkout/video/:format', (req, res) => {
+  const row = editWalkout(req);
+  const fmt = req.params.format;
+  if (!HERO_VIDEO[fmt]) throw new HttpError(400, 'Format inconnu');
+  if (existsSync(heroVideoFile(row.id, fmt))) unlinkSync(heroVideoFile(row.id, fmt));
+  saveWalkout(row, (w) => {
+    w.video = { ...(w.video || {}) };
+    delete w.video[fmt];
+  });
+  res.json(playerJson(req, row.id));
+});
+
+playersApi.get('/players/:id/walkout/video/:format', (req, res) => {
+  const row = playerAccess(req.user, req.params.id);
+  const fmt = req.params.format;
+  if (!HERO_VIDEO[fmt] || !existsSync(heroVideoFile(row.id, fmt))) throw new HttpError(404, 'Vidéo introuvable');
+  // Lecture par morceaux (Range) : indispensable pour les vidéos sur Safari.
+  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  res.type(HERO_VIDEO[fmt]).sendFile(heroVideoFile(row.id, fmt));
 });
 
 /* ------------------------------------------------------------------ tests mesurés */

@@ -59,3 +59,16 @@ export async function prepareLogo(file: File, max = 512) {
   ctx.drawImage(src, 0, 0, c.width, c.height);
   return c.toDataURL('image/png');
 }
+
+/** Photo en pied (entrée sur le terrain) : 1600 px au plus, transparence conservée. */
+export async function prepareFullBody(file: File, max = 1600) {
+  const src = await decode(file);
+  const scale = Math.min(1, max / Math.max(src.width, src.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(src.width * scale);
+  c.height = Math.round(src.height * scale);
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}

@@ -193,8 +193,8 @@ export function MatchTicket({ t, onChanged, showChild = true, carpool: carpoolOp
         <div className="tk-action">
           <Link to={`${matchPath(t.eventId, t.date)}/paquet`} className="pack-cta" style={{ ['--team' as string]: t.color || undefined }}>
             <span className="grow">
-              <b>{t.read ? `Revoir le paquet de ${name}` : `${name} a reçu un paquet !`}</b>
-              <small>{t.read ? 'Sa carte de convoqué et le groupe du match' : 'Ouvrez-le ensemble pour découvrir sa carte'}</small>
+              <b>{t.read ? `Revoir l’entrée de ${name}` : `${name} a reçu un paquet !`}</b>
+              <small>{t.read ? 'Son entrée sur le terrain, sa carte et le groupe du match' : 'Ouvrez-le ensemble : son entrée sur le terrain l’attend'}</small>
             </span>
             <span className="pack-cta-go">🎁</span>
           </Link>

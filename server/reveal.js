@@ -12,6 +12,7 @@ import { occ, occPlayers, saveData, evTitle, gameResults, meetOf } from './convo
 import { eventGroup } from './groups.js';
 import { sign, verify } from './tokens.js';
 import { toTeam } from './live.js';
+import { heroOf } from './players.js';
 
 export const AWARDS = {
   mvp: { label: 'Joueur du match', emoji: '⭐', tier: 'totw' },
@@ -194,11 +195,30 @@ revealApi.get('/convocations/:eventId/:date/reveal', (req, res) => {
   res.json({ ...revealPayload(o, { user: req.user }), shareToken: isStaff(req.user) ? revealLink(o.e.id, o.date) : null });
 });
 
+/** Cartes du groupe : même couleur et même note pour tous (pas de classement entre les enfants). */
+function squadCards(squad, openedIds) {
+  const cards = squad.map((p) => {
+    const url = p.photo && p.info?.photoConsent !== 'no' ? `/api/players/${p.id}/photo?v=${p.photo}` : null;
+    return { ...card(p, {}, null, 1, url), award: { key: 'squad', label: 'Convoqué', emoji: '✅', tier: 'totw' }, mine: openedIds.has(p.id) };
+  });
+  const ovr = cards.length ? clamp(cards.reduce((a, c) => a + c.ovr, 0) / cards.length + 2) : 80;
+  for (const c of cards) c.ovr = ovr;
+  return cards;
+}
+
+function packTeam(teamId, group) {
+  const team = get('SELECT category, color FROM teams WHERE id = ?', teamId) ?? { category: '', color: '#1f7a4f' };
+  if (group) team.category = group;
+  team.logo = clubLogoUrl();
+  return team;
+}
+
+const clubName = () => get('SELECT name FROM club WHERE id = 1')?.name ?? '';
+
 /**
- * Paquet de convocation : l'enfant convoqué ouvre un paquet façon Ultimate Team et découvre sa carte.
+ * Paquet de convocation : l'enfant convoqué vit son entrée sur le terrain (walkout) et découvre sa carte.
  * Seuls les parents d'un enfant convoqué y ont accès (les autres reçoivent une simple annonce) ;
  * l'éducateur en voit un aperçu, pour le joueur `?player=` ou le premier de la sélection.
- * Toutes les cartes du groupe ont la même couleur et la même note : pas de classement entre les enfants.
  */
 revealApi.get('/convocations/:eventId/:date/pack', (req, res) => {
   const o = teamOcc(req);
@@ -209,16 +229,6 @@ revealApi.get('/convocations/:eventId/:date/pack', (req, res) => {
   const kids = staff ? [] : childIdsFor(req.user);
   const opened = staff ? squad.filter((p) => p.id === req.query.player).concat(squad).slice(0, 1) : squad.filter((p) => kids.includes(p.id));
   if (!opened.length) throw new HttpError(404, staff ? 'Sélectionnez au moins un joueur' : 'Aucun paquet pour ce match');
-  const ids = new Set(opened.map((p) => p.id));
-  const cards = squad.map((p) => {
-    const url = p.photo && p.info?.photoConsent !== 'no' ? `/api/players/${p.id}/photo?v=${p.photo}` : null;
-    return { ...card(p, {}, null, 1, url), award: { key: 'squad', label: 'Convoqué', emoji: '✅', tier: 'totw' }, mine: ids.has(p.id) };
-  });
-  const ovr = cards.length ? clamp(cards.reduce((a, c) => a + c.ovr, 0) / cards.length + 2) : 80;
-  for (const c of cards) c.ovr = ovr;
-  const team = get('SELECT category, color FROM teams WHERE id = ?', o.e.teamId) ?? { category: '', color: '#1f7a4f' };
-  if (eventGroup(o.e)) team.category = eventGroup(o.e);
-  team.logo = clubLogoUrl();
   res.json({
     eventId: o.e.id,
     date: o.date,
@@ -229,11 +239,39 @@ revealApi.get('/convocations/:eventId/:date/pack', (req, res) => {
     time: o.e.allDay ? '' : o.e.time || '',
     meetTime: meetOf(o),
     location: o.e.location || '',
-    team,
-    club: get('SELECT name FROM club WHERE id = 1')?.name ?? '',
+    team: packTeam(o.e.teamId, eventGroup(o.e)),
+    club: clubName(),
     preview: staff,
     opened: opened.map((p) => p.id),
-    cards,
+    heroes: Object.fromEntries(opened.map((p) => [p.id, heroOf(p)])),
+    cards: squadCards(squad, new Set(opened.map((p) => p.id))),
+  });
+});
+
+/** Aperçu de l'entrée d'un joueur depuis sa fiche (hors match). */
+revealApi.get('/players/:id/walkout', (req, res) => {
+  const row = get('SELECT * FROM players WHERE id = ?', req.params.id);
+  if (!row) throw new HttpError(404, 'Joueur introuvable');
+  needTeam(req.user, row.team_id);
+  if (!isStaff(req.user) && !childIdsFor(req.user).includes(row.id)) throw new HttpError(404, 'Joueur introuvable');
+  const p = parse(row);
+  const today = new Date().toISOString().slice(0, 10);
+  res.json({
+    eventId: '',
+    date: today,
+    type: 'match',
+    title: 'Aperçu de l’entrée',
+    opponent: '',
+    venue: 'home',
+    time: '',
+    meetTime: '',
+    location: '',
+    team: packTeam(row.team_id, p.category),
+    club: clubName(),
+    preview: true,
+    opened: [p.id],
+    heroes: { [p.id]: heroOf(p) },
+    cards: squadCards([p], new Set([p.id])),
   });
 });
 

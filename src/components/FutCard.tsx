@@ -2,7 +2,7 @@ import { useId, type ReactNode } from 'react';
 import type { PlayerCard } from '../lib/types';
 
 /** Silhouette de la carte (façon Ultimate Team) : couronne en haut, pointe en bas. */
-const SHAPE = 'M22 34 Q62 34 92 14 Q125 -3 158 14 Q188 34 228 34 L240 46 L240 296 Q240 310 228 317 L137 345 Q125 350 113 345 L22 317 Q10 310 10 296 L10 46 Z';
+export const SHAPE = 'M22 34 Q62 34 92 14 Q125 -3 158 14 Q188 34 228 34 L240 46 L240 296 Q240 310 228 317 L137 345 Q125 350 113 345 L22 317 Q10 310 10 296 L10 46 Z';
 
 export const TIERS: Record<string, { from: string; mid: string; to: string; ink: string; line: string; glow: string }> = {
   gold: { from: '#fff3c4', mid: '#e7c35a', to: '#b8891f', ink: '#3b2a05', line: 'rgba(90,60,0,.35)', glow: '#ffd76a' },
