@@ -4,11 +4,14 @@ L'application du club : convocations et matchs, séances, suivi des joueurs, alb
 
 ## Fonctionnalités
 
-### V6 : le paquet de convocation
+### V6 : l'entrée sur le terrain (convocation façon FIFA)
 
-- **Ouverture de paquet façon Ultimate Team** : à la publication, les parents d'un enfant convoqué reçoivent « 🎁 Léo a reçu un paquet ! ». La page du match s'ouvre d'abord sur le paquet aux couleurs du club (logo, catégorie, date). L'enfant tape trois fois dessus : il tremble, se fissure et s'illumine, puis se déchire dans un flash. Trois indices défilent dans le faisceau de lumière (poste, club, numéro), puis sa carte se retourne : « ✅ Convoqué ! », confettis, date, coup d'envoi, rendez-vous et lieu. « Mes coéquipiers » distribue ensuite les cartes du groupe (même couleur et même note pour tous, pas de classement). Sons synthétisés et vibrations, sans fichier à charger.
-- **Les non-retenus n'ont pas d'animation** : leur billet et leur notification l'annoncent simplement (« Les convocations tournent pour que chacun joue autant »).
-- Le billet du match propose « Revoir le paquet » ; l'éducateur a un « Aperçu du paquet » sur la page de convocation.
+- **Seuls les enfants convoqués vivent l'animation** : à la publication, leurs parents reçoivent « 🎁 Adam a reçu un paquet ! ». Les non-retenus reçoivent une simple annonce bienveillante, sans animation.
+- **Walkout en 3D** (three.js, chargé seulement à l'ouverture) : la caméra avance dans le tunnel des vestiaires, les néons s'allument un à un, la lumière filtre sous la porte aux couleurs et au logo du club ; les portes s'ouvrent dans un flash et, sans s'arrêter, la caméra traverse un espace de lumière où surgissent, une à une, **les trois premières lettres du prénom** en or massif (« Qui est convoqué ? A · D · A… »).
+- **L'estrade** : podium lumineux, écran géant « CONVOQUÉ », flashs des photographes, fumée, pyrotechnie, feux d'artifice et confettis. **La carte Ultimate Team à gauche** (dessinée en haute définition, qui tombe en tournoyant puis se pose face visible), **l'enfant à droite** : sa vidéo de célébration à fond transparent, sinon sa photo en pied. Puis la date, l'heure, le rendez-vous, et « Mes coéquipiers ».
+- **Bande-son synthétisée** (aucun fichier) : foule étouffée dans le tunnel qui éclate à l'ouverture, crampons sur le béton, claquement des néons, impact sur chaque lettre, beat d'hymne, feux d'artifice. Maintenir l'écran accélère, « Passer » va directement à l'estrade.
+- **Fiche joueur › Entrée sur le terrain** (parents et éducateurs) : photo en pied avec **détourage automatique** dans le navigateur (MediaPipe), vidéo de célébration (WebM à fond transparent pour Android et Chrome, MOV HEVC pour iPhone et Safari, 20 s au plus), et « Voir son entrée » pour l'essayer. Une photo ou une vidéo non détourée s'affiche dans un cadre doré. Rien n'est affiché si l'autorisation photo est refusée.
+- L'éducateur prévisualise l'entrée depuis la page du match (« Aperçu du paquet »). Qualité adaptative sur les téléphones modestes ; sans WebGL, la carte et la photo s'affichent directement.
 
 ### V5 : catégories, diapositives et éditeur plus précis
 
@@ -136,6 +139,7 @@ server/        API Express + SQLite (node:sqlite)
   demo.js      bibliothèque de démarrage et équipe d'exemple
 src/
   pitch/       moteur terrain : géométrie, rendu canvas, animation, édition, export vidéo
+  walkout/     entrée sur le terrain : scène three.js, carte dessinée, bande-son, détourage, police Barlow Condensed (OFL)
   pages/       écrans (éditeur, séances, live, joueurs, admin…)
   lib/         API (file d'attente hors-ligne), contexte, types
 ```
@@ -147,4 +151,4 @@ Les identifiants sont générés côté client et les écritures sont des `PUT` 
 - Une remarque reste privée aux éducateurs, sauf si elle est explicitement marquée « Partagée avec les parents ».
 - Le niveau d'aisance (qui sert à équilibrer les groupes) n'est jamais envoyé aux parents.
 - Le lien public d'une séance ne contient ni présences, ni groupes, ni notes des éducateurs.
-- Les photos d'un enfant sont supprimées avec sa fiche.
+- Les photos et la vidéo de célébration d'un enfant sont supprimées avec sa fiche ; elles ne sont jamais montrées si l'autorisation photo est refusée.

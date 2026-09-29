@@ -105,6 +105,8 @@ export interface Player {
   level?: 1 | 2 | 3;
   /** Version de la photo (horodatage), absente sans photo. */
   photo?: number;
+  /** Entrée sur le terrain : photo en pied (détourée si `alpha`) et vidéo de célébration (WebM et/ou MOV). */
+  walkout?: { photo?: { v: number; ext: 'png' | 'jpg'; alpha: boolean }; video?: { webm?: number; mov?: number } };
   profile?: PlayerProfile;
   info?: PlayerInfo;
   followUp?: FollowUp;
@@ -607,7 +609,15 @@ export interface Pack {
   /** Aperçu éducateur (la lecture n'est pas enregistrée). */
   preview: boolean;
   opened: string[];
+  /** Photo en pied et vidéo de célébration de chaque enfant dont on ouvre le paquet (null : rien d'enregistré). */
+  heroes: Record<string, WalkoutHero | null>;
   cards: PlayerCard[];
+}
+
+export interface WalkoutHero {
+  photo: string | null;
+  alpha: boolean;
+  video: { webm?: string; mov?: string };
 }
 
 /* ------------------------------------------------------------------ bulletins */

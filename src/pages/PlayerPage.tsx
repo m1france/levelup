@@ -6,6 +6,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { BulletinsTab, InfoPanel, PlayerAlerts, TestsPanel } from '../components/PlayerExtras';
 import { PlayerAvatar } from '../components/PlayerAvatar';
+import { WalkoutCard } from '../components/WalkoutMedia';
 import { FootPicker, PositionPitch, ProgressSteps, Radar, Rating, Sparkline } from '../components/PlayerProfile';
 import { Empty, Field, Menu, Seg, Sheet, Spinner, useAsync, useConfirm, useToast } from '../components/ui';
 import { api, uid } from '../lib/api';
@@ -148,6 +149,8 @@ export function PlayerPage() {
       </div>
 
       {coach && <PlayerAlerts p={p} onObserve={() => setParams({ tab: 'suivi' }, { replace: true })} />}
+
+      <WalkoutCard player={p} canEdit={!isStaff || can('players.manage')} onChange={(np) => q.setData({ ...data, player: { ...p, ...np } })} />
 
       <div style={{ margin: '4px 0 22px' }}>
         <Seg value={tab} onChange={(v) => setParams(v === tabs[0].value ? {} : { tab: v }, { replace: true })} options={tabs} />

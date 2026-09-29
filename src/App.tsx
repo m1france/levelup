@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
@@ -16,7 +16,6 @@ import { Matches } from './pages/Matches';
 import { Messages } from './pages/Messages';
 import { MatchLive } from './pages/MatchLive';
 import { PublicReveal, RevealPage } from './pages/Reveal';
-import { PackPage } from './pages/Pack';
 import { Settings } from './pages/Admin';
 import { Invite, Login, Setup } from './pages/Auth';
 import { Dashboard } from './pages/Dashboard';
@@ -28,6 +27,11 @@ import { Players } from './pages/Players';
 import { SessionsPage } from './pages/Sessions';
 import { PublicTraining } from './pages/PublicTraining';
 import { TrainingPage } from './pages/TrainingPage';
+
+// Entrée sur le terrain : three.js n'est chargé qu'à l'ouverture du paquet.
+const PackPage = lazy(() => import('./pages/Walkout').then((m) => ({ default: m.PackPage })));
+const PlayerWalkoutPage = lazy(() => import('./pages/Walkout').then((m) => ({ default: m.PlayerWalkoutPage })));
+const walkout = (el: React.ReactNode) => <Suspense fallback={<div className="wk wk-loading" />}>{el}</Suspense>;
 
 type Boot = { state: 'loading' } | { state: 'setup' } | { state: 'login'; clubName: string | null } | { state: 'ready'; me: Me };
 
@@ -128,7 +132,8 @@ function AppRoutes() {
       {isStaff && <Route path="seances/:id/live" element={<Live />} />}
       {isStaff && <Route path="matchs/:eventId/:date/live" element={<MatchLive />} />}
       <Route path="matchs/:eventId/:date/cartes" element={<RevealPage />} />
-      <Route path="matchs/:eventId/:date/paquet" element={<PackPage />} />
+      <Route path="matchs/:eventId/:date/paquet" element={walkout(<PackPage />)} />
+      <Route path="joueurs/:id/entree" element={walkout(<PlayerWalkoutPage />)} />
       <Route path="bulletins/:id" element={<BulletinPage />} />
     </Routes>
   );

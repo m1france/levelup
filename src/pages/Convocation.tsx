@@ -445,7 +445,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
             className="btn lg"
             onClick={() => nav(`/matchs/${d.eventId}/${d.date}/paquet`)}
             disabled={!sel.size}
-            title="Le paquet que les enfants convoqués ouvrent à la publication"
+            title="L’entrée sur le terrain que vivent les enfants convoqués à la publication"
           >
             <Gift /> Aperçu du paquet
           </button>
@@ -632,7 +632,7 @@ function StaffConvocation({ d, reload, setData }: { d: ConvDetail; reload: () =>
               </p>
             )}
             <p className="small muted">
-              Chaque enfant convoqué reçoit un paquet à ouvrir qui dévoile sa carte ; les parents des non-retenus reçoivent un message bienveillant : « Les convocations tournent pour que chacun joue autant. »
+              Chaque enfant convoqué reçoit un paquet : son entrée sur le terrain, façon FIFA, jusqu’à sa carte ; les parents des non-retenus reçoivent un message bienveillant : « Les convocations tournent pour que chacun joue autant. »
             </p>
             {!published && Date.now() > d.timeline.deadline && (
               <p className="form-error">La date limite ({momentLabel(d.timeline.deadline)}) est dépassée : la publication sera marquée en retard.</p>

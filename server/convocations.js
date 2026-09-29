@@ -810,7 +810,7 @@ convApi.post('/convocations/:eventId/:date/publish', (req, res) => {
         ? {
             kind: 'convoked',
             title: `${change}🎁 ${p.firstName} a reçu un paquet !`,
-            body: `${evTitle(o.e)} ${shortDay(o.date)} · Ouvrez-le ensemble pour découvrir sa carte de convoqué.`,
+            body: `${evTitle(o.e)} ${shortDay(o.date)} · Ouvrez-le ensemble : son entrée sur le terrain l’attend.`,
             url: `${matchUrl(o)}/paquet`,
             tag: `conv-${o.e.id}-${o.date}-${p.id}`,
           }
